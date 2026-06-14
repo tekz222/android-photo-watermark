@@ -11,6 +11,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -37,6 +38,7 @@ import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -50,6 +52,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -61,8 +64,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -155,16 +162,43 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
         },
         snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { innerPadding ->
+        val firstPhoto = state.photoUris.firstOrNull()
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .verticalScroll(rememberScrollState())
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            // ---- Locked live preview: stays visible while the steps scroll ----
+            if (firstPhoto != null && state.hasAnyLogo) {
+                LockedPreview(
+                    photoUri = firstPhoto,
+                    logoUris = state.logos.map { it.uri },
+                    topLeftLogoUris = state.topLeftLogos.map { it.uri },
+                    cornerLogoUri = state.cornerLogoUri,
+                    logoHeightPercent = state.logoHeightPercent,
+                    bottomMarginPercent = state.bottomMarginPercent,
+                    bottomLeftMarginPercent = state.bottomLeftMarginPercent,
+                    topLeftLogoHeightPercent = state.topLeftLogoHeightPercent,
+                    topLeftTopMarginPercent = state.topLeftTopMarginPercent,
+                    topLeftLeftMarginPercent = state.topLeftLeftMarginPercent,
+                    cornerLogoHeightPercent = state.cornerLogoHeightPercent,
+                    cornerMarginPercent = state.cornerMarginPercent
+                )
+            }
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
             // ---- Step 1: photos ----
-            StepCard(number = 1, title = stringResource(R.string.step_photos)) {
+            StepCard(
+                number = 1,
+                title = stringResource(R.string.step_photos),
+                icon = { Icon(Icons.Filled.PhotoLibrary, contentDescription = null) }
+            ) {
                 Button(
                     onClick = {
                         photoPicker.launch(
@@ -198,10 +232,14 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
             }
 
             // ---- Step 2: bottom logos ----
-            StepCard(number = 2, title = stringResource(R.string.step_bottom_logos)) {
+            StepCard(
+                number = 2,
+                title = stringResource(R.string.step_bottom_logos),
+                icon = { PlacementIcon(Placement.BOTTOM) }
+            ) {
                 MultiLogoPicker(
                     enabled = state.photoUris.isNotEmpty(),
-                    uris = state.logoUris,
+                    items = state.logos,
                     hint = stringResource(
                         if (state.photoUris.isEmpty()) R.string.logo_hint
                         else R.string.bottom_logos_hint
@@ -213,7 +251,7 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                     },
                     onRemove = { viewModel.removeLogo(it) }
                 )
-                if (state.logoUris.isNotEmpty()) {
+                if (state.logos.isNotEmpty()) {
                     Spacer(Modifier.height(12.dp))
                     LabeledSlider(
                         label = stringResource(R.string.logo_size, state.logoHeightPercent.roundToInt()),
@@ -239,10 +277,14 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
             }
 
             // ---- Step 3: top-left logos ----
-            StepCard(number = 3, title = stringResource(R.string.step_top_left_logos)) {
+            StepCard(
+                number = 3,
+                title = stringResource(R.string.step_top_left_logos),
+                icon = { PlacementIcon(Placement.TOP_LEFT) }
+            ) {
                 MultiLogoPicker(
                     enabled = state.photoUris.isNotEmpty(),
-                    uris = state.topLeftLogoUris,
+                    items = state.topLeftLogos,
                     hint = stringResource(
                         if (state.photoUris.isEmpty()) R.string.logo_hint
                         else R.string.top_left_logos_hint
@@ -254,7 +296,7 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                     },
                     onRemove = { viewModel.removeTopLeftLogo(it) }
                 )
-                if (state.topLeftLogoUris.isNotEmpty()) {
+                if (state.topLeftLogos.isNotEmpty()) {
                     Spacer(Modifier.height(12.dp))
                     LabeledSlider(
                         label = stringResource(R.string.logo_size, state.topLeftLogoHeightPercent.roundToInt()),
@@ -280,7 +322,11 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
             }
 
             // ---- Step 4: main company logo (top-right, single) ----
-            StepCard(number = 4, title = stringResource(R.string.step_corner_logo)) {
+            StepCard(
+                number = 4,
+                title = stringResource(R.string.step_corner_logo),
+                icon = { PlacementIcon(Placement.TOP_RIGHT) }
+            ) {
                 OutlinedButton(
                     onClick = {
                         cornerLogoPicker.launch(
@@ -329,33 +375,6 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                 }
             }
 
-            // ---- Step 5: preview ----
-            val firstPhoto = state.photoUris.firstOrNull()
-            if (firstPhoto != null && state.hasAnyLogo) {
-                StepCard(number = 5, title = stringResource(R.string.step_preview)) {
-                    Text(
-                        text = stringResource(R.string.preview_label),
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Medium
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    WatermarkPreview(
-                        photoUri = firstPhoto,
-                        logoUris = state.logoUris,
-                        topLeftLogoUris = state.topLeftLogoUris,
-                        cornerLogoUri = state.cornerLogoUri,
-                        logoHeightPercent = state.logoHeightPercent,
-                        bottomMarginPercent = state.bottomMarginPercent,
-                        bottomLeftMarginPercent = state.bottomLeftMarginPercent,
-                        topLeftLogoHeightPercent = state.topLeftLogoHeightPercent,
-                        topLeftTopMarginPercent = state.topLeftTopMarginPercent,
-                        topLeftLeftMarginPercent = state.topLeftLeftMarginPercent,
-                        cornerLogoHeightPercent = state.cornerLogoHeightPercent,
-                        cornerMarginPercent = state.cornerMarginPercent
-                    )
-                }
-            }
-
             // ---- Action ----
             if (state.isProcessing) {
                 Column(
@@ -394,12 +413,18 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                     modifier = Modifier.fillMaxWidth()
                 )
             }
+            }
         }
     }
 }
 
 @Composable
-private fun StepCard(number: Int, title: String, content: @Composable () -> Unit) {
+private fun StepCard(
+    number: Int,
+    title: String,
+    icon: @Composable () -> Unit,
+    content: @Composable () -> Unit
+) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
@@ -420,7 +445,12 @@ private fun StepCard(number: Int, title: String, content: @Composable () -> Unit
                         fontSize = 14.sp
                     )
                 }
-                Spacer(Modifier.width(12.dp))
+                Spacer(Modifier.width(10.dp))
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier.size(28.dp)
+                ) { icon() }
+                Spacer(Modifier.width(10.dp))
                 Text(
                     text = title,
                     style = MaterialTheme.typography.titleMedium,
@@ -472,10 +502,10 @@ private fun RemovableThumbnail(
 @Composable
 private fun MultiLogoPicker(
     enabled: Boolean,
-    uris: List<Uri>,
+    items: List<LogoItem>,
     hint: String,
     onAdd: () -> Unit,
-    onRemove: (Uri) -> Unit
+    onRemove: (Long) -> Unit
 ) {
     OutlinedButton(
         onClick = onAdd,
@@ -492,28 +522,43 @@ private fun MultiLogoPicker(
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant
     )
-    if (uris.isNotEmpty()) {
+    if (items.isNotEmpty()) {
         Spacer(Modifier.height(12.dp))
         Text(
-            text = stringResource(R.string.logos_selected, uris.size),
+            text = stringResource(R.string.logos_selected, items.size),
             style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.Medium
         )
         Spacer(Modifier.height(8.dp))
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(uris, key = { it.toString() }) { uri ->
+            items(items, key = { it.id }) { item ->
                 RemovableThumbnail(
-                    uri = uri,
+                    uri = item.uri,
                     contentScale = ContentScale.Fit,
-                    onRemove = { onRemove(uri) }
+                    onRemove = { onRemove(item.id) }
                 )
             }
         }
     }
 }
 
+/** Loads a list of logo uris, decoding each distinct uri only once. */
+private fun loadLogos(context: android.content.Context, uris: List<Uri>): List<Bitmap> {
+    val cache = HashMap<Uri, Bitmap?>()
+    return uris.mapNotNull { uri ->
+        cache.getOrPut(uri) {
+            WatermarkEngine.loadBitmap(context.contentResolver, uri, maxDimension = 1080)
+        }
+    }
+}
+
+/**
+ * Live watermarked preview of the first photo, pinned at the top of the screen
+ * (inside an elevated [Surface]) so it stays visible while the steps below it
+ * scroll.
+ */
 @Composable
-private fun WatermarkPreview(
+private fun LockedPreview(
     photoUri: Uri,
     logoUris: List<Uri>,
     topLeftLogoUris: List<Uri>,
@@ -541,14 +586,10 @@ private fun WatermarkPreview(
         }
     }
     LaunchedEffect(logoUris) {
-        logos = withContext(Dispatchers.Default) {
-            logoUris.mapNotNull { WatermarkEngine.loadBitmap(context.contentResolver, it, maxDimension = 1080) }
-        }
+        logos = withContext(Dispatchers.Default) { loadLogos(context, logoUris) }
     }
     LaunchedEffect(topLeftLogoUris) {
-        topLeftLogos = withContext(Dispatchers.Default) {
-            topLeftLogoUris.mapNotNull { WatermarkEngine.loadBitmap(context.contentResolver, it, maxDimension = 1080) }
-        }
+        topLeftLogos = withContext(Dispatchers.Default) { loadLogos(context, topLeftLogoUris) }
     }
     LaunchedEffect(cornerLogoUri) {
         cornerLogo = withContext(Dispatchers.Default) {
@@ -590,24 +631,100 @@ private fun WatermarkPreview(
         }
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = 120.dp, max = 360.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant),
-        contentAlignment = Alignment.Center
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shadowElevation = 4.dp,
+        color = MaterialTheme.colorScheme.surface
     ) {
-        val bmp = preview
-        if (bmp != null) {
-            Image(
-                bitmap = bmp.asImageBitmap(),
-                contentDescription = stringResource(R.string.preview_label),
-                contentScale = ContentScale.Fit,
-                modifier = Modifier.fillMaxWidth()
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+            Text(
+                text = stringResource(R.string.preview_label),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-        } else {
-            CircularProgressIndicator(modifier = Modifier.padding(24.dp))
+            Spacer(Modifier.height(6.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 120.dp, max = 220.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                contentAlignment = Alignment.Center
+            ) {
+                val bmp = preview
+                if (bmp != null) {
+                    Image(
+                        bitmap = bmp.asImageBitmap(),
+                        contentDescription = stringResource(R.string.preview_label),
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    CircularProgressIndicator(modifier = Modifier.padding(24.dp))
+                }
+            }
+        }
+    }
+}
+
+/** Which corner/edge a step's logos occupy, used by [PlacementIcon]. */
+private enum class Placement { BOTTOM, TOP_LEFT, TOP_RIGHT }
+
+/**
+ * A small glyph showing a 16:9 frame with the relevant region highlighted, so
+ * each step visually communicates where its logos land.
+ */
+@Composable
+private fun PlacementIcon(placement: Placement, modifier: Modifier = Modifier.size(28.dp)) {
+    val color = MaterialTheme.colorScheme.primary
+    Canvas(modifier = modifier) {
+        val frameW = size.width
+        val frameH = frameW * 9f / 16f
+        val top = (size.height - frameH) / 2f
+        val corner = CornerRadius(frameH * 0.14f, frameH * 0.14f)
+        val stroke = (frameH * 0.09f).coerceAtLeast(2f)
+
+        // 16:9 frame outline.
+        drawRoundRect(
+            color = color,
+            topLeft = Offset(stroke / 2f, top + stroke / 2f),
+            size = Size(frameW - stroke, frameH - stroke),
+            cornerRadius = corner,
+            style = Stroke(width = stroke)
+        )
+
+        // Highlighted region for this placement.
+        val pad = frameW * 0.16f
+        when (placement) {
+            Placement.BOTTOM -> {
+                val barH = frameH * 0.24f
+                drawRoundRect(
+                    color = color,
+                    topLeft = Offset(pad, top + frameH - pad - barH),
+                    size = Size(frameW - pad * 2f, barH),
+                    cornerRadius = CornerRadius(barH / 2f, barH / 2f)
+                )
+            }
+            Placement.TOP_LEFT -> {
+                val boxW = frameW * 0.42f
+                val boxH = frameH * 0.26f
+                drawRoundRect(
+                    color = color,
+                    topLeft = Offset(pad, top + pad),
+                    size = Size(boxW, boxH),
+                    cornerRadius = CornerRadius(boxH / 2f, boxH / 2f)
+                )
+            }
+            Placement.TOP_RIGHT -> {
+                val boxW = frameW * 0.30f
+                val boxH = frameH * 0.30f
+                drawRoundRect(
+                    color = color,
+                    topLeft = Offset(frameW - pad - boxW, top + pad),
+                    size = Size(boxW, boxH),
+                    cornerRadius = CornerRadius(boxH * 0.3f, boxH * 0.3f)
+                )
+            }
         }
     }
 }

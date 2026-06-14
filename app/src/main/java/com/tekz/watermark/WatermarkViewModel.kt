@@ -21,15 +21,25 @@ data class ProcessResult(
     val failed: Int
 )
 
+/**
+ * A single logo placed in a row. Each entry carries a unique [id] so the *same*
+ * image can be added several times (the row simply keeps appending logos until
+ * they run off the frame) while still being individually removable.
+ */
+data class LogoItem(
+    val id: Long,
+    val uri: Uri
+)
+
 data class WatermarkUiState(
     val photoUris: List<Uri> = emptyList(),
     // Bottom row of logos.
-    val logoUris: List<Uri> = emptyList(),
+    val logos: List<LogoItem> = emptyList(),
     val logoHeightPercent: Float = 12f,
     val bottomMarginPercent: Float = 3f,
     val bottomLeftMarginPercent: Float = 3f,
     // Top-left row of logos.
-    val topLeftLogoUris: List<Uri> = emptyList(),
+    val topLeftLogos: List<LogoItem> = emptyList(),
     val topLeftLogoHeightPercent: Float = 12f,
     val topLeftTopMarginPercent: Float = 3f,
     val topLeftLeftMarginPercent: Float = 3f,
@@ -43,7 +53,7 @@ data class WatermarkUiState(
     val lastResult: ProcessResult? = null
 ) {
     val hasAnyLogo: Boolean
-        get() = logoUris.isNotEmpty() || topLeftLogoUris.isNotEmpty() || cornerLogoUri != null
+        get() = logos.isNotEmpty() || topLeftLogos.isNotEmpty() || cornerLogoUri != null
 
     val canProcess: Boolean
         get() = !isProcessing && photoUris.isNotEmpty() && hasAnyLogo
@@ -54,6 +64,11 @@ class WatermarkViewModel(app: Application) : AndroidViewModel(app) {
     private val _uiState = MutableStateFlow(WatermarkUiState())
     val uiState: StateFlow<WatermarkUiState> = _uiState.asStateFlow()
 
+    /** Monotonic id source so every appended logo entry is unique. */
+    private var nextLogoId = 0L
+    private fun newLogoItems(uris: List<Uri>): List<LogoItem> =
+        uris.map { LogoItem(id = nextLogoId++, uri = it) }
+
     /** Adds newly picked photos, ignoring duplicates already present. */
     fun addPhotos(uris: List<Uri>) = _uiState.update {
         it.copy(photoUris = (it.photoUris + uris).distinct(), lastResult = null)
@@ -63,22 +78,22 @@ class WatermarkViewModel(app: Application) : AndroidViewModel(app) {
         it.copy(photoUris = it.photoUris.filterNot { u -> u == uri }, lastResult = null)
     }
 
-    /** Adds newly picked logos, ignoring duplicates already present. */
+    /** Appends newly picked bottom logos (duplicates allowed). */
     fun addLogos(uris: List<Uri>) = _uiState.update {
-        it.copy(logoUris = (it.logoUris + uris).distinct(), lastResult = null)
+        it.copy(logos = it.logos + newLogoItems(uris), lastResult = null)
     }
 
-    fun removeLogo(uri: Uri) = _uiState.update {
-        it.copy(logoUris = it.logoUris.filterNot { u -> u == uri }, lastResult = null)
+    fun removeLogo(id: Long) = _uiState.update {
+        it.copy(logos = it.logos.filterNot { item -> item.id == id }, lastResult = null)
     }
 
-    /** Adds newly picked top-left logos, ignoring duplicates already present. */
+    /** Appends newly picked top-left logos (duplicates allowed). */
     fun addTopLeftLogos(uris: List<Uri>) = _uiState.update {
-        it.copy(topLeftLogoUris = (it.topLeftLogoUris + uris).distinct(), lastResult = null)
+        it.copy(topLeftLogos = it.topLeftLogos + newLogoItems(uris), lastResult = null)
     }
 
-    fun removeTopLeftLogo(uri: Uri) = _uiState.update {
-        it.copy(topLeftLogoUris = it.topLeftLogoUris.filterNot { u -> u == uri }, lastResult = null)
+    fun removeTopLeftLogo(id: Long) = _uiState.update {
+        it.copy(topLeftLogos = it.topLeftLogos.filterNot { item -> item.id == id }, lastResult = null)
     }
 
     /** Sets (or replaces) the single top-right main company logo. */
@@ -141,10 +156,14 @@ class WatermarkViewModel(app: Application) : AndroidViewModel(app) {
                 val context = getApplication<Application>()
                 val resolver = context.contentResolver
 
-                val logos = state.logoUris.mapNotNull { WatermarkEngine.loadBitmap(resolver, it) }
-                val topLeftLogos =
-                    state.topLeftLogoUris.mapNotNull { WatermarkEngine.loadBitmap(resolver, it) }
-                val cornerLogo = state.cornerLogoUri?.let { WatermarkEngine.loadBitmap(resolver, it) }
+                // Decode each distinct logo uri once, even when it repeats in a row.
+                val logoCache = HashMap<Uri, android.graphics.Bitmap?>()
+                fun bitmapFor(uri: Uri) =
+                    logoCache.getOrPut(uri) { WatermarkEngine.loadBitmap(resolver, uri) }
+
+                val logos = state.logos.mapNotNull { bitmapFor(it.uri) }
+                val topLeftLogos = state.topLeftLogos.mapNotNull { bitmapFor(it.uri) }
+                val cornerLogo = state.cornerLogoUri?.let { bitmapFor(it) }
                 if (logos.isEmpty() && topLeftLogos.isEmpty() && cornerLogo == null) {
                     return@withContext ProcessResult(saved = 0, failed = state.photoUris.size)
                 }
@@ -182,9 +201,8 @@ class WatermarkViewModel(app: Application) : AndroidViewModel(app) {
                     _uiState.update { it.copy(processed = index + 1) }
                 }
 
-                logos.forEach { it.recycle() }
-                topLeftLogos.forEach { it.recycle() }
-                cornerLogo?.recycle()
+                // Each distinct bitmap was cached, so recycle them once here.
+                logoCache.values.forEach { it?.recycle() }
                 ProcessResult(saved = saved, failed = failed)
             }
 

@@ -15,7 +15,9 @@ Depois é só salvar todas na galeria.
    adicionando aos poucos e **remover** qualquer foto pelo “✕” na miniatura.
 2. **Logos da base** — selecione **uma ou mais** logos (de preferência PNG com
    fundo transparente). Ficam numa fileira no rodapé, **encostadas** da esquerda
-   para a direita. Ajuste tamanho, distância da borda inferior e da esquerda.
+   para a direita. Pode **adicionar a mesma logo várias vezes** — elas vão sendo
+   anexadas até saírem do quadro. Ajuste tamanho, distância da borda inferior e
+   da esquerda.
 3. **Logos do canto superior esquerdo** — mesma ideia da base, mas no topo.
    Ajuste tamanho, distância do topo e da esquerda.
 4. **Logo principal (canto superior direito)** — escolha **uma** logo. Dá para
@@ -41,6 +43,10 @@ Depois é só salvar todas na galeria.
 - A orientação **EXIF** das fotos é respeitada, e imagens muito grandes são
   reduzidas com segurança para evitar `OutOfMemoryError`.
 - O processamento (e o preview) rodam fora da thread principal (coroutines).
+- Ordem de desenho (camadas): primeiro o canto superior esquerdo, depois a base
+  e, por cima de tudo, a **logo principal** do canto superior direito.
+- A pré-visualização fica **fixa no topo** da tela, sempre visível enquanto você
+  rola os ajustes.
 
 ### Padrões / valores ajustáveis
 
