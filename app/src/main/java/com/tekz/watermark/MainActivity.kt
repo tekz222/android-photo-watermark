@@ -258,10 +258,11 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
             if (state.isProcessing) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier.fillMaxWidth()) {
-                    val progress = if (state.total == 0) 0f
-                        else state.processed.toFloat() / state.total.toFloat()
                     LinearProgressIndicator(
-                        progress = progress,
+                        progress = {
+                            if (state.total == 0) 0f
+                            else state.processed.toFloat() / state.total.toFloat()
+                        },
                         modifier = Modifier.fillMaxWidth()
                     )
                     Spacer(Modifier.height(8.dp))
