@@ -1,22 +1,26 @@
 # Photo Watermark
 
 Aplicativo Android para aplicar **uma ou várias logos** em qualquer quantidade de
-fotos de uma só vez. As logos ficam **em linha, centralizadas e igualmente
-espaçadas na parte de baixo** da foto, com uma margem elegante como em
-fotografias profissionais — e depois é só salvar todas na galeria.
+fotos de uma só vez. As logos da base ficam **encostadas umas nas outras, da
+esquerda para a direita no rodapé** (começando um pouco antes da borda esquerda),
+e ainda dá para colocar **uma logo no canto superior direito** — depois é só
+salvar todas na galeria.
 
 ## Como funciona
 
 1. **Adicione as fotos** — escolha quantas quiser (seleção múltipla). Pode ir
    adicionando aos poucos e **remover** qualquer foto pelo “✕” na miniatura.
-2. **Envie as logos** — selecione **uma ou mais** logos (de preferência PNG com
-   fundo transparente). Todas entram numa fileira horizontal centralizada no
-   rodapé. Também dá para remover logos individualmente.
-3. **Ajustes** — tamanho das logos, distância da borda inferior e espaçamento
-   entre as logos.
-4. **Pré-visualização** — veja a 1ª foto já com as logos, atualizando ao vivo
+2. **Logos da base** — selecione **uma ou mais** logos (de preferência PNG com
+   fundo transparente). Elas entram numa fileira no rodapé, **encostadas** da
+   esquerda para a direita, iniciando num **pequeno espaço negativo à esquerda**.
+   Também dá para remover logos individualmente.
+3. **Logo do canto superior direito** *(opcional)* — escolha **uma** logo para o
+   canto superior direito. Dá para trocar ou remover quando quiser.
+4. **Ajustes** — tamanho das logos da base e distância da borda inferior; tamanho
+   da logo do canto e distância do canto.
+5. **Pré-visualização** — veja a 1ª foto já com as logos, atualizando ao vivo
    conforme você muda os ajustes.
-5. **Aplicar e salvar tudo** — cada foto recebe a fileira de logos e é salva em
+6. **Aplicar e salvar tudo** — cada foto recebe as logos e é salva em
    `Imagens/Watermarked` na galeria do aparelho.
 
 ## Detalhes técnicos
@@ -28,20 +32,24 @@ fotografias profissionais — e depois é só salvar todas na galeria.
   permissão é necessária para salvar; em Android 9 e abaixo o app pede
   `WRITE_EXTERNAL_STORAGE`.
 - As logos são dimensionadas pela **altura**, em relação ao **menor lado** da foto,
-  então a fileira fica proporcional tanto em paisagem quanto em retrato. Cada logo
-  mantém sua própria proporção, e a fileira inteira é centralizada; se for mais
-  larga que a foto, é reduzida automaticamente para caber.
+  então ficam proporcionais tanto em paisagem quanto em retrato. Cada logo mantém
+  sua própria proporção. As logos da base são ancoradas à esquerda e ficam
+  **encostadas** (sem espaço entre elas); a logo do canto fica alinhada ao canto
+  superior direito.
 - A orientação **EXIF** das fotos é respeitada, e imagens muito grandes são
   reduzidas com segurança para evitar `OutOfMemoryError`.
 - O processamento (e o preview) rodam fora da thread principal (coroutines).
 
 ### Padrões / valores ajustáveis
 
-| Parâmetro                    | Padrão | Intervalo |
-|------------------------------|--------|-----------|
-| Tamanho das logos (altura)   | 12% do menor lado | 5%–30% |
-| Distância da borda inferior  | 5% do menor lado  | 0%–15% |
-| Espaçamento entre logos      | 4% do menor lado  | 0%–15% |
+| Parâmetro                         | Padrão | Intervalo |
+|-----------------------------------|--------|-----------|
+| Tamanho das logos da base (altura)| 12% do menor lado | 5%–30% |
+| Distância da borda inferior       | 0% do menor lado  | 0%–15% |
+| Tamanho da logo do canto (altura) | 12% do menor lado | 5%–30% |
+| Distância do canto                | 4% do menor lado  | 0%–15% |
+
+> O início negativo à esquerda da fileira da base é fixo em −2% do menor lado.
 
 ## Como compilar
 

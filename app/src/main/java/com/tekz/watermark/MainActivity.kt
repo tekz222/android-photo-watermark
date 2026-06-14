@@ -114,6 +114,10 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
         ActivityResultContracts.PickMultipleVisualMedia()
     ) { uris -> if (uris.isNotEmpty()) viewModel.addLogos(uris) }
 
+    val cornerLogoPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia()
+    ) { uri -> if (uri != null) viewModel.setCornerLogo(uri) }
+
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
@@ -232,32 +236,80 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                 }
             }
 
-            // ---- Step 3: adjustments ----
-            StepCard(number = 3, title = stringResource(R.string.step_adjust)) {
-                LabeledSlider(
-                    label = stringResource(R.string.logo_size, state.logoHeightPercent.roundToInt()),
-                    value = state.logoHeightPercent,
-                    valueRange = 5f..30f,
-                    onValueChange = viewModel::setLogoHeightPercent
-                )
-                Spacer(Modifier.height(8.dp))
-                LabeledSlider(
-                    label = stringResource(R.string.bottom_padding, state.bottomPaddingPercent.roundToInt()),
-                    value = state.bottomPaddingPercent,
-                    valueRange = 0f..15f,
-                    onValueChange = viewModel::setBottomPaddingPercent
-                )
-                Spacer(Modifier.height(8.dp))
-                LabeledSlider(
-                    label = stringResource(R.string.gap, state.gapPercent.roundToInt()),
-                    value = state.gapPercent,
-                    valueRange = 0f..15f,
-                    onValueChange = viewModel::setGapPercent
-                )
+            // ---- Step 3: top-right corner logo (optional, single) ----
+            StepCard(number = 3, title = stringResource(R.string.step_corner_logo)) {
+                OutlinedButton(
+                    onClick = {
+                        cornerLogoPicker.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                        )
+                    },
+                    enabled = state.photoUris.isNotEmpty(),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Filled.Image, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        stringResource(
+                            if (state.cornerLogoUri == null) R.string.add_corner_logo
+                            else R.string.change_corner_logo
+                        )
+                    )
+                }
+                if (state.cornerLogoUri == null) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = stringResource(R.string.corner_logo_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    Spacer(Modifier.height(12.dp))
+                    RemovableThumbnail(
+                        uri = state.cornerLogoUri!!,
+                        contentScale = ContentScale.Fit,
+                        onRemove = { viewModel.setCornerLogo(null) }
+                    )
+                }
+            }
+
+            // ---- Step 4: adjustments ----
+            StepCard(number = 4, title = stringResource(R.string.step_adjust)) {
+                if (state.logoUris.isNotEmpty()) {
+                    LabeledSlider(
+                        label = stringResource(R.string.logo_size, state.logoHeightPercent.roundToInt()),
+                        value = state.logoHeightPercent,
+                        valueRange = 5f..30f,
+                        onValueChange = viewModel::setLogoHeightPercent
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    LabeledSlider(
+                        label = stringResource(R.string.bottom_padding, state.bottomPaddingPercent.roundToInt()),
+                        value = state.bottomPaddingPercent,
+                        valueRange = 0f..15f,
+                        onValueChange = viewModel::setBottomPaddingPercent
+                    )
+                }
+                if (state.cornerLogoUri != null) {
+                    if (state.logoUris.isNotEmpty()) Spacer(Modifier.height(8.dp))
+                    LabeledSlider(
+                        label = stringResource(R.string.corner_logo_size, state.cornerLogoHeightPercent.roundToInt()),
+                        value = state.cornerLogoHeightPercent,
+                        valueRange = 5f..30f,
+                        onValueChange = viewModel::setCornerLogoHeightPercent
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    LabeledSlider(
+                        label = stringResource(R.string.corner_margin, state.cornerMarginPercent.roundToInt()),
+                        value = state.cornerMarginPercent,
+                        valueRange = 0f..15f,
+                        onValueChange = viewModel::setCornerMarginPercent
+                    )
+                }
 
                 // Live preview of the first photo with the logos applied.
                 val firstPhoto = state.photoUris.firstOrNull()
-                if (firstPhoto != null && state.logoUris.isNotEmpty()) {
+                if (firstPhoto != null && (state.logoUris.isNotEmpty() || state.cornerLogoUri != null)) {
                     Spacer(Modifier.height(12.dp))
                     Text(
                         text = stringResource(R.string.preview_label),
@@ -268,9 +320,11 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                     WatermarkPreview(
                         photoUri = firstPhoto,
                         logoUris = state.logoUris,
+                        cornerLogoUri = state.cornerLogoUri,
                         logoHeightPercent = state.logoHeightPercent,
                         bottomPaddingPercent = state.bottomPaddingPercent,
-                        gapPercent = state.gapPercent
+                        cornerLogoHeightPercent = state.cornerLogoHeightPercent,
+                        cornerMarginPercent = state.cornerMarginPercent
                     )
                 }
             }
@@ -392,15 +446,18 @@ private fun RemovableThumbnail(
 private fun WatermarkPreview(
     photoUri: Uri,
     logoUris: List<Uri>,
+    cornerLogoUri: Uri?,
     logoHeightPercent: Float,
     bottomPaddingPercent: Float,
-    gapPercent: Float
+    cornerLogoHeightPercent: Float,
+    cornerMarginPercent: Float
 ) {
     val context = LocalContext.current
 
     // Downscaled source bitmaps, reloaded only when the photo/logos actually change.
     var source by remember(photoUri) { mutableStateOf<Bitmap?>(null) }
     var logos by remember(logoUris) { mutableStateOf<List<Bitmap>?>(null) }
+    var cornerLogo by remember(cornerLogoUri) { mutableStateOf<Bitmap?>(null) }
 
     LaunchedEffect(photoUri) {
         source = withContext(Dispatchers.Default) {
@@ -412,20 +469,31 @@ private fun WatermarkPreview(
             logoUris.mapNotNull { WatermarkEngine.loadBitmap(context.contentResolver, it, maxDimension = 1080) }
         }
     }
+    LaunchedEffect(cornerLogoUri) {
+        cornerLogo = withContext(Dispatchers.Default) {
+            cornerLogoUri?.let { WatermarkEngine.loadBitmap(context.contentResolver, it, maxDimension = 1080) }
+        }
+    }
 
     // Recompose the watermarked preview whenever a source or a placement setting changes.
     val src = source
     val lg = logos
+    val corner = cornerLogo
     var preview by remember { mutableStateOf<Bitmap?>(null) }
-    LaunchedEffect(src, lg, logoHeightPercent, bottomPaddingPercent, gapPercent) {
-        if (src != null && lg != null && lg.isNotEmpty()) {
+    LaunchedEffect(
+        src, lg, corner, logoHeightPercent, bottomPaddingPercent,
+        cornerLogoHeightPercent, cornerMarginPercent
+    ) {
+        if (src != null && lg != null && (lg.isNotEmpty() || corner != null)) {
             preview = withContext(Dispatchers.Default) {
-                WatermarkEngine.applyLogosRow(
+                WatermarkEngine.applyWatermarks(
                     photo = src,
-                    logos = lg,
-                    logoHeightFraction = logoHeightPercent / 100f,
+                    bottomLogos = lg,
+                    cornerLogo = corner,
+                    bottomLogoHeightFraction = logoHeightPercent / 100f,
                     bottomPaddingFraction = bottomPaddingPercent / 100f,
-                    gapFraction = gapPercent / 100f
+                    cornerLogoHeightFraction = cornerLogoHeightPercent / 100f,
+                    cornerMarginFraction = cornerMarginPercent / 100f
                 )
             }
         }

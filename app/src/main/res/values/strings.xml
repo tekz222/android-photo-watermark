@@ -3,20 +3,26 @@
     <string name="app_name">Photo Watermark</string>
 
     <string name="step_photos">Selecione as fotos</string>
-    <string name="step_logos">Envie as logos</string>
+    <string name="step_logos">Logos da base</string>
+    <string name="step_corner_logo">Logo do canto superior direito</string>
     <string name="step_adjust">Ajustes</string>
 
     <string name="add_photos">Adicionar fotos</string>
     <string name="remove_photo">Remover foto</string>
     <string name="add_logos">Adicionar logos</string>
     <string name="remove_logo">Remover logo</string>
+    <string name="add_corner_logo">Adicionar logo do canto</string>
+    <string name="change_corner_logo">Trocar logo do canto</string>
+    <string name="remove_corner_logo">Remover logo do canto</string>
     <string name="logo_hint">Adicione as fotos primeiro; depois envie as logos.</string>
+    <string name="corner_logo_hint">Opcional: uma logo no canto superior direito.</string>
     <string name="photos_selected">%1$d foto(s)</string>
-    <string name="logos_selected">%1$d logo(s) — ficam em linha, centralizadas embaixo</string>
+    <string name="logos_selected">%1$d logo(s) — encostadas, da esquerda para a direita na base</string>
 
-    <string name="logo_size">Tamanho das logos: %1$d%%</string>
+    <string name="logo_size">Tamanho das logos da base: %1$d%%</string>
     <string name="bottom_padding">Distância da borda inferior: %1$d%%</string>
-    <string name="gap">Espaçamento entre logos: %1$d%%</string>
+    <string name="corner_logo_size">Tamanho da logo do canto: %1$d%%</string>
+    <string name="corner_margin">Distância do canto: %1$d%%</string>
 
     <string name="preview_label">Pré-visualização (1ª foto)</string>
 

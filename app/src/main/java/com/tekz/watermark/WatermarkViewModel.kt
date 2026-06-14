@@ -24,16 +24,19 @@ data class ProcessResult(
 data class WatermarkUiState(
     val photoUris: List<Uri> = emptyList(),
     val logoUris: List<Uri> = emptyList(),
+    val cornerLogoUri: Uri? = null,
     val logoHeightPercent: Float = 12f,
-    val bottomPaddingPercent: Float = 5f,
-    val gapPercent: Float = 4f,
+    val bottomPaddingPercent: Float = 0f,
+    val cornerLogoHeightPercent: Float = 12f,
+    val cornerMarginPercent: Float = 4f,
     val isProcessing: Boolean = false,
     val processed: Int = 0,
     val total: Int = 0,
     val lastResult: ProcessResult? = null
 ) {
     val canProcess: Boolean
-        get() = !isProcessing && photoUris.isNotEmpty() && logoUris.isNotEmpty()
+        get() = !isProcessing && photoUris.isNotEmpty() &&
+            (logoUris.isNotEmpty() || cornerLogoUri != null)
 }
 
 class WatermarkViewModel(app: Application) : AndroidViewModel(app) {
@@ -59,12 +62,21 @@ class WatermarkViewModel(app: Application) : AndroidViewModel(app) {
         it.copy(logoUris = it.logoUris.filterNot { u -> u == uri }, lastResult = null)
     }
 
+    /** Sets (or replaces) the single top-right corner logo. */
+    fun setCornerLogo(uri: Uri?) = _uiState.update {
+        it.copy(cornerLogoUri = uri, lastResult = null)
+    }
+
     fun setLogoHeightPercent(value: Float) = _uiState.update { it.copy(logoHeightPercent = value) }
 
     fun setBottomPaddingPercent(value: Float) =
         _uiState.update { it.copy(bottomPaddingPercent = value) }
 
-    fun setGapPercent(value: Float) = _uiState.update { it.copy(gapPercent = value) }
+    fun setCornerLogoHeightPercent(value: Float) =
+        _uiState.update { it.copy(cornerLogoHeightPercent = value) }
+
+    fun setCornerMarginPercent(value: Float) =
+        _uiState.update { it.copy(cornerMarginPercent = value) }
 
     fun clearResult() {
         _uiState.update { it.copy(lastResult = null) }
@@ -78,7 +90,8 @@ class WatermarkViewModel(app: Application) : AndroidViewModel(app) {
     fun processAll() {
         val state = _uiState.value
         if (state.isProcessing) return
-        if (state.photoUris.isEmpty() || state.logoUris.isEmpty()) return
+        if (state.photoUris.isEmpty()) return
+        if (state.logoUris.isEmpty() && state.cornerLogoUri == null) return
 
         viewModelScope.launch {
             _uiState.update {
@@ -95,7 +108,8 @@ class WatermarkViewModel(app: Application) : AndroidViewModel(app) {
                 val resolver = context.contentResolver
 
                 val logos = state.logoUris.mapNotNull { WatermarkEngine.loadBitmap(resolver, it) }
-                if (logos.isEmpty()) {
+                val cornerLogo = state.cornerLogoUri?.let { WatermarkEngine.loadBitmap(resolver, it) }
+                if (logos.isEmpty() && cornerLogo == null) {
                     return@withContext ProcessResult(saved = 0, failed = state.photoUris.size)
                 }
 
@@ -108,12 +122,14 @@ class WatermarkViewModel(app: Application) : AndroidViewModel(app) {
                     if (photo == null) {
                         failed++
                     } else {
-                        val output = WatermarkEngine.applyLogosRow(
+                        val output = WatermarkEngine.applyWatermarks(
                             photo = photo,
-                            logos = logos,
-                            logoHeightFraction = state.logoHeightPercent / 100f,
+                            bottomLogos = logos,
+                            cornerLogo = cornerLogo,
+                            bottomLogoHeightFraction = state.logoHeightPercent / 100f,
                             bottomPaddingFraction = state.bottomPaddingPercent / 100f,
-                            gapFraction = state.gapPercent / 100f
+                            cornerLogoHeightFraction = state.cornerLogoHeightPercent / 100f,
+                            cornerMarginFraction = state.cornerMarginPercent / 100f
                         )
                         val name = "watermarked_${stamp}_${index + 1}.jpg"
                         val uri = WatermarkEngine.saveToGallery(context, output, name)
@@ -126,6 +142,7 @@ class WatermarkViewModel(app: Application) : AndroidViewModel(app) {
                 }
 
                 logos.forEach { it.recycle() }
+                cornerLogo?.recycle()
                 ProcessResult(saved = saved, failed = failed)
             }
 
