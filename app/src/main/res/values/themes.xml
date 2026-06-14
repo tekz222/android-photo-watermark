@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Base theme used before Compose takes over. Material3 dynamic colors are
+         applied at runtime by PhotoWatermarkTheme. -->
+    <style name="Theme.PhotoWatermark" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>

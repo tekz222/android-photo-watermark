@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Photo Watermark</string>
+
+    <string name="step_photos">Selecione as fotos</string>
+    <string name="step_logo">Envie a sua logo</string>
+    <string name="step_position">Escolha o canto</string>
+    <string name="step_adjust">Ajuste fino</string>
+
+    <string name="select_photos">Selecionar fotos</string>
+    <string name="select_logo">Selecionar logo</string>
+    <string name="logo_hint">Selecione as fotos primeiro; depois envie a logo.</string>
+    <string name="photos_selected">%1$d foto(s) selecionada(s)</string>
+
+    <string name="logo_size">Tamanho da logo: %1$d%%</string>
+    <string name="padding">Distância da borda: %1$d%%</string>
+
+    <string name="apply_and_save">Aplicar e salvar todas</string>
+    <string name="save_location">As imagens são salvas em Imagens/Watermarked na galeria.</string>
+
+    <string name="processing">Processando %1$d de %2$d…</string>
+    <string name="result_success">Pronto! %1$d foto(s) salva(s) na galeria.</string>
+    <string name="result_partial">%1$d salva(s), %2$d falharam.</string>
+</resources>
