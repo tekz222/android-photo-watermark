@@ -13,14 +13,12 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -35,23 +33,16 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Image
-import androidx.compose.material.icons.filled.NorthEast
-import androidx.compose.material.icons.filled.NorthWest
-import androidx.compose.material.icons.filled.SouthEast
-import androidx.compose.material.icons.filled.SouthWest
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -64,7 +55,6 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -73,7 +63,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -117,6 +106,14 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
         )
     }
 
+    val photoPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickMultipleVisualMedia()
+    ) { uris -> if (uris.isNotEmpty()) viewModel.addPhotos(uris) }
+
+    val logoPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickMultipleVisualMedia()
+    ) { uris -> if (uris.isNotEmpty()) viewModel.addLogos(uris) }
+
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
@@ -158,30 +155,124 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            state.groups.forEachIndexed { index, group ->
-                key(group.id) {
-                    GroupCard(
-                        index = index,
-                        group = group,
-                        canDelete = state.groups.size > 1,
-                        onAddPhotos = { viewModel.addPhotos(group.id, it) },
-                        onRemovePhoto = { viewModel.removePhoto(group.id, it) },
-                        onPickLogo = { viewModel.setLogo(group.id, it) },
-                        onCorner = { viewModel.setCorner(group.id, it) },
-                        onSize = { viewModel.setLogoWidthPercent(group.id, it) },
-                        onPadding = { viewModel.setPaddingPercent(group.id, it) },
-                        onDelete = { viewModel.removeGroup(group.id) }
+            // ---- Step 1: photos ----
+            StepCard(number = 1, title = stringResource(R.string.step_photos)) {
+                Button(
+                    onClick = {
+                        photoPicker.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Filled.AddPhotoAlternate, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(R.string.add_photos))
+                }
+                if (state.photoUris.isNotEmpty()) {
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        text = stringResource(R.string.photos_selected, state.photoUris.size),
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium
                     )
+                    Spacer(Modifier.height(8.dp))
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(state.photoUris, key = { it.toString() }) { uri ->
+                            RemovableThumbnail(
+                                uri = uri,
+                                contentScale = ContentScale.Crop,
+                                onRemove = { viewModel.removePhoto(uri) }
+                            )
+                        }
+                    }
                 }
             }
 
-            OutlinedButton(
-                onClick = { viewModel.addGroup() },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(Icons.Filled.Add, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text(stringResource(R.string.add_group))
+            // ---- Step 2: logos ----
+            StepCard(number = 2, title = stringResource(R.string.step_logos)) {
+                OutlinedButton(
+                    onClick = {
+                        logoPicker.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                        )
+                    },
+                    enabled = state.photoUris.isNotEmpty(),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Filled.Image, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(R.string.add_logos))
+                }
+                if (state.photoUris.isEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = stringResource(R.string.logo_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (state.logoUris.isNotEmpty()) {
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        text = stringResource(R.string.logos_selected, state.logoUris.size),
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(state.logoUris, key = { it.toString() }) { uri ->
+                            RemovableThumbnail(
+                                uri = uri,
+                                contentScale = ContentScale.Fit,
+                                onRemove = { viewModel.removeLogo(uri) }
+                            )
+                        }
+                    }
+                }
+            }
+
+            // ---- Step 3: adjustments ----
+            StepCard(number = 3, title = stringResource(R.string.step_adjust)) {
+                LabeledSlider(
+                    label = stringResource(R.string.logo_size, state.logoHeightPercent.roundToInt()),
+                    value = state.logoHeightPercent,
+                    valueRange = 5f..30f,
+                    onValueChange = viewModel::setLogoHeightPercent
+                )
+                Spacer(Modifier.height(8.dp))
+                LabeledSlider(
+                    label = stringResource(R.string.bottom_padding, state.bottomPaddingPercent.roundToInt()),
+                    value = state.bottomPaddingPercent,
+                    valueRange = 0f..15f,
+                    onValueChange = viewModel::setBottomPaddingPercent
+                )
+                Spacer(Modifier.height(8.dp))
+                LabeledSlider(
+                    label = stringResource(R.string.gap, state.gapPercent.roundToInt()),
+                    value = state.gapPercent,
+                    valueRange = 0f..15f,
+                    onValueChange = viewModel::setGapPercent
+                )
+
+                // Live preview of the first photo with the logos applied.
+                val firstPhoto = state.photoUris.firstOrNull()
+                if (firstPhoto != null && state.logoUris.isNotEmpty()) {
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        text = stringResource(R.string.preview_label),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    WatermarkPreview(
+                        photoUri = firstPhoto,
+                        logoUris = state.logoUris,
+                        logoHeightPercent = state.logoHeightPercent,
+                        bottomPaddingPercent = state.bottomPaddingPercent,
+                        gapPercent = state.gapPercent
+                    )
+                }
             }
 
             // ---- Action ----
@@ -227,35 +318,12 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
 }
 
 @Composable
-private fun GroupCard(
-    index: Int,
-    group: WatermarkGroup,
-    canDelete: Boolean,
-    onAddPhotos: (List<Uri>) -> Unit,
-    onRemovePhoto: (Uri) -> Unit,
-    onPickLogo: (Uri?) -> Unit,
-    onCorner: (Corner) -> Unit,
-    onSize: (Float) -> Unit,
-    onPadding: (Float) -> Unit,
-    onDelete: () -> Unit
-) {
-    val photoPicker = rememberLauncherForActivityResult(
-        ActivityResultContracts.PickMultipleVisualMedia()
-    ) { uris -> if (uris.isNotEmpty()) onAddPhotos(uris) }
-
-    val logoPicker = rememberLauncherForActivityResult(
-        ActivityResultContracts.PickVisualMedia()
-    ) { uri -> onPickLogo(uri) }
-
+private fun StepCard(number: Int, title: String, content: @Composable () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            // Header: numbered badge + title + delete
+        Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     contentAlignment = Alignment.Center,
@@ -265,7 +333,7 @@ private fun GroupCard(
                         .background(MaterialTheme.colorScheme.primary)
                 ) {
                     Text(
-                        text = (index + 1).toString(),
+                        text = number.toString(),
                         color = MaterialTheme.colorScheme.onPrimary,
                         fontWeight = FontWeight.Bold,
                         fontSize = 14.sp
@@ -273,198 +341,28 @@ private fun GroupCard(
                 }
                 Spacer(Modifier.width(12.dp))
                 Text(
-                    text = stringResource(R.string.group_title, index + 1),
+                    text = title,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )
-                Spacer(Modifier.weight(1f))
-                if (canDelete) {
-                    IconButton(onClick = onDelete) {
-                        Icon(
-                            Icons.Filled.Delete,
-                            contentDescription = stringResource(R.string.delete_group),
-                            tint = MaterialTheme.colorScheme.error
-                        )
-                    }
-                }
             }
-
-            // Photos
-            Button(
-                onClick = {
-                    photoPicker.launch(
-                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                    )
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(Icons.Filled.AddPhotoAlternate, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text(stringResource(R.string.add_photos))
-            }
-            if (group.photoUris.isNotEmpty()) {
-                Text(
-                    text = stringResource(R.string.photos_selected, group.photoUris.size),
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium
-                )
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(group.photoUris, key = { it.toString() }) { uri ->
-                        RemovableThumbnail(uri = uri, onRemove = { onRemovePhoto(uri) })
-                    }
-                }
-            }
-
-            // Logo
-            OutlinedButton(
-                onClick = {
-                    logoPicker.launch(
-                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                    )
-                },
-                enabled = group.photoUris.isNotEmpty(),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(Icons.Filled.Image, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text(stringResource(R.string.select_logo))
-            }
-            if (group.photoUris.isEmpty()) {
-                Text(
-                    text = stringResource(R.string.logo_hint),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            group.logoUri?.let { logo ->
-                AsyncImage(
-                    model = logo,
-                    contentDescription = null,
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(96.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                        .padding(8.dp)
-                )
-            }
-
-            // Position
-            Text(
-                text = stringResource(R.string.position_label),
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Medium
-            )
-            CornerSelector(selected = group.corner, onSelect = onCorner)
-
-            // Fine tuning
-            LabeledSlider(
-                label = stringResource(R.string.logo_size, group.logoWidthPercent.roundToInt()),
-                value = group.logoWidthPercent,
-                valueRange = 5f..40f,
-                onValueChange = onSize
-            )
-            LabeledSlider(
-                label = stringResource(R.string.padding, group.paddingPercent.roundToInt()),
-                value = group.paddingPercent,
-                valueRange = 0f..15f,
-                onValueChange = onPadding
-            )
-
-            // Live preview of the first photo with the logo applied.
-            val firstPhoto = group.photoUris.firstOrNull()
-            val logo = group.logoUri
-            if (firstPhoto != null && logo != null) {
-                Text(
-                    text = stringResource(R.string.preview_label),
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Medium
-                )
-                WatermarkPreview(
-                    photoUri = firstPhoto,
-                    logoUri = logo,
-                    corner = group.corner,
-                    logoWidthPercent = group.logoWidthPercent,
-                    paddingPercent = group.paddingPercent
-                )
-            }
+            Spacer(Modifier.height(12.dp))
+            content()
         }
     }
 }
 
 @Composable
-private fun WatermarkPreview(
-    photoUri: Uri,
-    logoUri: Uri,
-    corner: Corner,
-    logoWidthPercent: Float,
-    paddingPercent: Float
+private fun RemovableThumbnail(
+    uri: Uri,
+    contentScale: ContentScale,
+    onRemove: () -> Unit
 ) {
-    val context = LocalContext.current
-
-    // Downscaled source bitmaps, reloaded only when the photo/logo actually changes.
-    var source by remember(photoUri) { mutableStateOf<Bitmap?>(null) }
-    var logo by remember(logoUri) { mutableStateOf<Bitmap?>(null) }
-
-    LaunchedEffect(photoUri) {
-        source = withContext(Dispatchers.Default) {
-            WatermarkEngine.loadBitmap(context.contentResolver, photoUri, maxDimension = 1080)
-        }
-    }
-    LaunchedEffect(logoUri) {
-        logo = withContext(Dispatchers.Default) {
-            WatermarkEngine.loadBitmap(context.contentResolver, logoUri, maxDimension = 1080)
-        }
-    }
-
-    // Recompose the watermarked preview whenever a source or a placement setting changes.
-    val src = source
-    val lg = logo
-    var preview by remember { mutableStateOf<Bitmap?>(null) }
-    LaunchedEffect(src, lg, corner, logoWidthPercent, paddingPercent) {
-        if (src != null && lg != null) {
-            preview = withContext(Dispatchers.Default) {
-                WatermarkEngine.applyWatermark(
-                    photo = src,
-                    logo = lg,
-                    corner = corner,
-                    logoWidthFraction = logoWidthPercent / 100f,
-                    paddingFraction = paddingPercent / 100f
-                )
-            }
-        }
-    }
-
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = 120.dp, max = 360.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant),
-        contentAlignment = Alignment.Center
-    ) {
-        val bmp = preview
-        if (bmp != null) {
-            Image(
-                bitmap = bmp.asImageBitmap(),
-                contentDescription = stringResource(R.string.preview_label),
-                contentScale = ContentScale.Fit,
-                modifier = Modifier.fillMaxWidth()
-            )
-        } else {
-            CircularProgressIndicator(modifier = Modifier.padding(24.dp))
-        }
-    }
-}
-
-@Composable
-private fun RemovableThumbnail(uri: Uri, onRemove: () -> Unit) {
     Box(modifier = Modifier.size(76.dp)) {
         AsyncImage(
             model = uri,
             contentDescription = null,
-            contentScale = ContentScale.Crop,
+            contentScale = contentScale,
             modifier = Modifier
                 .fillMaxSize()
                 .clip(RoundedCornerShape(8.dp))
@@ -491,47 +389,67 @@ private fun RemovableThumbnail(uri: Uri, onRemove: () -> Unit) {
 }
 
 @Composable
-private fun CornerSelector(selected: Corner, onSelect: (Corner) -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            CornerButton(Corner.TOP_LEFT, Icons.Filled.NorthWest, selected, onSelect, Modifier.weight(1f))
-            CornerButton(Corner.TOP_RIGHT, Icons.Filled.NorthEast, selected, onSelect, Modifier.weight(1f))
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            CornerButton(Corner.BOTTOM_LEFT, Icons.Filled.SouthWest, selected, onSelect, Modifier.weight(1f))
-            CornerButton(Corner.BOTTOM_RIGHT, Icons.Filled.SouthEast, selected, onSelect, Modifier.weight(1f))
+private fun WatermarkPreview(
+    photoUri: Uri,
+    logoUris: List<Uri>,
+    logoHeightPercent: Float,
+    bottomPaddingPercent: Float,
+    gapPercent: Float
+) {
+    val context = LocalContext.current
+
+    // Downscaled source bitmaps, reloaded only when the photo/logos actually change.
+    var source by remember(photoUri) { mutableStateOf<Bitmap?>(null) }
+    var logos by remember(logoUris) { mutableStateOf<List<Bitmap>?>(null) }
+
+    LaunchedEffect(photoUri) {
+        source = withContext(Dispatchers.Default) {
+            WatermarkEngine.loadBitmap(context.contentResolver, photoUri, maxDimension = 1080)
         }
     }
-}
+    LaunchedEffect(logoUris) {
+        logos = withContext(Dispatchers.Default) {
+            logoUris.mapNotNull { WatermarkEngine.loadBitmap(context.contentResolver, it, maxDimension = 1080) }
+        }
+    }
 
-@Composable
-private fun CornerButton(
-    corner: Corner,
-    icon: ImageVector,
-    selected: Corner,
-    onSelect: (Corner) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val isSelected = corner == selected
-    val border = if (isSelected) MaterialTheme.colorScheme.primary
-        else MaterialTheme.colorScheme.outlineVariant
-    val container = if (isSelected) MaterialTheme.colorScheme.primaryContainer
-        else MaterialTheme.colorScheme.surface
+    // Recompose the watermarked preview whenever a source or a placement setting changes.
+    val src = source
+    val lg = logos
+    var preview by remember { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(src, lg, logoHeightPercent, bottomPaddingPercent, gapPercent) {
+        if (src != null && lg != null && lg.isNotEmpty()) {
+            preview = withContext(Dispatchers.Default) {
+                WatermarkEngine.applyLogosRow(
+                    photo = src,
+                    logos = lg,
+                    logoHeightFraction = logoHeightPercent / 100f,
+                    bottomPaddingFraction = bottomPaddingPercent / 100f,
+                    gapFraction = gapPercent / 100f
+                )
+            }
+        }
+    }
+
     Box(
-        contentAlignment = Alignment.Center,
-        modifier = modifier
-            .aspectRatio(1.8f)
-            .clip(RoundedCornerShape(12.dp))
-            .background(container)
-            .border(if (isSelected) 2.dp else 1.dp, border, RoundedCornerShape(12.dp))
-            .clickable { onSelect(corner) }
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 120.dp, max = 360.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant),
+        contentAlignment = Alignment.Center
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = corner.name,
-            tint = if (isSelected) MaterialTheme.colorScheme.primary
-                else MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        val bmp = preview
+        if (bmp != null) {
+            Image(
+                bitmap = bmp.asImageBitmap(),
+                contentDescription = stringResource(R.string.preview_label),
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxWidth()
+            )
+        } else {
+            CircularProgressIndicator(modifier = Modifier.padding(24.dp))
+        }
     }
 }
 

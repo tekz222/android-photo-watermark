@@ -17,18 +17,10 @@ import android.provider.MediaStore
 import androidx.exifinterface.media.ExifInterface
 import java.io.IOException
 
-/** Which corner of the photo the logo is anchored to. */
-enum class Corner {
-    TOP_LEFT,
-    TOP_RIGHT,
-    BOTTOM_LEFT,
-    BOTTOM_RIGHT
-}
-
 /**
- * Stateless image-processing helper. It loads photos and the logo, composites the
- * logo into the chosen corner with a professional-looking padding, and writes the
- * result to the device gallery.
+ * Stateless image-processing helper. It loads photos and logos, lays the logos
+ * out in a single horizontal row centered along the bottom of the photo (with a
+ * professional-looking margin), and writes the result to the device gallery.
  */
 object WatermarkEngine {
 
@@ -36,66 +28,65 @@ object WatermarkEngine {
     const val ALBUM_NAME = "Watermarked"
 
     /**
-     * Draws [logo] onto a copy of [photo] in the given [corner].
+     * Draws [logos] onto a copy of [photo] as one evenly spaced, horizontally
+     * centered row near the bottom edge.
      *
-     * @param logoWidthFraction width of the logo relative to the photo's *shortest*
-     *        side (e.g. 0.18 == 18%). Using the shortest side keeps the logo a
-     *        sensible size for both landscape and portrait photos.
-     * @param paddingFraction distance from the photo edges, relative to the photo's
-     *        shortest side (e.g. 0.04 == 4%).
+     * @param logoHeightFraction height of each logo relative to the photo's
+     *        *shortest* side (e.g. 0.12 == 12%). All logos share the same height
+     *        so the row stays visually aligned; each keeps its own aspect ratio.
+     * @param bottomPaddingFraction distance from the bottom edge, relative to the
+     *        photo's shortest side.
+     * @param gapFraction horizontal gap between logos, relative to the photo's
+     *        shortest side.
      * @param opacity logo opacity in the 0f..1f range.
      * @return a new ARGB_8888 bitmap; [photo] is left untouched.
      */
-    fun applyWatermark(
+    fun applyLogosRow(
         photo: Bitmap,
-        logo: Bitmap,
-        corner: Corner,
-        logoWidthFraction: Float = 0.18f,
-        paddingFraction: Float = 0.04f,
+        logos: List<Bitmap>,
+        logoHeightFraction: Float = 0.12f,
+        bottomPaddingFraction: Float = 0.05f,
+        gapFraction: Float = 0.04f,
         opacity: Float = 1f
     ): Bitmap {
         val result = photo.copy(Bitmap.Config.ARGB_8888, true)
-        val canvas = Canvas(result)
+        if (logos.isEmpty()) return result
 
+        val canvas = Canvas(result)
         val shortestSide = minOf(result.width, result.height).toFloat()
 
-        // Target logo size, preserving the logo's aspect ratio.
-        val targetLogoWidth = (shortestSide * logoWidthFraction).coerceAtLeast(1f)
-        val logoAspect = logo.height.toFloat() / logo.width.toFloat()
-        val targetLogoHeight = targetLogoWidth * logoAspect
+        val targetHeight = (shortestSide * logoHeightFraction).coerceAtLeast(1f)
+        val gap = shortestSide * gapFraction
+        val bottomPadding = shortestSide * bottomPaddingFraction
 
-        val padding = shortestSide * paddingFraction
+        // Width of each logo when scaled to the common target height.
+        val widths = logos.map { targetHeight * (it.width.toFloat() / it.height.toFloat()) }
+        var rowWidth = widths.sum() + gap * (logos.size - 1)
 
-        val left: Float
-        val top: Float
-        when (corner) {
-            Corner.TOP_LEFT -> {
-                left = padding
-                top = padding
-            }
-            Corner.TOP_RIGHT -> {
-                left = result.width - targetLogoWidth - padding
-                top = padding
-            }
-            Corner.BOTTOM_LEFT -> {
-                left = padding
-                top = result.height - targetLogoHeight - padding
-            }
-            Corner.BOTTOM_RIGHT -> {
-                left = result.width - targetLogoWidth - padding
-                top = result.height - targetLogoHeight - padding
-            }
-        }
+        // If the row is wider than 92% of the photo, scale the whole row to fit.
+        val maxWidth = result.width * 0.92f
+        val fit = if (rowWidth > maxWidth) maxWidth / rowWidth else 1f
+        val height = targetHeight * fit
+        val scaledGap = gap * fit
+        val scaledWidths = widths.map { it * fit }
+        rowWidth = scaledWidths.sum() + scaledGap * (logos.size - 1)
 
-        val dest = RectF(left, top, left + targetLogoWidth, top + targetLogoHeight)
-        val src = Rect(0, 0, logo.width, logo.height)
+        var x = (result.width - rowWidth) / 2f
+        val top = result.height - bottomPadding - height
 
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             isFilterBitmap = true
             isDither = true
             alpha = (opacity.coerceIn(0f, 1f) * 255).toInt()
         }
-        canvas.drawBitmap(logo, src, dest, paint)
+
+        logos.forEachIndexed { index, logo ->
+            val w = scaledWidths[index]
+            val dest = RectF(x, top, x + w, top + height)
+            val src = Rect(0, 0, logo.width, logo.height)
+            canvas.drawBitmap(logo, src, dest, paint)
+            x += w + scaledGap
+        }
         return result
     }
 

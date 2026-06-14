@@ -1,19 +1,23 @@
 # Photo Watermark
 
-Aplicativo Android para aplicar a sua **logo no canto** de qualquer quantidade de
-fotos de uma só vez, com um espaçamento (padding) elegante como em fotografias
-profissionais — e depois salvar todas na galeria.
+Aplicativo Android para aplicar **uma ou várias logos** em qualquer quantidade de
+fotos de uma só vez. As logos ficam **em linha, centralizadas e igualmente
+espaçadas na parte de baixo** da foto, com uma margem elegante como em
+fotografias profissionais — e depois é só salvar todas na galeria.
 
 ## Como funciona
 
-1. **Selecione as fotos** — escolha quantas fotos quiser (seleção múltipla).
-2. **Envie a logo** — depois de escolher as fotos, selecione a imagem da sua logo
-   (de preferência um PNG com fundo transparente).
-3. **Escolha o canto** — superior esquerdo, superior direito, inferior esquerdo ou
-   inferior direito.
-4. **Ajuste fino** (opcional) — tamanho da logo e distância da borda.
-5. **Aplicar e salvar todas** — a logo é desenhada em cada foto e todas são salvas
-   em `Imagens/Watermarked` na galeria do aparelho.
+1. **Adicione as fotos** — escolha quantas quiser (seleção múltipla). Pode ir
+   adicionando aos poucos e **remover** qualquer foto pelo “✕” na miniatura.
+2. **Envie as logos** — selecione **uma ou mais** logos (de preferência PNG com
+   fundo transparente). Todas entram numa fileira horizontal centralizada no
+   rodapé. Também dá para remover logos individualmente.
+3. **Ajustes** — tamanho das logos, distância da borda inferior e espaçamento
+   entre as logos.
+4. **Pré-visualização** — veja a 1ª foto já com as logos, atualizando ao vivo
+   conforme você muda os ajustes.
+5. **Aplicar e salvar tudo** — cada foto recebe a fileira de logos e é salva em
+   `Imagens/Watermarked` na galeria do aparelho.
 
 ## Detalhes técnicos
 
@@ -23,19 +27,21 @@ profissionais — e depois salvar todas na galeria.
 - Salvamento via **MediaStore** (armazenamento com escopo). Em Android 10+ nenhuma
   permissão é necessária para salvar; em Android 9 e abaixo o app pede
   `WRITE_EXTERNAL_STORAGE`.
-- A logo é dimensionada em relação ao **menor lado** da foto, então fica proporcional
-  tanto em paisagem quanto em retrato, preservando a proporção (aspect ratio) da logo.
+- As logos são dimensionadas pela **altura**, em relação ao **menor lado** da foto,
+  então a fileira fica proporcional tanto em paisagem quanto em retrato. Cada logo
+  mantém sua própria proporção, e a fileira inteira é centralizada; se for mais
+  larga que a foto, é reduzida automaticamente para caber.
 - A orientação **EXIF** das fotos é respeitada, e imagens muito grandes são
   reduzidas com segurança para evitar `OutOfMemoryError`.
-- O processamento roda fora da thread principal (coroutines) com barra de progresso.
+- O processamento (e o preview) rodam fora da thread principal (coroutines).
 
 ### Padrões / valores ajustáveis
 
-| Parâmetro            | Padrão | Intervalo |
-|----------------------|--------|-----------|
-| Canto                | Inferior direito | 4 cantos |
-| Tamanho da logo      | 18% do menor lado | 5%–40% |
-| Distância da borda   | 4% do menor lado  | 0%–15% |
+| Parâmetro                    | Padrão | Intervalo |
+|------------------------------|--------|-----------|
+| Tamanho das logos (altura)   | 12% do menor lado | 5%–30% |
+| Distância da borda inferior  | 5% do menor lado  | 0%–15% |
+| Espaçamento entre logos      | 4% do menor lado  | 0%–15% |
 
 ## Como compilar
 
@@ -58,9 +64,9 @@ O APK gerado fica em `app/build/outputs/apk/debug/app-debug.apk`.
 
 ```
 app/src/main/java/com/tekz/watermark/
-├── MainActivity.kt        # UI em Jetpack Compose (fluxo em 4 passos)
+├── MainActivity.kt        # UI em Jetpack Compose (fotos, logos, ajustes, preview)
 ├── WatermarkViewModel.kt  # estado da tela + processamento em lote
-└── WatermarkEngine.kt     # carregar, compor a logo e salvar na galeria
+└── WatermarkEngine.kt     # carregar, compor a fileira de logos e salvar na galeria
 ```
 
 ## Licença

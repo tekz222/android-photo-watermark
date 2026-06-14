@@ -2,23 +2,26 @@
 <resources>
     <string name="app_name">Photo Watermark</string>
 
-    <string name="group_title">Grupo %1$d</string>
-    <string name="add_group">Adicionar outra logo</string>
-    <string name="delete_group">Remover grupo</string>
+    <string name="step_photos">Selecione as fotos</string>
+    <string name="step_logos">Envie as logos</string>
+    <string name="step_adjust">Ajustes</string>
 
     <string name="add_photos">Adicionar fotos</string>
     <string name="remove_photo">Remover foto</string>
-    <string name="select_logo">Selecionar logo</string>
-    <string name="logo_hint">Adicione as fotos primeiro; depois envie a logo deste grupo.</string>
+    <string name="add_logos">Adicionar logos</string>
+    <string name="remove_logo">Remover logo</string>
+    <string name="logo_hint">Adicione as fotos primeiro; depois envie as logos.</string>
     <string name="photos_selected">%1$d foto(s)</string>
+    <string name="logos_selected">%1$d logo(s) — ficam em linha, centralizadas embaixo</string>
 
-    <string name="position_label">Posição da logo</string>
+    <string name="logo_size">Tamanho das logos: %1$d%%</string>
+    <string name="bottom_padding">Distância da borda inferior: %1$d%%</string>
+    <string name="gap">Espaçamento entre logos: %1$d%%</string>
+
     <string name="preview_label">Pré-visualização (1ª foto)</string>
-    <string name="logo_size">Tamanho da logo: %1$d%%</string>
-    <string name="padding">Distância da borda: %1$d%%</string>
 
     <string name="apply_and_save">Aplicar e salvar tudo</string>
-    <string name="save_location">As imagens são salvas em Imagens/Watermarked na galeria, cada foto com a logo do seu grupo.</string>
+    <string name="save_location">As imagens são salvas em Imagens/Watermarked na galeria.</string>
 
     <string name="processing">Processando %1$d de %2$d…</string>
     <string name="result_success">Pronto! %1$d foto(s) salva(s) na galeria.</string>
