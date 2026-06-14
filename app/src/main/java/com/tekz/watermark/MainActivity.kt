@@ -28,11 +28,15 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.NorthEast
 import androidx.compose.material.icons.filled.NorthWest
@@ -43,6 +47,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -55,12 +60,14 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -93,7 +100,7 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
 
-    // Remember whether the user is allowed to write to storage (only matters on API <= 28).
+    // Whether the user is allowed to write to storage (only matters on API <= 28).
     var hasLegacyWritePermission by remember {
         mutableStateOf(
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q ||
@@ -102,14 +109,6 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                 ) == PackageManager.PERMISSION_GRANTED
         )
     }
-
-    val photoPicker = rememberLauncherForActivityResult(
-        ActivityResultContracts.PickMultipleVisualMedia()
-    ) { uris -> if (uris.isNotEmpty()) viewModel.setPhotos(uris) }
-
-    val logoPicker = rememberLauncherForActivityResult(
-        ActivityResultContracts.PickVisualMedia()
-    ) { uri -> viewModel.setLogo(uri) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -152,112 +151,38 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // ---- Step 1: photos ----
-            StepCard(number = 1, title = stringResource(R.string.step_photos)) {
-                Button(
-                    onClick = {
-                        photoPicker.launch(
-                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                        )
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Icon(Icons.Filled.AddPhotoAlternate, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text(stringResource(R.string.select_photos))
-                }
-                if (state.photoUris.isNotEmpty()) {
-                    Spacer(Modifier.height(12.dp))
-                    Text(
-                        text = stringResource(R.string.photos_selected, state.photoUris.size),
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Medium
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(state.photoUris) { uri ->
-                            AsyncImage(
-                                model = uri,
-                                contentDescription = null,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier
-                                    .size(72.dp)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(MaterialTheme.colorScheme.surfaceVariant)
-                            )
-                        }
-                    }
-                }
-            }
-
-            // ---- Step 2: logo ----
-            StepCard(number = 2, title = stringResource(R.string.step_logo)) {
-                OutlinedButton(
-                    onClick = {
-                        logoPicker.launch(
-                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                        )
-                    },
-                    enabled = state.photoUris.isNotEmpty(),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Icon(Icons.Filled.Image, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text(stringResource(R.string.select_logo))
-                }
-                if (state.photoUris.isEmpty()) {
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        text = stringResource(R.string.logo_hint),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                state.logoUri?.let { logo ->
-                    Spacer(Modifier.height(12.dp))
-                    AsyncImage(
-                        model = logo,
-                        contentDescription = null,
-                        contentScale = ContentScale.Fit,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(96.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(MaterialTheme.colorScheme.surfaceVariant)
-                            .padding(8.dp)
+            state.groups.forEachIndexed { index, group ->
+                key(group.id) {
+                    GroupCard(
+                        index = index,
+                        group = group,
+                        canDelete = state.groups.size > 1,
+                        onAddPhotos = { viewModel.addPhotos(group.id, it) },
+                        onRemovePhoto = { viewModel.removePhoto(group.id, it) },
+                        onPickLogo = { viewModel.setLogo(group.id, it) },
+                        onCorner = { viewModel.setCorner(group.id, it) },
+                        onSize = { viewModel.setLogoWidthPercent(group.id, it) },
+                        onPadding = { viewModel.setPaddingPercent(group.id, it) },
+                        onDelete = { viewModel.removeGroup(group.id) }
                     )
                 }
             }
 
-            // ---- Step 3: position ----
-            StepCard(number = 3, title = stringResource(R.string.step_position)) {
-                CornerSelector(
-                    selected = state.corner,
-                    onSelect = viewModel::setCorner
-                )
-            }
-
-            // ---- Step 4: fine tuning ----
-            StepCard(number = 4, title = stringResource(R.string.step_adjust)) {
-                LabeledSlider(
-                    label = stringResource(R.string.logo_size, state.logoWidthPercent.roundToInt()),
-                    value = state.logoWidthPercent,
-                    valueRange = 5f..40f,
-                    onValueChange = viewModel::setLogoWidthPercent
-                )
-                Spacer(Modifier.height(8.dp))
-                LabeledSlider(
-                    label = stringResource(R.string.padding, state.paddingPercent.roundToInt()),
-                    value = state.paddingPercent,
-                    valueRange = 0f..15f,
-                    onValueChange = viewModel::setPaddingPercent
-                )
+            OutlinedButton(
+                onClick = { viewModel.addGroup() },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Filled.Add, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text(stringResource(R.string.add_group))
             }
 
             // ---- Action ----
             if (state.isProcessing) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
                     LinearProgressIndicator(
                         progress = {
                             if (state.total == 0) 0f
@@ -295,22 +220,45 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
 }
 
 @Composable
-private fun StepCard(number: Int, title: String, content: @Composable () -> Unit) {
+private fun GroupCard(
+    index: Int,
+    group: WatermarkGroup,
+    canDelete: Boolean,
+    onAddPhotos: (List<Uri>) -> Unit,
+    onRemovePhoto: (Uri) -> Unit,
+    onPickLogo: (Uri?) -> Unit,
+    onCorner: (Corner) -> Unit,
+    onSize: (Float) -> Unit,
+    onPadding: (Float) -> Unit,
+    onDelete: () -> Unit
+) {
+    val photoPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickMultipleVisualMedia()
+    ) { uris -> if (uris.isNotEmpty()) onAddPhotos(uris) }
+
+    val logoPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia()
+    ) { uri -> onPickLogo(uri) }
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            // Header: numbered badge + title + delete
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier
                         .size(28.dp)
-                        .clip(RoundedCornerShape(50))
+                        .clip(CircleShape)
                         .background(MaterialTheme.colorScheme.primary)
                 ) {
                     Text(
-                        text = number.toString(),
+                        text = (index + 1).toString(),
                         color = MaterialTheme.colorScheme.onPrimary,
                         fontWeight = FontWeight.Bold,
                         fontSize = 14.sp
@@ -318,13 +266,136 @@ private fun StepCard(number: Int, title: String, content: @Composable () -> Unit
                 }
                 Spacer(Modifier.width(12.dp))
                 Text(
-                    text = title,
+                    text = stringResource(R.string.group_title, index + 1),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )
+                Spacer(Modifier.weight(1f))
+                if (canDelete) {
+                    IconButton(onClick = onDelete) {
+                        Icon(
+                            Icons.Filled.Delete,
+                            contentDescription = stringResource(R.string.delete_group),
+                            tint = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
             }
-            Spacer(Modifier.height(12.dp))
-            content()
+
+            // Photos
+            Button(
+                onClick = {
+                    photoPicker.launch(
+                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                    )
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Filled.AddPhotoAlternate, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text(stringResource(R.string.add_photos))
+            }
+            if (group.photoUris.isNotEmpty()) {
+                Text(
+                    text = stringResource(R.string.photos_selected, group.photoUris.size),
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium
+                )
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(group.photoUris, key = { it.toString() }) { uri ->
+                        RemovableThumbnail(uri = uri, onRemove = { onRemovePhoto(uri) })
+                    }
+                }
+            }
+
+            // Logo
+            OutlinedButton(
+                onClick = {
+                    logoPicker.launch(
+                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                    )
+                },
+                enabled = group.photoUris.isNotEmpty(),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Filled.Image, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text(stringResource(R.string.select_logo))
+            }
+            if (group.photoUris.isEmpty()) {
+                Text(
+                    text = stringResource(R.string.logo_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            group.logoUri?.let { logo ->
+                AsyncImage(
+                    model = logo,
+                    contentDescription = null,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(96.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .padding(8.dp)
+                )
+            }
+
+            // Position
+            Text(
+                text = stringResource(R.string.position_label),
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Medium
+            )
+            CornerSelector(selected = group.corner, onSelect = onCorner)
+
+            // Fine tuning
+            LabeledSlider(
+                label = stringResource(R.string.logo_size, group.logoWidthPercent.roundToInt()),
+                value = group.logoWidthPercent,
+                valueRange = 5f..40f,
+                onValueChange = onSize
+            )
+            LabeledSlider(
+                label = stringResource(R.string.padding, group.paddingPercent.roundToInt()),
+                value = group.paddingPercent,
+                valueRange = 0f..15f,
+                onValueChange = onPadding
+            )
+        }
+    }
+}
+
+@Composable
+private fun RemovableThumbnail(uri: Uri, onRemove: () -> Unit) {
+    Box(modifier = Modifier.size(76.dp)) {
+        AsyncImage(
+            model = uri,
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .fillMaxSize()
+                .clip(RoundedCornerShape(8.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+        )
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(2.dp)
+                .size(22.dp)
+                .clip(CircleShape)
+                .background(Color.Black.copy(alpha = 0.6f))
+                .clickable { onRemove() }
+        ) {
+            Icon(
+                Icons.Filled.Close,
+                contentDescription = stringResource(R.string.remove_photo),
+                tint = Color.White,
+                modifier = Modifier.size(14.dp)
+            )
         }
     }
 }
