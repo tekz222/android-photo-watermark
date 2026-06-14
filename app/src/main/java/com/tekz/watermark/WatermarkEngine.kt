@@ -18,10 +18,14 @@ import androidx.exifinterface.media.ExifInterface
 import java.io.IOException
 
 /**
- * Stateless image-processing helper. It loads photos and logos, draws the
- * bottom logos as a left-anchored row that runs left-to-right (the logos touch
- * each other) and, optionally, a single logo in the top-right corner, then
- * writes the result to the device gallery.
+ * Stateless image-processing helper. It loads photos and logos and draws three
+ * independent groups onto each photo:
+ *
+ *  - a **bottom** row of logos (left-anchored, running left-to-right, touching),
+ *  - a **top-left** row of logos (same layout, anchored to the top-left), and
+ *  - a single **top-right** logo (the main company logo).
+ *
+ * The result is then written to the device gallery.
  */
 object WatermarkEngine {
 
@@ -29,44 +33,32 @@ object WatermarkEngine {
     const val ALBUM_NAME = "Watermarked"
 
     /**
-     * The bottom row begins slightly off the left edge so the first logo bleeds
-     * a little past the border, as requested ("a small negative left space").
-     * Expressed as a fraction of the photo's shortest side.
-     */
-    const val BOTTOM_LEFT_START_FRACTION = -0.02f
-
-    /**
-     * Draws [bottomLogos] and an optional [cornerLogo] onto a copy of [photo].
+     * Draws the bottom row, the top-left row and an optional top-right corner
+     * logo onto a copy of [photo]. The rows are laid out left-to-right with each
+     * logo touching the next (no gaps); every logo keeps its own aspect ratio.
      *
-     * The bottom logos are laid out from the left edge towards the right, each
-     * logo touching the next (no gaps), starting from a small negative offset so
-     * the first one bleeds past the left border. The corner logo, if present, is
-     * placed in the top-right corner.
+     * All sizes and margins are fractions of the photo's *shortest* side so the
+     * result looks consistent in both portrait and landscape.
      *
-     * @param bottomLogoHeightFraction height of each bottom logo relative to the
-     *        photo's *shortest* side (e.g. 0.12 == 12%). All bottom logos share
-     *        the same height; each keeps its own aspect ratio.
-     * @param bottomPaddingFraction distance from the bottom edge, relative to the
-     *        photo's shortest side.
-     * @param cornerLogoHeightFraction height of the corner logo relative to the
-     *        photo's shortest side.
-     * @param cornerMarginFraction distance of the corner logo from the top and
-     *        right edges, relative to the photo's shortest side.
-     * @param opacity logo opacity in the 0f..1f range.
      * @return a new ARGB_8888 bitmap; [photo] is left untouched.
      */
     fun applyWatermarks(
         photo: Bitmap,
-        bottomLogos: List<Bitmap>,
+        bottomLogos: List<Bitmap> = emptyList(),
+        topLeftLogos: List<Bitmap> = emptyList(),
         cornerLogo: Bitmap? = null,
         bottomLogoHeightFraction: Float = 0.12f,
-        bottomPaddingFraction: Float = 0f,
+        bottomMarginFraction: Float = 0.03f,
+        bottomLeftMarginFraction: Float = 0.03f,
+        topLeftLogoHeightFraction: Float = 0.12f,
+        topLeftTopMarginFraction: Float = 0.03f,
+        topLeftLeftMarginFraction: Float = 0.03f,
         cornerLogoHeightFraction: Float = 0.12f,
         cornerMarginFraction: Float = 0.04f,
         opacity: Float = 1f
     ): Bitmap {
         val result = photo.copy(Bitmap.Config.ARGB_8888, true)
-        if (bottomLogos.isEmpty() && cornerLogo == null) return result
+        if (bottomLogos.isEmpty() && topLeftLogos.isEmpty() && cornerLogo == null) return result
 
         val canvas = Canvas(result)
         val shortestSide = minOf(result.width, result.height).toFloat()
@@ -77,23 +69,23 @@ object WatermarkEngine {
             alpha = (opacity.coerceIn(0f, 1f) * 255).toInt()
         }
 
-        // ---- Bottom row: left-anchored, logos touching, left-to-right ----
-        if (bottomLogos.isNotEmpty()) {
-            val height = (shortestSide * bottomLogoHeightFraction).coerceAtLeast(1f)
-            val bottomPadding = shortestSide * bottomPaddingFraction
-            val top = result.height - bottomPadding - height
-
-            var x = shortestSide * BOTTOM_LEFT_START_FRACTION
-            bottomLogos.forEach { logo ->
-                val w = height * (logo.width.toFloat() / logo.height.toFloat())
-                val dest = RectF(x, top, x + w, top + height)
-                val src = Rect(0, 0, logo.width, logo.height)
-                canvas.drawBitmap(logo, src, dest, paint)
-                x += w
-            }
+        // ---- Top-left row ----
+        if (topLeftLogos.isNotEmpty()) {
+            val height = (shortestSide * topLeftLogoHeightFraction).coerceAtLeast(1f)
+            val top = shortestSide * topLeftTopMarginFraction
+            val startX = shortestSide * topLeftLeftMarginFraction
+            drawRow(canvas, topLeftLogos, startX, top, height, paint)
         }
 
-        // ---- Top-right corner logo ----
+        // ---- Bottom row ----
+        if (bottomLogos.isNotEmpty()) {
+            val height = (shortestSide * bottomLogoHeightFraction).coerceAtLeast(1f)
+            val top = result.height - shortestSide * bottomMarginFraction - height
+            val startX = shortestSide * bottomLeftMarginFraction
+            drawRow(canvas, bottomLogos, startX, top, height, paint)
+        }
+
+        // ---- Top-right corner logo (main company logo) ----
         if (cornerLogo != null) {
             val height = (shortestSide * cornerLogoHeightFraction).coerceAtLeast(1f)
             val width = height * (cornerLogo.width.toFloat() / cornerLogo.height.toFloat())
@@ -107,6 +99,28 @@ object WatermarkEngine {
         }
 
         return result
+    }
+
+    /**
+     * Draws [logos] as a single horizontal row starting at [startX]/[top], each
+     * logo scaled to [height] and placed immediately after the previous one.
+     */
+    private fun drawRow(
+        canvas: Canvas,
+        logos: List<Bitmap>,
+        startX: Float,
+        top: Float,
+        height: Float,
+        paint: Paint
+    ) {
+        var x = startX
+        logos.forEach { logo ->
+            val w = height * (logo.width.toFloat() / logo.height.toFloat())
+            val dest = RectF(x, top, x + w, top + height)
+            val src = Rect(0, 0, logo.width, logo.height)
+            canvas.drawBitmap(logo, src, dest, paint)
+            x += w
+        }
     }
 
     /**

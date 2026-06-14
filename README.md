@@ -1,23 +1,25 @@
 # Photo Watermark
 
-Aplicativo Android para aplicar **uma ou várias logos** em qualquer quantidade de
-fotos de uma só vez. As logos da base ficam **encostadas umas nas outras, da
-esquerda para a direita no rodapé** (começando um pouco antes da borda esquerda),
-e ainda dá para colocar **uma logo no canto superior direito** — depois é só
-salvar todas na galeria.
+Aplicativo Android para aplicar **logos** em qualquer quantidade de fotos de uma
+só vez, em três posições independentes:
+
+- uma fileira de logos na **base** (encostadas, da esquerda para a direita);
+- uma fileira de logos no **canto superior esquerdo** (mesmo layout);
+- uma única **logo principal** no **canto superior direito**.
+
+Depois é só salvar todas na galeria.
 
 ## Como funciona
 
 1. **Adicione as fotos** — escolha quantas quiser (seleção múltipla). Pode ir
    adicionando aos poucos e **remover** qualquer foto pelo “✕” na miniatura.
 2. **Logos da base** — selecione **uma ou mais** logos (de preferência PNG com
-   fundo transparente). Elas entram numa fileira no rodapé, **encostadas** da
-   esquerda para a direita, iniciando num **pequeno espaço negativo à esquerda**.
-   Também dá para remover logos individualmente.
-3. **Logo do canto superior direito** *(opcional)* — escolha **uma** logo para o
-   canto superior direito. Dá para trocar ou remover quando quiser.
-4. **Ajustes** — tamanho das logos da base e distância da borda inferior; tamanho
-   da logo do canto e distância do canto.
+   fundo transparente). Ficam numa fileira no rodapé, **encostadas** da esquerda
+   para a direita. Ajuste tamanho, distância da borda inferior e da esquerda.
+3. **Logos do canto superior esquerdo** — mesma ideia da base, mas no topo.
+   Ajuste tamanho, distância do topo e da esquerda.
+4. **Logo principal (canto superior direito)** — escolha **uma** logo. Dá para
+   trocar ou remover quando quiser, e ajustar o tamanho e a distância do canto.
 5. **Pré-visualização** — veja a 1ª foto já com as logos, atualizando ao vivo
    conforme você muda os ajustes.
 6. **Aplicar e salvar tudo** — cada foto recebe as logos e é salva em
@@ -33,8 +35,8 @@ salvar todas na galeria.
   `WRITE_EXTERNAL_STORAGE`.
 - As logos são dimensionadas pela **altura**, em relação ao **menor lado** da foto,
   então ficam proporcionais tanto em paisagem quanto em retrato. Cada logo mantém
-  sua própria proporção. As logos da base são ancoradas à esquerda e ficam
-  **encostadas** (sem espaço entre elas); a logo do canto fica alinhada ao canto
+  sua própria proporção. As fileiras (base e canto superior esquerdo) ficam
+  **encostadas** (sem espaço entre elas); a logo principal fica alinhada ao canto
   superior direito.
 - A orientação **EXIF** das fotos é respeitada, e imagens muito grandes são
   reduzidas com segurança para evitar `OutOfMemoryError`.
@@ -42,14 +44,16 @@ salvar todas na galeria.
 
 ### Padrões / valores ajustáveis
 
-| Parâmetro                         | Padrão | Intervalo |
-|-----------------------------------|--------|-----------|
-| Tamanho das logos da base (altura)| 12% do menor lado | 5%–30% |
-| Distância da borda inferior       | 0% do menor lado  | 0%–15% |
-| Tamanho da logo do canto (altura) | 12% do menor lado | 5%–30% |
-| Distância do canto                | 4% do menor lado  | 0%–15% |
-
-> O início negativo à esquerda da fileira da base é fixo em −2% do menor lado.
+| Parâmetro                                | Padrão | Intervalo |
+|------------------------------------------|--------|-----------|
+| Base — tamanho (altura)                  | 12% do menor lado | 5%–30% |
+| Base — distância da borda inferior       | 3% do menor lado  | 0%–15% |
+| Base — distância da borda esquerda       | 3% do menor lado  | 0%–15% |
+| Canto sup. esquerdo — tamanho (altura)   | 12% do menor lado | 5%–30% |
+| Canto sup. esquerdo — distância do topo  | 3% do menor lado  | 0%–15% |
+| Canto sup. esquerdo — distância esquerda | 3% do menor lado  | 0%–15% |
+| Logo principal — tamanho (altura)        | 12% do menor lado | 5%–30% |
+| Logo principal — distância do canto      | 4% do menor lado  | 0%–15% |
 
 ## Como compilar
 

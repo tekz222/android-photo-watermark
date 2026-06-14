@@ -3,25 +3,29 @@
     <string name="app_name">Photo Watermark</string>
 
     <string name="step_photos">Selecione as fotos</string>
-    <string name="step_logos">Logos da base</string>
-    <string name="step_corner_logo">Logo do canto superior direito</string>
-    <string name="step_adjust">Ajustes</string>
+    <string name="step_bottom_logos">Logos da base</string>
+    <string name="step_top_left_logos">Logos do canto superior esquerdo</string>
+    <string name="step_corner_logo">Logo principal (canto superior direito)</string>
+    <string name="step_preview">Pré-visualização e salvar</string>
 
     <string name="add_photos">Adicionar fotos</string>
     <string name="remove_photo">Remover foto</string>
     <string name="add_logos">Adicionar logos</string>
     <string name="remove_logo">Remover logo</string>
-    <string name="add_corner_logo">Adicionar logo do canto</string>
-    <string name="change_corner_logo">Trocar logo do canto</string>
-    <string name="remove_corner_logo">Remover logo do canto</string>
+    <string name="add_corner_logo">Adicionar logo principal</string>
+    <string name="change_corner_logo">Trocar logo principal</string>
+    <string name="remove_corner_logo">Remover logo principal</string>
     <string name="logo_hint">Adicione as fotos primeiro; depois envie as logos.</string>
-    <string name="corner_logo_hint">Opcional: uma logo no canto superior direito.</string>
+    <string name="bottom_logos_hint">Ficam encostadas, da esquerda para a direita, na base.</string>
+    <string name="top_left_logos_hint">Ficam encostadas, da esquerda para a direita, no topo.</string>
+    <string name="corner_logo_hint">Uma única logo no canto superior direito.</string>
     <string name="photos_selected">%1$d foto(s)</string>
-    <string name="logos_selected">%1$d logo(s) — encostadas, da esquerda para a direita na base</string>
+    <string name="logos_selected">%1$d logo(s)</string>
 
-    <string name="logo_size">Tamanho das logos da base: %1$d%%</string>
-    <string name="bottom_padding">Distância da borda inferior: %1$d%%</string>
-    <string name="corner_logo_size">Tamanho da logo do canto: %1$d%%</string>
+    <string name="logo_size">Tamanho: %1$d%%</string>
+    <string name="bottom_margin">Distância da borda inferior: %1$d%%</string>
+    <string name="left_margin">Distância da borda esquerda: %1$d%%</string>
+    <string name="top_margin">Distância da borda superior: %1$d%%</string>
     <string name="corner_margin">Distância do canto: %1$d%%</string>
 
     <string name="preview_label">Pré-visualização (1ª foto)</string>
