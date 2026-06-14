@@ -13,6 +13,7 @@
     <string name="photos_selected">%1$d foto(s)</string>
 
     <string name="position_label">Posição da logo</string>
+    <string name="preview_label">Pré-visualização (1ª foto)</string>
     <string name="logo_size">Tamanho da logo: %1$d%%</string>
     <string name="padding">Distância da borda: %1$d%%</string>
 

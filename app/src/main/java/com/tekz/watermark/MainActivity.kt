@@ -2,6 +2,7 @@ package com.tekz.watermark
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -10,6 +11,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -22,6 +24,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -45,6 +48,7 @@ import androidx.compose.material.icons.filled.SouthWest
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -68,6 +72,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -80,6 +85,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.tekz.watermark.ui.theme.PhotoWatermarkTheme
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
 class MainActivity : ComponentActivity() {
@@ -364,6 +371,89 @@ private fun GroupCard(
                 valueRange = 0f..15f,
                 onValueChange = onPadding
             )
+
+            // Live preview of the first photo with the logo applied.
+            val firstPhoto = group.photoUris.firstOrNull()
+            val logo = group.logoUri
+            if (firstPhoto != null && logo != null) {
+                Text(
+                    text = stringResource(R.string.preview_label),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Medium
+                )
+                WatermarkPreview(
+                    photoUri = firstPhoto,
+                    logoUri = logo,
+                    corner = group.corner,
+                    logoWidthPercent = group.logoWidthPercent,
+                    paddingPercent = group.paddingPercent
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun WatermarkPreview(
+    photoUri: Uri,
+    logoUri: Uri,
+    corner: Corner,
+    logoWidthPercent: Float,
+    paddingPercent: Float
+) {
+    val context = LocalContext.current
+
+    // Downscaled source bitmaps, reloaded only when the photo/logo actually changes.
+    var source by remember(photoUri) { mutableStateOf<Bitmap?>(null) }
+    var logo by remember(logoUri) { mutableStateOf<Bitmap?>(null) }
+
+    LaunchedEffect(photoUri) {
+        source = withContext(Dispatchers.Default) {
+            WatermarkEngine.loadBitmap(context.contentResolver, photoUri, maxDimension = 1080)
+        }
+    }
+    LaunchedEffect(logoUri) {
+        logo = withContext(Dispatchers.Default) {
+            WatermarkEngine.loadBitmap(context.contentResolver, logoUri, maxDimension = 1080)
+        }
+    }
+
+    // Recompose the watermarked preview whenever a source or a placement setting changes.
+    val src = source
+    val lg = logo
+    var preview by remember { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(src, lg, corner, logoWidthPercent, paddingPercent) {
+        if (src != null && lg != null) {
+            preview = withContext(Dispatchers.Default) {
+                WatermarkEngine.applyWatermark(
+                    photo = src,
+                    logo = lg,
+                    corner = corner,
+                    logoWidthFraction = logoWidthPercent / 100f,
+                    paddingFraction = paddingPercent / 100f
+                )
+            }
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 120.dp, max = 360.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant),
+        contentAlignment = Alignment.Center
+    ) {
+        val bmp = preview
+        if (bmp != null) {
+            Image(
+                bitmap = bmp.asImageBitmap(),
+                contentDescription = stringResource(R.string.preview_label),
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxWidth()
+            )
+        } else {
+            CircularProgressIndicator(modifier = Modifier.padding(24.dp))
         }
     }
 }
