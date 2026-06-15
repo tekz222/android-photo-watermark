@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io' show File;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
@@ -7,6 +8,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:gal/gal.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import 'models.dart';
@@ -201,6 +203,7 @@ class _HomePageState extends State<HomePage> {
     }
     // Keep the device awake so a long save isn't interrupted by auto-lock.
     await WakelockPlus.enable();
+    final album = await _nextAlbum();
     setState(() {
       _processing = true;
       _done = 0;
@@ -225,8 +228,7 @@ class _HomePageState extends State<HomePage> {
         final bytes = await next.readAsBytes();
         final out = await compute(renderWatermark, _request(bytes, png: true));
         final ts = DateTime.now().microsecondsSinceEpoch;
-        await Gal.putImageBytes(out,
-            album: 'Watermarked', name: 'watermarked_$ts.png');
+        await Gal.putImageBytes(out, album: album, name: 'watermarked_$ts.png');
         saved++;
       } catch (_) {
         failed++;
@@ -238,10 +240,78 @@ class _HomePageState extends State<HomePage> {
     }
 
     await WakelockPlus.disable();
+    await _addHistory(album, saved, failed);
     setState(() => _processing = false);
     _snack(failed == 0
-        ? 'Pronto! $saved foto(s) salva(s) na galeria.'
+        ? 'Pronto! $saved foto(s) salva(s) no álbum "$album".'
         : '$saved salva(s), $failed falharam.');
+  }
+
+  // ---- Album numbering + history (shared_preferences) ----
+
+  Future<String> _nextAlbum() async {
+    final p = await SharedPreferences.getInstance();
+    final n = (p.getInt('album_counter') ?? 0) + 1;
+    await p.setInt('album_counter', n);
+    return 'Watermarked $n';
+  }
+
+  Future<void> _addHistory(String album, int saved, int failed) async {
+    final p = await SharedPreferences.getInstance();
+    final list = p.getStringList('runs') ?? [];
+    list.add(jsonEncode({
+      'album': album,
+      'time': DateTime.now().millisecondsSinceEpoch,
+      'saved': saved,
+      'failed': failed,
+    }));
+    await p.setStringList('runs', list);
+  }
+
+  Future<List<Map<String, dynamic>>> _getHistory() async {
+    final p = await SharedPreferences.getInstance();
+    final list = p.getStringList('runs') ?? [];
+    return list.reversed
+        .map((s) => jsonDecode(s) as Map<String, dynamic>)
+        .toList();
+  }
+
+  String _fmtDate(int millis) {
+    final d = DateTime.fromMillisecondsSinceEpoch(millis);
+    String two(int v) => v.toString().padLeft(2, '0');
+    return '${two(d.day)}/${two(d.month)}/${d.year} ${two(d.hour)}:${two(d.minute)}';
+  }
+
+  Future<void> _openHistory() async {
+    final runs = await _getHistory();
+    if (!mounted) return;
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Histórico de salvamentos'),
+        content: runs.isEmpty
+            ? const Text('Nenhum salvamento ainda.')
+            : SizedBox(
+                width: double.maxFinite,
+                child: ListView(
+                  shrinkWrap: true,
+                  children: runs.map((r) {
+                    return ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(r['album'] as String),
+                      subtitle: Text(
+                          '${r['saved']} foto(s) · ${_fmtDate(r['time'] as int)}'),
+                    );
+                  }).toList(),
+                ),
+              ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Fechar')),
+        ],
+      ),
+    );
   }
 
   void _snack(String msg) {
@@ -255,7 +325,16 @@ class _HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Photo Watermark')),
+      appBar: AppBar(
+        title: const Text('Photo Watermark'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.history),
+            tooltip: 'Histórico',
+            onPressed: _openHistory,
+          ),
+        ],
+      ),
       body: Column(
         children: [
           if (_photos.isNotEmpty && _hasAnyLogo) _previewBar(),

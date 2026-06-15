@@ -234,7 +234,8 @@ object WatermarkEngine {
         bitmap: Bitmap,
         displayName: String,
         quality: Int = 95,
-        png: Boolean = false
+        png: Boolean = false,
+        album: String = ALBUM_NAME
     ): Uri? {
         val resolver = context.contentResolver
         val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -249,7 +250,7 @@ object WatermarkEngine {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 put(
                     MediaStore.Images.Media.RELATIVE_PATH,
-                    "${Environment.DIRECTORY_PICTURES}/$ALBUM_NAME"
+                    "${Environment.DIRECTORY_PICTURES}/$album"
                 )
                 put(MediaStore.Images.Media.IS_PENDING, 1)
             }

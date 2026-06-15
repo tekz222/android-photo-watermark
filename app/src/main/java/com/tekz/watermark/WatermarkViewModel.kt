@@ -68,14 +68,44 @@ class WatermarkViewModel(app: Application) : AndroidViewModel(app) {
     private val _uiState = MutableStateFlow(WatermarkUiState())
     val uiState: StateFlow<WatermarkUiState> = _uiState.asStateFlow()
 
+    init {
+        // Mirror the background service's progress into the UI state.
+        viewModelScope.launch {
+            WatermarkJob.progress.collect { p ->
+                _uiState.update { s ->
+                    when {
+                        p.finished && s.isProcessing -> s.copy(
+                            isProcessing = false,
+                            processed = p.processed,
+                            total = p.total,
+                            lastResult = ProcessResult(saved = p.saved, failed = p.failed)
+                        )
+                        !p.finished -> s.copy(
+                            isProcessing = p.running,
+                            processed = p.processed,
+                            total = p.total
+                        )
+                        else -> s
+                    }
+                }
+            }
+        }
+    }
+
     /** Monotonic id source so every appended logo entry is unique. */
     private var nextLogoId = 0L
     private fun newLogoItems(uris: List<Uri>): List<LogoItem> =
         uris.map { LogoItem(id = nextLogoId++, uri = it) }
 
-    /** Adds newly picked photos, ignoring duplicates already present. */
-    fun addPhotos(uris: List<Uri>) = _uiState.update {
-        it.copy(photoUris = (it.photoUris + uris).distinct(), lastResult = null)
+    /** Adds newly picked photos, ignoring duplicates already present. When a save
+     * is running, the new photos are queued into the background job too. */
+    fun addPhotos(uris: List<Uri>) {
+        _uiState.update {
+            it.copy(photoUris = (it.photoUris + uris).distinct(), lastResult = null)
+        }
+        if (_uiState.value.isProcessing) {
+            WatermarkJob.addPhotos(uris)
+        }
     }
 
     fun removePhoto(uri: Uri) = _uiState.update {
@@ -167,10 +197,14 @@ class WatermarkViewModel(app: Application) : AndroidViewModel(app) {
         _uiState.update { it.copy(messageRes = null) }
     }
 
+    /** Past save runs, newest first (album, time, counts). */
+    fun history(): List<SaveRun> = HistoryStore.getRuns(getApplication())
+
     /**
-     * Processes every photo: loads it, draws the row of logos centered along the
-     * bottom and saves the result to the gallery. Runs off the main thread and
-     * publishes progress as it goes.
+     * Starts the background [WatermarkService] which applies the logos to every
+     * photo and saves them. Each run goes into its own album ("Watermarked N").
+     * The service keeps running even if the app is backgrounded; progress is
+     * mirrored back into [uiState] via [WatermarkJob.progress].
      */
     fun processAll() {
         val state = _uiState.value
@@ -178,85 +212,34 @@ class WatermarkViewModel(app: Application) : AndroidViewModel(app) {
         if (state.photoUris.isEmpty()) return
         if (!state.hasAnyLogo) return
 
-        viewModelScope.launch {
-            _uiState.update {
-                it.copy(
-                    isProcessing = true,
-                    processed = 0,
-                    total = state.photoUris.size,
-                    lastResult = null
-                )
-            }
+        val context = getApplication<Application>()
+        val album = "Watermarked ${HistoryStore.nextAlbumNumber(context)}"
 
-            val result = withContext(Dispatchers.Default) {
-                val context = getApplication<Application>()
-                val resolver = context.contentResolver
+        WatermarkJob.bottomLogoUris = state.logos.map { it.uri }
+        WatermarkJob.topLeftLogoUris = state.topLeftLogos.map { it.uri }
+        WatermarkJob.cornerLogoUri = state.cornerLogoUri
+        WatermarkJob.logoHeightFraction = state.logoHeightPercent / 100f
+        WatermarkJob.leftMarginFraction = state.leftMarginPercent / 100f
+        WatermarkJob.rowOpacity = state.logoOpacityPercent / 100f
+        WatermarkJob.bottomMarginFraction = state.bottomMarginPercent / 100f
+        WatermarkJob.topMarginFraction = state.topMarginPercent / 100f
+        WatermarkJob.cornerHeightFraction = state.cornerLogoHeightPercent / 100f
+        WatermarkJob.cornerMarginFraction = state.cornerMarginPercent / 100f
+        WatermarkJob.centered = state.centered
+        WatermarkJob.albumName = album
+        WatermarkJob.reset(state.photoUris)
+        WatermarkJob.progress.value = WatermarkJob.Progress(
+            running = true, processed = 0, total = state.photoUris.size
+        )
 
-                // Decode each distinct logo uri once, even when it repeats in a row.
-                val logoCache = HashMap<Uri, android.graphics.Bitmap?>()
-                fun bitmapFor(uri: Uri) =
-                    logoCache.getOrPut(uri) { WatermarkEngine.loadBitmap(resolver, uri) }
-
-                val logos = state.logos.mapNotNull { bitmapFor(it.uri) }
-                val topLeftLogos = state.topLeftLogos.mapNotNull { bitmapFor(it.uri) }
-                val cornerLogo = state.cornerLogoUri?.let { bitmapFor(it) }
-                if (logos.isEmpty() && topLeftLogos.isEmpty() && cornerLogo == null) {
-                    return@withContext ProcessResult(saved = 0, failed = state.photoUris.size)
-                }
-
-                val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-                var saved = 0
-                var failed = 0
-                var index = 0
-                val processed = HashSet<Uri>()
-
-                // Process until every selected photo is done, including any added
-                // during the run (queued behaviour).
-                while (true) {
-                    val photoUri = _uiState.value.photoUris.firstOrNull { it !in processed }
-                        ?: break
-                    processed.add(photoUri)
-
-                    // Load at high resolution so saved images keep their size.
-                    val photo = WatermarkEngine.loadBitmap(resolver, photoUri, maxDimension = 8192)
-                    if (photo == null) {
-                        failed++
-                    } else {
-                        val output = WatermarkEngine.applyWatermarks(
-                            photo = photo,
-                            bottomLogos = logos,
-                            topLeftLogos = topLeftLogos,
-                            cornerLogo = cornerLogo,
-                            bottomLogoHeightFraction = state.logoHeightPercent / 100f,
-                            bottomMarginFraction = state.bottomMarginPercent / 100f,
-                            bottomLeftMarginFraction = state.leftMarginPercent / 100f,
-                            topLeftLogoHeightFraction = state.logoHeightPercent / 100f,
-                            topLeftTopMarginFraction = state.topMarginPercent / 100f,
-                            topLeftLeftMarginFraction = state.leftMarginPercent / 100f,
-                            cornerLogoHeightFraction = state.cornerLogoHeightPercent / 100f,
-                            cornerMarginFraction = state.cornerMarginPercent / 100f,
-                            rowLogoOpacity = state.logoOpacityPercent / 100f,
-                            centered = state.centered
-                        )
-                        val name = "watermarked_${stamp}_${index + 1}.png"
-                        val uri = WatermarkEngine.saveToGallery(context, output, name, png = true)
-                        if (uri != null) saved++ else failed++
-
-                        photo.recycle()
-                        output.recycle()
-                    }
-                    index++
-                    _uiState.update {
-                        it.copy(processed = processed.size, total = it.photoUris.size)
-                    }
-                }
-
-                // Each distinct bitmap was cached, so recycle them once here.
-                logoCache.values.forEach { it?.recycle() }
-                ProcessResult(saved = saved, failed = failed)
-            }
-
-            _uiState.update { it.copy(isProcessing = false, lastResult = result) }
+        _uiState.update {
+            it.copy(
+                isProcessing = true,
+                processed = 0,
+                total = state.photoUris.size,
+                lastResult = null
+            )
         }
+        WatermarkService.start(context)
     }
 }

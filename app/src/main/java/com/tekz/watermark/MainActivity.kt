@@ -51,6 +51,7 @@ import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DragHandle
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material3.AlertDialog
@@ -61,6 +62,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -111,6 +113,9 @@ import com.tekz.watermark.ui.theme.PhotoWatermarkTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlin.math.roundToInt
 
 /** How many of the selected photos to show in the live preview. */
@@ -134,6 +139,8 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
     var confirmAddDuringSave by remember { mutableStateOf(false) }
+    var showHistory by remember { mutableStateOf(false) }
+    var historyRuns by remember { mutableStateOf<List<SaveRun>>(emptyList()) }
 
     // Whether the user is allowed to write to storage (only matters on API <= 28).
     var hasLegacyWritePermission by remember {
@@ -166,6 +173,21 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
     ) { granted ->
         hasLegacyWritePermission = granted
         if (granted) viewModel.processAll()
+    }
+
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { /* The save still runs even if the notification is denied. */ }
+
+    // Ask once for notification permission so the "Saving…" notification shows.
+    LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(
+                context, Manifest.permission.POST_NOTIFICATIONS
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
     }
 
     fun startProcessing() {
@@ -217,9 +239,26 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
         )
     }
 
+    if (showHistory) {
+        HistoryDialog(runs = historyRuns, onDismiss = { showHistory = false })
+    }
+
     Scaffold(
         topBar = {
-            TopAppBar(title = { Text(stringResource(R.string.app_name)) })
+            TopAppBar(
+                title = { Text(stringResource(R.string.app_name)) },
+                actions = {
+                    IconButton(onClick = {
+                        historyRuns = viewModel.history()
+                        showHistory = true
+                    }) {
+                        Icon(
+                            Icons.Filled.History,
+                            contentDescription = stringResource(R.string.history_title)
+                        )
+                    }
+                }
+            )
         },
         snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { innerPadding ->
@@ -1091,6 +1130,45 @@ private fun PlacementIcon(placement: Placement, modifier: Modifier = Modifier.si
             }
         }
     }
+}
+
+@Composable
+private fun HistoryDialog(runs: List<SaveRun>, onDismiss: () -> Unit) {
+    val formatter = remember { SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.close)) }
+        },
+        title = { Text(stringResource(R.string.history_title)) },
+        text = {
+            if (runs.isEmpty()) {
+                Text(stringResource(R.string.history_empty))
+            } else {
+                Column(
+                    modifier = Modifier
+                        .heightIn(max = 400.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    runs.forEach { run ->
+                        Column(modifier = Modifier.padding(vertical = 6.dp)) {
+                            Text(run.album, fontWeight = FontWeight.Medium)
+                            val sub = stringResource(
+                                R.string.history_entry,
+                                run.saved.toString(),
+                                formatter.format(Date(run.timeMillis))
+                            )
+                            Text(
+                                text = sub,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    )
 }
 
 @Composable
