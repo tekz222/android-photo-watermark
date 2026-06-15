@@ -1,17 +1,26 @@
 import 'dart:async';
 import 'dart:io' show File;
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:gal/gal.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 import 'models.dart';
 import 'watermark_engine.dart';
 
 /// How many of the selected photos to render in the live preview.
 const int kMaxPreview = 5;
+
+/// A rendered preview plus its aspect ratio, so its frame can match the image.
+class _Preview {
+  _Preview(this.bytes, this.aspect);
+  final Uint8List bytes;
+  final double aspect; // width / height
+}
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -41,7 +50,7 @@ class _HomePageState extends State<HomePage> {
 
   // Preview state.
   final Map<String, Uint8List> _photoCache = {};
-  List<Uint8List> _previews = [];
+  List<_Preview> _previews = [];
   int _previewToken = 0;
   Timer? _debounce;
 
@@ -117,14 +126,20 @@ class _HomePageState extends State<HomePage> {
       setState(() => _previews = []);
       return;
     }
-    final results = <Uint8List>[];
+    final results = <_Preview>[];
     for (final p in photos) {
       final bytes = _photoCache[p.path] ??= await p.readAsBytes();
       if (token != _previewToken) return;
       final out =
           await compute(renderWatermark, _request(bytes, maxDim: 900, quality: 85));
       if (token != _previewToken) return;
-      results.add(out);
+      final decoded = await ui.decodeImageFromList(out);
+      final aspect = decoded.height == 0
+          ? 1.0
+          : decoded.width / decoded.height;
+      decoded.dispose();
+      if (token != _previewToken) return;
+      results.add(_Preview(out, aspect));
       setState(() => _previews = List.of(results));
     }
   }
@@ -158,25 +173,43 @@ class _HomePageState extends State<HomePage> {
       _snack('Permissão da galeria negada.');
       return;
     }
+    // Keep the device awake so a long save isn't interrupted by auto-lock.
+    await WakelockPlus.enable();
     setState(() {
       _processing = true;
       _done = 0;
       _total = _photos.length;
     });
 
+    // Process by path so photos ADDED during the save are still picked up; each
+    // photo is processed exactly once.
+    final processed = <String>{};
     var saved = 0, failed = 0;
-    for (final p in _photos) {
+    while (mounted) {
+      XFile? next;
+      for (final p in _photos) {
+        if (!processed.contains(p.path)) {
+          next = p;
+          break;
+        }
+      }
+      if (next == null) break; // nothing left, including any added meanwhile
+      processed.add(next.path);
       try {
-        final bytes = await p.readAsBytes();
+        final bytes = await next.readAsBytes();
         final out = await compute(renderWatermark, _request(bytes, quality: 95));
         await Gal.putImageBytes(out, album: 'Watermarked');
         saved++;
       } catch (_) {
         failed++;
       }
-      setState(() => _done++);
+      setState(() {
+        _done = processed.length;
+        _total = _photos.length;
+      });
     }
 
+    await WakelockPlus.disable();
     setState(() => _processing = false);
     _snack(failed == 0
         ? 'Pronto! $saved foto(s) salva(s) na galeria.'
@@ -272,7 +305,7 @@ class _HomePageState extends State<HomePage> {
             ),
             const SizedBox(height: 6),
             SizedBox(
-              height: 200,
+              height: 208,
               child: _previews.isEmpty
                   ? const Center(child: CircularProgressIndicator())
                   : ListView.separated(
@@ -289,33 +322,45 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _previewTile(int i) {
-    final width = MediaQuery.of(context).size.width *
-        (_previews.length > 1 ? 0.82 : 0.92);
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(8),
-      child: Container(
-        width: width,
-        color: Theme.of(context).colorScheme.surfaceVariant,
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            Image.memory(_previews[i], fit: BoxFit.contain),
-            if (_previews.length > 1)
-              Positioned(
-                left: 6,
-                top: 6,
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: Colors.black54,
-                    borderRadius: BorderRadius.circular(6),
+    final p = _previews[i];
+    // Frame matches the image's aspect ratio (no big empty rectangle), capped
+    // to the available height/width.
+    const maxH = 196.0;
+    final maxW = MediaQuery.of(context).size.width * 0.9;
+    double w = maxH * p.aspect;
+    double h = maxH;
+    if (w > maxW) {
+      w = maxW;
+      h = maxW / p.aspect;
+    }
+    return Center(
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: SizedBox(
+          width: w,
+          height: h,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              Image.memory(p.bytes, fit: BoxFit.cover),
+              if (_previews.length > 1)
+                Positioned(
+                  left: 6,
+                  top: 6,
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Colors.black54,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text('${i + 1}/${_previews.length}',
+                        style:
+                            const TextStyle(color: Colors.white, fontSize: 11)),
                   ),
-                  child: Text('${i + 1}/${_previews.length}',
-                      style: const TextStyle(color: Colors.white, fontSize: 11)),
                 ),
-              ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -346,6 +391,7 @@ class _HomePageState extends State<HomePage> {
                 itemCount: _photos.length,
                 separatorBuilder: (_, __) => const SizedBox(width: 8),
                 itemBuilder: (context, i) => _thumb(
+                  enabled: !_processing,
                   child: Image.file(File(_photos[i].path), fit: BoxFit.cover),
                   onRemove: () {
                     setState(() => _photos.removeAt(i));
@@ -377,7 +423,7 @@ class _HomePageState extends State<HomePage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           OutlinedButton.icon(
-            onPressed: _photos.isEmpty ? null : onAdd,
+            onPressed: (_photos.isEmpty || _processing) ? null : onAdd,
             icon: const Icon(Icons.image_outlined),
             label: const Text('Adicionar logos'),
           ),
@@ -399,9 +445,10 @@ class _HomePageState extends State<HomePage> {
             ReorderableListView.builder(
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
-              buildDefaultDragHandles: true,
+              buildDefaultDragHandles: !_processing,
               itemCount: items.length,
               onReorder: (oldIndex, newIndex) {
+                if (_processing) return;
                 setState(() {
                   if (newIndex > oldIndex) newIndex -= 1;
                   items.insert(newIndex, items.removeAt(oldIndex));
@@ -425,10 +472,12 @@ class _HomePageState extends State<HomePage> {
                   title: Text('Logo ${i + 1}'),
                   trailing: IconButton(
                     icon: const Icon(Icons.close),
-                    onPressed: () {
-                      setState(() => items.removeAt(i));
-                      _schedulePreview();
-                    },
+                    onPressed: _processing
+                        ? null
+                        : () {
+                            setState(() => items.removeAt(i));
+                            _schedulePreview();
+                          },
                   ),
                 );
               },
@@ -449,7 +498,8 @@ class _HomePageState extends State<HomePage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           OutlinedButton.icon(
-            onPressed: _photos.isEmpty ? null : _pickCornerLogo,
+            onPressed:
+                (_photos.isEmpty || _processing) ? null : _pickCornerLogo,
             icon: const Icon(Icons.image_outlined),
             label: Text(_cornerLogo == null
                 ? 'Adicionar logo principal'
@@ -461,6 +511,7 @@ class _HomePageState extends State<HomePage> {
           if (_cornerLogo != null) ...[
             const SizedBox(height: 12),
             _thumb(
+              enabled: !_processing,
               child: Image.memory(_cornerLogo!.bytes, fit: BoxFit.contain),
               onRemove: () {
                 setState(() => _cornerLogo = null);
@@ -485,6 +536,12 @@ class _HomePageState extends State<HomePage> {
           LinearProgressIndicator(value: progress),
           const SizedBox(height: 8),
           Text('Processando $_done de $_total…'),
+          const SizedBox(height: 4),
+          Text(
+            'Você pode adicionar mais fotos — elas entram na fila. Mantenha o app aberto.',
+            style: Theme.of(context).textTheme.bodySmall,
+            textAlign: TextAlign.center,
+          ),
         ],
       );
     }
@@ -517,16 +574,22 @@ class _HomePageState extends State<HomePage> {
           value: value,
           min: min,
           max: max,
-          onChanged: (v) {
-            onChanged(v);
-            _schedulePreview();
-          },
+          onChanged: _processing
+              ? null
+              : (v) {
+                  onChanged(v);
+                  _schedulePreview();
+                },
         ),
       ],
     );
   }
 
-  Widget _thumb({required Widget child, required VoidCallback onRemove}) {
+  Widget _thumb({
+    required Widget child,
+    required VoidCallback onRemove,
+    bool enabled = true,
+  }) {
     return SizedBox(
       width: 76,
       height: 76,
@@ -541,19 +604,21 @@ class _HomePageState extends State<HomePage> {
               child: child,
             ),
           ),
-          Positioned(
-            top: 2,
-            right: 2,
-            child: GestureDetector(
-              onTap: onRemove,
-              child: Container(
-                decoration: const BoxDecoration(
-                    color: Colors.black54, shape: BoxShape.circle),
-                padding: const EdgeInsets.all(2),
-                child: const Icon(Icons.close, size: 16, color: Colors.white),
+          if (enabled)
+            Positioned(
+              top: 2,
+              right: 2,
+              child: GestureDetector(
+                onTap: onRemove,
+                child: Container(
+                  decoration: const BoxDecoration(
+                      color: Colors.black54, shape: BoxShape.circle),
+                  padding: const EdgeInsets.all(2),
+                  child:
+                      const Icon(Icons.close, size: 16, color: Colors.white),
+                ),
               ),
             ),
-          ),
         ],
       ),
     );
