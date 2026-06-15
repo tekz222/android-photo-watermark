@@ -11,12 +11,14 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.animate
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -63,8 +65,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -76,13 +80,13 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
@@ -92,6 +96,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.tekz.watermark.ui.theme.PhotoWatermarkTheme
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
@@ -555,10 +560,11 @@ private fun MultiLogoPicker(
 }
 
 /**
- * Vertical list of logos that can be reordered by long-pressing the drag handle
- * and dragging up or down. Top-to-bottom here is the same as left-to-right in
- * the photo. Each row has a fixed height so the drag distance maps cleanly to a
- * change in position.
+ * Vertical list of logos reordered by long-pressing the drag handle and dragging
+ * up or down. The dragged row follows the finger; the other rows slide out of
+ * the way with a spring animation (the list isn't mutated until the finger is
+ * lifted, so nothing snaps). Dragging across several positions is seamless.
+ * Top-to-bottom here is the same as left-to-right in the photo.
  */
 @Composable
 private fun ReorderableLogoList(
@@ -569,20 +575,40 @@ private fun ReorderableLogoList(
     val rowHeight = 64.dp
     val rowHeightPx = with(LocalDensity.current) { rowHeight.toPx() }
     val latestItems by rememberUpdatedState(items)
+    val scope = rememberCoroutineScope()
 
-    var draggingId by remember { mutableStateOf<Long?>(null) }
+    var dragIndex by remember { mutableIntStateOf(-1) }
     var dragOffset by remember { mutableFloatStateOf(0f) }
+
+    // Where the dragged row currently wants to land.
+    val targetIndex =
+        if (dragIndex >= 0) {
+            (dragIndex + (dragOffset / rowHeightPx).roundToInt()).coerceIn(0, items.lastIndex)
+        } else {
+            -1
+        }
 
     Column(modifier = Modifier.fillMaxWidth()) {
         items.forEachIndexed { index, item ->
-            val isDragging = item.id == draggingId
+            val isDragging = index == dragIndex
+
+            // Resting shift for the rows the dragged one is passing over.
+            val shift = when {
+                dragIndex < 0 || isDragging -> 0f
+                dragIndex < targetIndex && index in (dragIndex + 1)..targetIndex -> -rowHeightPx
+                dragIndex > targetIndex && index in targetIndex until dragIndex -> rowHeightPx
+                else -> 0f
+            }
+            val animatedShift by animateFloatAsState(targetValue = shift, label = "shift")
+            val translateY = if (isDragging) dragOffset else animatedShift
+
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(rowHeight)
                     .zIndex(if (isDragging) 1f else 0f)
-                    .offset { IntOffset(0, if (isDragging) dragOffset.roundToInt() else 0) }
+                    .graphicsLayer { translationY = translateY }
             ) {
                 AsyncImage(
                     model = item.uri,
@@ -621,23 +647,41 @@ private fun ReorderableLogoList(
                         .pointerInput(item.id) {
                             detectDragGesturesAfterLongPress(
                                 onDragStart = {
-                                    draggingId = item.id
+                                    dragIndex = latestItems.indexOfFirst { it.id == item.id }
                                     dragOffset = 0f
                                 },
-                                onDragEnd = { draggingId = null; dragOffset = 0f },
-                                onDragCancel = { draggingId = null; dragOffset = 0f },
+                                onDragEnd = {
+                                    val from = dragIndex
+                                    val to = if (from >= 0) {
+                                        (from + (dragOffset / rowHeightPx).roundToInt())
+                                            .coerceIn(0, latestItems.lastIndex)
+                                    } else {
+                                        from
+                                    }
+                                    scope.launch {
+                                        // Glide the dragged row into the open slot, then commit.
+                                        animate(
+                                            dragOffset,
+                                            (to - from) * rowHeightPx,
+                                            animationSpec = tween(150)
+                                        ) { v, _ -> dragOffset = v }
+                                        if (from >= 0 && to >= 0 && from != to) onMove(from, to)
+                                        dragIndex = -1
+                                        dragOffset = 0f
+                                    }
+                                },
+                                onDragCancel = {
+                                    scope.launch {
+                                        animate(dragOffset, 0f, animationSpec = tween(150)) { v, _ ->
+                                            dragOffset = v
+                                        }
+                                        dragIndex = -1
+                                        dragOffset = 0f
+                                    }
+                                },
                                 onDrag = { change, dragAmount ->
                                     change.consume()
                                     dragOffset += dragAmount.y
-                                    val cur = latestItems.indexOfFirst { it.id == item.id }
-                                    if (cur >= 0) {
-                                        val target = (cur + (dragOffset / rowHeightPx).roundToInt())
-                                            .coerceIn(0, latestItems.lastIndex)
-                                        if (target != cur) {
-                                            onMove(cur, target)
-                                            dragOffset -= (target - cur) * rowHeightPx
-                                        }
-                                    }
                                 }
                             )
                         }
