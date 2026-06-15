@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -93,6 +94,9 @@ import com.tekz.watermark.ui.theme.PhotoWatermarkTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
+
+/** How many of the selected photos to show in the live preview. */
+private const val MAX_PREVIEW = 5
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -171,16 +175,15 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
         },
         snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { innerPadding ->
-        val firstPhoto = state.photoUris.firstOrNull()
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
             // ---- Locked live preview: stays visible while the steps scroll ----
-            if (firstPhoto != null && state.hasAnyLogo) {
+            if (state.photoUris.isNotEmpty() && state.hasAnyLogo) {
                 LockedPreview(
-                    photoUri = firstPhoto,
+                    photoUris = state.photoUris.take(MAX_PREVIEW),
                     logoUris = state.logos.map { it.uri },
                     topLeftLogoUris = state.topLeftLogos.map { it.uri },
                     cornerLogoUri = state.cornerLogoUri,
@@ -663,13 +666,13 @@ private fun loadLogos(context: android.content.Context, uris: List<Uri>): List<B
 }
 
 /**
- * Live watermarked preview of the first photo, pinned at the top of the screen
- * (inside an elevated [Surface]) so it stays visible while the steps below it
- * scroll.
+ * Live watermarked preview of the first few photos (up to [MAX_PREVIEW]), pinned
+ * at the top of the screen (inside an elevated [Surface]) so it stays visible
+ * while the steps below it scroll. Swipe horizontally to flip between photos.
  */
 @Composable
 private fun LockedPreview(
-    photoUri: Uri,
+    photoUris: List<Uri>,
     logoUris: List<Uri>,
     topLeftLogoUris: List<Uri>,
     cornerLogoUri: Uri?,
@@ -684,15 +687,17 @@ private fun LockedPreview(
 ) {
     val context = LocalContext.current
 
-    // Downscaled source bitmaps, reloaded only when the photo/logos actually change.
-    var source by remember(photoUri) { mutableStateOf<Bitmap?>(null) }
+    // Downscaled source bitmaps, reloaded only when the photos/logos actually change.
+    var sources by remember(photoUris) { mutableStateOf<List<Bitmap>?>(null) }
     var logos by remember(logoUris) { mutableStateOf<List<Bitmap>?>(null) }
     var topLeftLogos by remember(topLeftLogoUris) { mutableStateOf<List<Bitmap>?>(null) }
     var cornerLogo by remember(cornerLogoUri) { mutableStateOf<Bitmap?>(null) }
 
-    LaunchedEffect(photoUri) {
-        source = withContext(Dispatchers.Default) {
-            WatermarkEngine.loadBitmap(context.contentResolver, photoUri, maxDimension = 1080)
+    LaunchedEffect(photoUris) {
+        sources = withContext(Dispatchers.Default) {
+            photoUris.mapNotNull {
+                WatermarkEngine.loadBitmap(context.contentResolver, it, maxDimension = 900)
+            }
         }
     }
     LaunchedEffect(logoUris) {
@@ -707,36 +712,38 @@ private fun LockedPreview(
         }
     }
 
-    // Recompose the watermarked preview whenever a source or a placement setting changes.
-    val src = source
+    // Recompose every preview whenever a source or a placement setting changes.
+    val srcs = sources
     val lg = logos
     val tl = topLeftLogos
     val corner = cornerLogo
-    var preview by remember { mutableStateOf<Bitmap?>(null) }
+    var previews by remember { mutableStateOf<List<Bitmap>>(emptyList()) }
     LaunchedEffect(
-        src, lg, tl, corner,
+        srcs, lg, tl, corner,
         logoHeightPercent, bottomMarginPercent, bottomLeftMarginPercent,
         topLeftLogoHeightPercent, topLeftTopMarginPercent, topLeftLeftMarginPercent,
         cornerLogoHeightPercent, cornerMarginPercent
     ) {
-        if (src != null && lg != null && tl != null &&
+        if (srcs != null && lg != null && tl != null &&
             (lg.isNotEmpty() || tl.isNotEmpty() || corner != null)
         ) {
-            preview = withContext(Dispatchers.Default) {
-                WatermarkEngine.applyWatermarks(
-                    photo = src,
-                    bottomLogos = lg,
-                    topLeftLogos = tl,
-                    cornerLogo = corner,
-                    bottomLogoHeightFraction = logoHeightPercent / 100f,
-                    bottomMarginFraction = bottomMarginPercent / 100f,
-                    bottomLeftMarginFraction = bottomLeftMarginPercent / 100f,
-                    topLeftLogoHeightFraction = topLeftLogoHeightPercent / 100f,
-                    topLeftTopMarginFraction = topLeftTopMarginPercent / 100f,
-                    topLeftLeftMarginFraction = topLeftLeftMarginPercent / 100f,
-                    cornerLogoHeightFraction = cornerLogoHeightPercent / 100f,
-                    cornerMarginFraction = cornerMarginPercent / 100f
-                )
+            previews = withContext(Dispatchers.Default) {
+                srcs.map { src ->
+                    WatermarkEngine.applyWatermarks(
+                        photo = src,
+                        bottomLogos = lg,
+                        topLeftLogos = tl,
+                        cornerLogo = corner,
+                        bottomLogoHeightFraction = logoHeightPercent / 100f,
+                        bottomMarginFraction = bottomMarginPercent / 100f,
+                        bottomLeftMarginFraction = bottomLeftMarginPercent / 100f,
+                        topLeftLogoHeightFraction = topLeftLogoHeightPercent / 100f,
+                        topLeftTopMarginFraction = topLeftTopMarginPercent / 100f,
+                        topLeftLeftMarginFraction = topLeftLeftMarginPercent / 100f,
+                        cornerLogoHeightFraction = cornerLogoHeightPercent / 100f,
+                        cornerMarginFraction = cornerMarginPercent / 100f
+                    )
+                }
             }
         }
     }
@@ -748,29 +755,55 @@ private fun LockedPreview(
     ) {
         Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
             Text(
-                text = stringResource(R.string.preview_label),
+                text = if (photoUris.size <= 1) stringResource(R.string.preview_label)
+                else stringResource(R.string.preview_label_n, photoUris.size),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(Modifier.height(6.dp))
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 120.dp, max = 220.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant),
-                contentAlignment = Alignment.Center
-            ) {
-                val bmp = preview
-                if (bmp != null) {
-                    Image(
-                        bitmap = bmp.asImageBitmap(),
-                        contentDescription = stringResource(R.string.preview_label),
-                        contentScale = ContentScale.Fit,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                } else {
+            if (previews.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 120.dp, max = 220.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                    contentAlignment = Alignment.Center
+                ) {
                     CircularProgressIndicator(modifier = Modifier.padding(24.dp))
+                }
+            } else {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    itemsIndexed(previews) { index, bmp ->
+                        Box(
+                            modifier = Modifier
+                                .fillParentMaxWidth(if (previews.size > 1) 0.9f else 1f)
+                                .heightIn(min = 120.dp, max = 220.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Image(
+                                bitmap = bmp.asImageBitmap(),
+                                contentDescription = stringResource(R.string.preview_label),
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                            if (previews.size > 1) {
+                                Text(
+                                    text = "${index + 1}/${previews.size}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Color.White,
+                                    modifier = Modifier
+                                        .align(Alignment.TopStart)
+                                        .padding(6.dp)
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(Color.Black.copy(alpha = 0.5f))
+                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }

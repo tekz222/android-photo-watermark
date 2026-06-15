@@ -31,6 +31,7 @@
     <string name="corner_margin">Distância do canto: %1$d%%</string>
 
     <string name="preview_label">Pré-visualização (1ª foto)</string>
+    <string name="preview_label_n">Pré-visualização (primeiras %1$d fotos) — arraste para o lado</string>
 
     <string name="apply_and_save">Aplicar e salvar tudo</string>
     <string name="save_location">As imagens são salvas em Imagens/Watermarked na galeria.</string>
