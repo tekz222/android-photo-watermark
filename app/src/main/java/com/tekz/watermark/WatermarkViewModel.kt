@@ -47,7 +47,7 @@ data class WatermarkUiState(
     val centered: Boolean = false,
     // Single top-right main company logo.
     val cornerLogoUri: Uri? = null,
-    val cornerLogoHeightPercent: Float = 12f,
+    val cornerLogoHeightPercent: Float = 22f,
     val cornerMarginPercent: Float = 2f,
     val isProcessing: Boolean = false,
     val processed: Int = 0,
