@@ -213,7 +213,9 @@ class WatermarkViewModel(app: Application) : AndroidViewModel(app) {
         if (!state.hasAnyLogo) return
 
         val context = getApplication<Application>()
-        val album = "Watermarked ${HistoryStore.nextAlbumNumber(context)}"
+        // Album named by date/time (colon-free so it's a valid folder name).
+        val stamp = SimpleDateFormat("yyyy-MM-dd HH-mm-ss", Locale.getDefault()).format(Date())
+        val album = "Watermarked $stamp"
 
         WatermarkJob.bottomLogoUris = state.logos.map { it.uri }
         WatermarkJob.topLeftLogoUris = state.topLeftLogos.map { it.uri }

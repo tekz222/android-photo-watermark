@@ -203,7 +203,7 @@ class _HomePageState extends State<HomePage> {
     }
     // Keep the device awake so a long save isn't interrupted by auto-lock.
     await WakelockPlus.enable();
-    final album = await _nextAlbum();
+    final album = _nextAlbum();
     setState(() {
       _processing = true;
       _done = 0;
@@ -249,11 +249,11 @@ class _HomePageState extends State<HomePage> {
 
   // ---- Album numbering + history (shared_preferences) ----
 
-  Future<String> _nextAlbum() async {
-    final p = await SharedPreferences.getInstance();
-    final n = (p.getInt('album_counter') ?? 0) + 1;
-    await p.setInt('album_counter', n);
-    return 'Watermarked $n';
+  String _nextAlbum() {
+    final d = DateTime.now();
+    String two(int v) => v.toString().padLeft(2, '0');
+    return 'Watermarked ${d.year}-${two(d.month)}-${two(d.day)} '
+        '${two(d.hour)}-${two(d.minute)}-${two(d.second)}';
   }
 
   Future<void> _addHistory(String album, int saved, int failed) async {
