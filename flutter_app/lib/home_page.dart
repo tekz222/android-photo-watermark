@@ -99,7 +99,7 @@ class _HomePageState extends State<HomePage> {
     final x = await _picker.pickImage(source: ImageSource.gallery);
     if (x == null) return;
     final bytes = await x.readAsBytes();
-    setState(() => _cornerLogo = LogoItem(_nextLogoId++, bytes));
+    setState(() => _cornerLogo = LogoItem(_nextLogoId++, x.path, bytes));
     _schedulePreview();
   }
 
