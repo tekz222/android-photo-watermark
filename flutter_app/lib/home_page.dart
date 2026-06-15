@@ -43,7 +43,7 @@ class _HomePageState extends State<HomePage> {
   // Size and left margin are SHARED by the bottom and top rows.
   double _logoSize = 22;
   double _leftMargin = 2;
-  double _logoOpacity = 100; // shared by both rows (not the main logo)
+  double _logoOpacity = 90; // shared by both rows (not the main logo)
   double _bottomMargin = 1; // distance from the bottom edge
   double _topMargin = 1; // distance from the top edge
   double _cornerHeight = 22, _cornerMargin = 2;

@@ -38,7 +38,7 @@ data class WatermarkUiState(
     // Size and left margin are SHARED by the bottom and top rows.
     val logoHeightPercent: Float = 22f,
     val leftMarginPercent: Float = 2f,
-    val logoOpacityPercent: Float = 100f,
+    val logoOpacityPercent: Float = 90f,
     val bottomMarginPercent: Float = 1f,
     // Top-left row of logos.
     val topLeftLogos: List<LogoItem> = emptyList(),
