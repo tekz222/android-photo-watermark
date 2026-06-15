@@ -11,11 +11,10 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -32,6 +31,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -66,7 +66,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -577,11 +577,12 @@ private fun MultiLogoPicker(
 
 /**
  * Vertical list of logos reordered by long-pressing the drag handle and dragging
- * up or down. The order updates live as you cross each row, and every row a logo
- * passes slides smoothly into its new spot. On release the dragged row is already
- * in its final position, so it only settles the last few pixels — no re-move.
- * Top-to-bottom here is the same as left-to-right in the photo.
+ * up or down. The dragged row follows the finger; the rows it passes animate
+ * into place ([animateItemPlacement]). The dragged index is tracked locally, so
+ * a single fast drag can move a logo across many positions (e.g. first to last)
+ * in one motion. Top-to-bottom here is the same as left-to-right in the photo.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ReorderableLogoList(
     items: List<LogoItem>,
@@ -594,30 +595,31 @@ private fun ReorderableLogoList(
     val scope = rememberCoroutineScope()
 
     var draggedId by remember { mutableStateOf<Long?>(null) }
+    var draggedIndex by remember { mutableIntStateOf(-1) }
     var dragOffset by remember { mutableFloatStateOf(0f) }
-    // Per-row slide animations for the logos the dragged one swaps with.
-    val slides = remember { mutableStateMapOf<Long, Animatable<Float, AnimationVector1D>>() }
 
-    fun slideFrom(id: Long, fromPx: Float) {
-        val anim = slides.getOrPut(id) { Animatable(0f) }
-        scope.launch {
-            anim.snapTo(fromPx)
-            anim.animateTo(0f, animationSpec = tween(160))
-        }
-    }
-
-    Column(modifier = Modifier.fillMaxWidth()) {
-        items.forEachIndexed { index, item ->
+    LazyColumn(
+        userScrollEnabled = false,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(rowHeight * items.size)
+    ) {
+        itemsIndexed(items, key = { _, item -> item.id }) { index, item ->
             val isDragging = item.id == draggedId
-            val translateY = if (isDragging) dragOffset else (slides[item.id]?.value ?: 0f)
-
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(rowHeight)
-                    .zIndex(if (isDragging) 1f else 0f)
-                    .graphicsLayer { translationY = translateY }
+                    .then(
+                        if (isDragging) {
+                            Modifier
+                                .zIndex(1f)
+                                .graphicsLayer { translationY = dragOffset }
+                        } else {
+                            Modifier.animateItemPlacement()
+                        }
+                    )
             ) {
                 AsyncImage(
                     model = item.uri,
@@ -657,6 +659,7 @@ private fun ReorderableLogoList(
                             detectDragGesturesAfterLongPress(
                                 onDragStart = {
                                     draggedId = item.id
+                                    draggedIndex = latestItems.indexOfFirst { it.id == item.id }
                                     dragOffset = 0f
                                 },
                                 onDragEnd = {
@@ -666,6 +669,7 @@ private fun ReorderableLogoList(
                                             dragOffset = v
                                         }
                                         draggedId = null
+                                        draggedIndex = -1
                                         dragOffset = 0f
                                     }
                                 },
@@ -676,26 +680,25 @@ private fun ReorderableLogoList(
                                             dragOffset = v
                                         }
                                         draggedId = null
+                                        draggedIndex = -1
                                         dragOffset = 0f
                                     }
                                 },
                                 onDrag = { change, dragAmount ->
                                     change.consume()
                                     dragOffset += dragAmount.y
-                                    val cur = latestItems.indexOfFirst { it.id == item.id }
-                                    if (cur < 0) return@detectDragGesturesAfterLongPress
-                                    // Move at most one slot per event; the list updates
-                                    // before the next event arrives.
-                                    if (dragOffset > rowHeightPx / 2f && cur < latestItems.lastIndex) {
-                                        val neighbor = latestItems[cur + 1].id
-                                        onMove(cur, cur + 1)
+                                    val last = latestItems.lastIndex
+                                    // Step through as many positions as the offset covers,
+                                    // so one fast drag can move across the whole list.
+                                    while (dragOffset > rowHeightPx / 2f && draggedIndex in 0 until last) {
+                                        onMove(draggedIndex, draggedIndex + 1)
+                                        draggedIndex++
                                         dragOffset -= rowHeightPx
-                                        slideFrom(neighbor, rowHeightPx) // it moved up
-                                    } else if (dragOffset < -rowHeightPx / 2f && cur > 0) {
-                                        val neighbor = latestItems[cur - 1].id
-                                        onMove(cur, cur - 1)
+                                    }
+                                    while (dragOffset < -rowHeightPx / 2f && draggedIndex > 0) {
+                                        onMove(draggedIndex, draggedIndex - 1)
+                                        draggedIndex--
                                         dragOffset += rowHeightPx
-                                        slideFrom(neighbor, -rowHeightPx) // it moved down
                                     }
                                 }
                             )
