@@ -42,10 +42,10 @@ class _HomePageState extends State<HomePage> {
   // Adjustments (percent of the photo's shortest side).
   // Size and left margin are SHARED by the bottom and top rows.
   double _logoSize = 22;
-  double _leftMargin = 2;
+  double _leftMargin = 1;
   double _logoOpacity = 90; // shared by both rows (not the main logo)
-  double _bottomMargin = 1; // distance from the bottom edge
-  double _topMargin = 1; // distance from the top edge
+  double _bottomMargin = 2; // distance from the bottom edge
+  double _topMargin = 2; // distance from the top edge
   double _cornerHeight = 22, _cornerMargin = 2;
   bool _centered = false; // false = left-to-right, true = centered rows
 
