@@ -233,7 +233,8 @@ object WatermarkEngine {
         context: Context,
         bitmap: Bitmap,
         displayName: String,
-        quality: Int = 95
+        quality: Int = 95,
+        png: Boolean = false
     ): Uri? {
         val resolver = context.contentResolver
         val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -244,7 +245,7 @@ object WatermarkEngine {
 
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, displayName)
-            put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+            put(MediaStore.Images.Media.MIME_TYPE, if (png) "image/png" else "image/jpeg")
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 put(
                     MediaStore.Images.Media.RELATIVE_PATH,
@@ -254,10 +255,11 @@ object WatermarkEngine {
             }
         }
 
+        val format = if (png) Bitmap.CompressFormat.PNG else Bitmap.CompressFormat.JPEG
         val uri = resolver.insert(collection, values) ?: return null
         try {
             resolver.openOutputStream(uri)?.use { out ->
-                if (!bitmap.compress(Bitmap.CompressFormat.JPEG, quality, out)) {
+                if (!bitmap.compress(format, quality, out)) {
                     throw IOException("Bitmap.compress returned false")
                 }
             } ?: throw IOException("Could not open output stream for $uri")

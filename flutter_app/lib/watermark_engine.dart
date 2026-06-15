@@ -20,6 +20,7 @@ class WatermarkRequest {
     required this.cornerMargin,
     this.rowOpacity = 1.0,
     this.centered = false,
+    this.png = false,
     this.maxDim,
     this.quality = 95,
   });
@@ -46,6 +47,9 @@ class WatermarkRequest {
 
   /// false = rows anchored left (left-to-right); true = rows centered.
   final bool centered;
+
+  /// Encode the result as lossless PNG instead of JPEG.
+  final bool png;
 
   /// Optional longest-edge cap (used to keep the live preview fast). When null
   /// the photo is processed at full resolution.
@@ -125,7 +129,7 @@ Uint8List renderWatermark(WatermarkRequest r) {
     }
   }
 
-  return img.encodeJpg(photo, quality: r.quality);
+  return r.png ? img.encodePng(photo) : img.encodeJpg(photo, quality: r.quality);
 }
 
 void _drawRow(

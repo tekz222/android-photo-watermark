@@ -5,6 +5,7 @@
     <string name="step_photos">Selecione as fotos</string>
     <string name="step_bottom_logos">Logos da base</string>
     <string name="step_top_left_logos">Logos do canto superior esquerdo</string>
+    <string name="step_top_logos">Logos do topo</string>
     <string name="step_corner_logo">Logo principal (canto superior direito)</string>
     <string name="step_preview">Pré-visualização e salvar</string>
 
@@ -29,6 +30,9 @@
     <string name="align_left">Esquerda → direita</string>
     <string name="align_center">Centralizado</string>
     <string name="close">Fechar</string>
+    <string name="cancel">Cancelar</string>
+    <string name="saving_running_title">Salvamento em andamento</string>
+    <string name="saving_running_msg">O salvamento já está rodando. As fotos que você adicionar entram na fila e também serão salvas com as logos. Deseja adicionar mais?</string>
 
     <string name="logo_size">Tamanho: %1$d%%</string>
     <string name="logo_size_all">Tamanho (cima e baixo): %1$d%%</string>

@@ -72,6 +72,27 @@ class _HomePageState extends State<HomePage> {
   // ---- Picking ----
 
   Future<void> _pickPhotos() async {
+    // If a save is already running, confirm before queueing more photos.
+    if (_processing) {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Salvamento em andamento'),
+          content: const Text(
+              'O salvamento já está rodando. As fotos que você adicionar entram '
+              'na fila e também serão salvas com as logos. Deseja adicionar mais?'),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancelar')),
+            FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Adicionar')),
+          ],
+        ),
+      );
+      if (ok != true) return;
+    }
     final picked = await _picker.pickMultiImage();
     if (picked.isEmpty) return;
     final existing = _photos.map((p) => p.path).toSet();
@@ -146,7 +167,8 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  WatermarkRequest _request(Uint8List photoBytes, {int? maxDim, int quality = 95}) {
+  WatermarkRequest _request(Uint8List photoBytes,
+      {int? maxDim, int quality = 95, bool png = false}) {
     return WatermarkRequest(
       photoBytes: photoBytes,
       bottomLogos: _bottomLogos.map((e) => e.bytes).toList(),
@@ -162,6 +184,7 @@ class _HomePageState extends State<HomePage> {
       cornerMargin: _cornerMargin / 100,
       rowOpacity: _logoOpacity / 100,
       centered: _centered,
+      png: png,
       maxDim: maxDim,
       quality: quality,
     );
@@ -200,8 +223,10 @@ class _HomePageState extends State<HomePage> {
       processed.add(next.path);
       try {
         final bytes = await next.readAsBytes();
-        final out = await compute(renderWatermark, _request(bytes, quality: 100));
-        await Gal.putImageBytes(out, album: 'Watermarked');
+        final out = await compute(renderWatermark, _request(bytes, png: true));
+        final ts = DateTime.now().microsecondsSinceEpoch;
+        await Gal.putImageBytes(out,
+            album: 'Watermarked', name: 'watermarked_$ts.png');
         saved++;
       } catch (_) {
         failed++;
@@ -264,7 +289,9 @@ class _HomePageState extends State<HomePage> {
                 const SizedBox(height: 16),
                 _logoCard(
                   number: 3,
-                  title: 'Logos do canto superior esquerdo',
+                  title: _centered
+                      ? 'Logos do topo'
+                      : 'Logos do canto superior esquerdo',
                   placement: Placement.topLeft,
                   items: _topLeftLogos,
                   hint: 'Encostadas, da esquerda para a direita, no topo. '

@@ -53,6 +53,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -69,6 +70,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -131,6 +133,7 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
+    var confirmAddDuringSave by remember { mutableStateOf(false) }
 
     // Whether the user is allowed to write to storage (only matters on API <= 28).
     var hasLegacyWritePermission by remember {
@@ -193,6 +196,27 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
         viewModel.clearMessage()
     }
 
+    if (confirmAddDuringSave) {
+        AlertDialog(
+            onDismissRequest = { confirmAddDuringSave = false },
+            title = { Text(stringResource(R.string.saving_running_title)) },
+            text = { Text(stringResource(R.string.saving_running_msg)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmAddDuringSave = false
+                    photoPicker.launch(
+                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                    )
+                }) { Text(stringResource(R.string.add_photos)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmAddDuringSave = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            }
+        )
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(title = { Text(stringResource(R.string.app_name)) })
@@ -237,9 +261,13 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
             ) {
                 Button(
                     onClick = {
-                        photoPicker.launch(
-                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                        )
+                        if (state.isProcessing) {
+                            confirmAddDuringSave = true
+                        } else {
+                            photoPicker.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                            )
+                        }
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) {
@@ -327,10 +355,13 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                 }
             }
 
-            // ---- Step 3: top-left logos ----
+            // ---- Step 3: top-left / top logos ----
             StepCard(
                 number = 3,
-                title = stringResource(R.string.step_top_left_logos),
+                title = stringResource(
+                    if (state.centered) R.string.step_top_logos
+                    else R.string.step_top_left_logos
+                ),
                 icon = { PlacementIcon(Placement.TOP_LEFT) }
             ) {
                 MultiLogoPicker(

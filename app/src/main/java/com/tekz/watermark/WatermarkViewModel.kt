@@ -207,8 +207,16 @@ class WatermarkViewModel(app: Application) : AndroidViewModel(app) {
                 val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
                 var saved = 0
                 var failed = 0
+                var index = 0
+                val processed = HashSet<Uri>()
 
-                state.photoUris.forEachIndexed { index, photoUri ->
+                // Process until every selected photo is done, including any added
+                // during the run (queued behaviour).
+                while (true) {
+                    val photoUri = _uiState.value.photoUris.firstOrNull { it !in processed }
+                        ?: break
+                    processed.add(photoUri)
+
                     // Load at high resolution so saved images keep their size.
                     val photo = WatermarkEngine.loadBitmap(resolver, photoUri, maxDimension = 8192)
                     if (photo == null) {
@@ -230,14 +238,17 @@ class WatermarkViewModel(app: Application) : AndroidViewModel(app) {
                             rowLogoOpacity = state.logoOpacityPercent / 100f,
                             centered = state.centered
                         )
-                        val name = "watermarked_${stamp}_${index + 1}.jpg"
-                        val uri = WatermarkEngine.saveToGallery(context, output, name, quality = 100)
+                        val name = "watermarked_${stamp}_${index + 1}.png"
+                        val uri = WatermarkEngine.saveToGallery(context, output, name, png = true)
                         if (uri != null) saved++ else failed++
 
                         photo.recycle()
                         output.recycle()
                     }
-                    _uiState.update { it.copy(processed = index + 1) }
+                    index++
+                    _uiState.update {
+                        it.copy(processed = processed.size, total = it.photoUris.size)
+                    }
                 }
 
                 // Each distinct bitmap was cached, so recycle them once here.
