@@ -134,11 +134,12 @@ class _HomePageState extends State<HomePage> {
       final out =
           await compute(renderWatermark, _request(bytes, maxDim: 900, quality: 85));
       if (token != _previewToken) return;
-      final decoded = await ui.decodeImageFromList(out);
-      final aspect = decoded.height == 0
-          ? 1.0
-          : decoded.width / decoded.height;
-      decoded.dispose();
+      final codec = await ui.instantiateImageCodec(out);
+      final frame = await codec.getNextFrame();
+      final image = frame.image;
+      final aspect = image.height == 0 ? 1.0 : image.width / image.height;
+      image.dispose();
+      codec.dispose();
       if (token != _previewToken) return;
       results.add(_Preview(out, aspect));
       setState(() => _previews = List.of(results));

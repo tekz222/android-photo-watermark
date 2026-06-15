@@ -42,12 +42,29 @@ jobs:
             || /usr/libexec/PlistBuddy -c "Set :NSPhotoLibraryAddUsageDescription 'Para salvar as fotos com marca dágua na galeria.'" "$PLIST"
 
       - run: flutter pub get
-      - run: flutter build ios --release --no-codesign
+
+      - name: Build unsigned iOS app
+        run: |
+          flutter build ios --release --no-codesign --config-only
+          cd ios
+          pod install
+          xcodebuild \
+            -workspace Runner.xcworkspace \
+            -scheme Runner \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
 
       - name: Package unsigned IPA
         run: |
+          APP=$(find ios/build/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" | head -1)
+          echo "Packaging $APP"
           mkdir -p build/ipa/Payload
-          cp -R build/ios/iphoneos/Runner.app build/ipa/Payload/
+          cp -R "$APP" build/ipa/Payload/
           (cd build/ipa && zip -qr ../PhotoWatermark-unsigned.ipa Payload)
 
       - uses: actions/upload-artifact@v4
