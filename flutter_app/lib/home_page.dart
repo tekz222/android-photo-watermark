@@ -340,7 +340,9 @@ class _HomePageState extends State<HomePage> {
       h = maxW / p.aspect;
     }
     return Center(
-      child: ClipRRect(
+      child: GestureDetector(
+        onTap: () => _openFullscreen(i),
+        child: ClipRRect(
         borderRadius: BorderRadius.circular(8),
         child: SizedBox(
           width: w,
@@ -369,6 +371,42 @@ class _HomePageState extends State<HomePage> {
           ),
         ),
       ),
+      ),
+    );
+  }
+
+  void _openFullscreen(int index) {
+    showDialog<void>(
+      context: context,
+      barrierColor: Colors.black,
+      builder: (ctx) {
+        final controller = PageController(initialPage: index);
+        return Dialog.fullscreen(
+          backgroundColor: Colors.black,
+          child: Stack(
+            children: [
+              PageView.builder(
+                controller: controller,
+                itemCount: _previews.length,
+                itemBuilder: (c, i) => InteractiveViewer(
+                  child: Center(
+                    child: Image.memory(_previews[i].bytes, fit: BoxFit.contain),
+                  ),
+                ),
+              ),
+              SafeArea(
+                child: Align(
+                  alignment: Alignment.topRight,
+                  child: IconButton(
+                    icon: const Icon(Icons.close, color: Colors.white, size: 30),
+                    onPressed: () => Navigator.of(ctx).pop(),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 

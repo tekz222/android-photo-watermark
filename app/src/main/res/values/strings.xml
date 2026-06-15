@@ -28,6 +28,7 @@
     <string name="align_label">Alinhamento das logos:</string>
     <string name="align_left">Esquerda → direita</string>
     <string name="align_center">Centralizado</string>
+    <string name="close">Fechar</string>
 
     <string name="logo_size">Tamanho: %1$d%%</string>
     <string name="logo_size_all">Tamanho (cima e baixo): %1$d%%</string>

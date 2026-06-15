@@ -21,6 +21,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -31,6 +32,8 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -91,6 +94,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.zIndex
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -754,6 +759,7 @@ private fun loadLogos(context: android.content.Context, uris: List<Uri>): List<B
  * at the top of the screen (inside an elevated [Surface]) so it stays visible
  * while the steps below it scroll. Swipe horizontally to flip between photos.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun LockedPreview(
     photoUris: List<Uri>,
@@ -833,6 +839,8 @@ private fun LockedPreview(
         }
     }
 
+    var fullscreenIndex by remember { mutableIntStateOf(-1) }
+
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shadowElevation = 4.dp,
@@ -850,9 +858,7 @@ private fun LockedPreview(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(min = 120.dp, max = 220.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                        .height(120.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     CircularProgressIndicator(modifier = Modifier.padding(24.dp))
@@ -860,18 +866,19 @@ private fun LockedPreview(
             } else {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     itemsIndexed(previews) { index, bmp ->
+                        val aspect = if (bmp.height == 0) 1f
+                        else bmp.width.toFloat() / bmp.height.toFloat()
                         Box(
                             modifier = Modifier
-                                .fillParentMaxWidth(if (previews.size > 1) 0.9f else 1f)
-                                .heightIn(min = 120.dp, max = 220.dp)
+                                .height(200.dp)
+                                .aspectRatio(aspect)
                                 .clip(RoundedCornerShape(8.dp))
-                                .background(MaterialTheme.colorScheme.surfaceVariant),
-                            contentAlignment = Alignment.Center
+                                .clickable { fullscreenIndex = index }
                         ) {
                             Image(
                                 bitmap = bmp.asImageBitmap(),
                                 contentDescription = stringResource(R.string.preview_label),
-                                contentScale = ContentScale.Fit,
+                                contentScale = ContentScale.Crop,
                                 modifier = Modifier.fillMaxSize()
                             )
                             if (previews.size > 1) {
@@ -889,6 +896,59 @@ private fun LockedPreview(
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+
+    // Tap a preview to view full-screen; swipe between photos, tap ✕ to close.
+    if (fullscreenIndex in previews.indices) {
+        Dialog(
+            onDismissRequest = { fullscreenIndex = -1 },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            val pagerState = rememberPagerState(initialPage = fullscreenIndex) { previews.size }
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black)
+            ) {
+                HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
+                    Image(
+                        bitmap = previews[page].asImageBitmap(),
+                        contentDescription = null,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+                if (previews.size > 1) {
+                    Text(
+                        text = "${pagerState.currentPage + 1}/${previews.size}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Color.White,
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .padding(top = 16.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color.Black.copy(alpha = 0.5f))
+                            .padding(horizontal = 10.dp, vertical = 4.dp)
+                    )
+                }
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(12.dp)
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(Color.Black.copy(alpha = 0.5f))
+                        .clickable { fullscreenIndex = -1 }
+                ) {
+                    Icon(
+                        Icons.Filled.Close,
+                        contentDescription = stringResource(R.string.close),
+                        tint = Color.White
+                    )
                 }
             }
         }
