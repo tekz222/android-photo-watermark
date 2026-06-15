@@ -1,0 +1,134 @@
+import 'dart:typed_data';
+
+import 'package:image/image.dart' as img;
+
+/// All inputs needed to render one watermarked photo. This object is passed
+/// across an isolate via [compute], so every field is a plain, copyable value.
+class WatermarkRequest {
+  WatermarkRequest({
+    required this.photoBytes,
+    required this.bottomLogos,
+    required this.topLeftLogos,
+    required this.cornerLogo,
+    required this.bottomHeight,
+    required this.bottomMargin,
+    required this.bottomLeft,
+    required this.topLeftHeight,
+    required this.topLeftTop,
+    required this.topLeftLeft,
+    required this.cornerHeight,
+    required this.cornerMargin,
+    this.maxDim,
+    this.quality = 95,
+  });
+
+  final Uint8List photoBytes;
+
+  /// Ordered logo bytes (duplicates allowed) for each placement.
+  final List<Uint8List> bottomLogos;
+  final List<Uint8List> topLeftLogos;
+  final Uint8List? cornerLogo;
+
+  // Fractions of the photo's shortest side.
+  final double bottomHeight;
+  final double bottomMargin;
+  final double bottomLeft;
+  final double topLeftHeight;
+  final double topLeftTop;
+  final double topLeftLeft;
+  final double cornerHeight;
+  final double cornerMargin;
+
+  /// Optional longest-edge cap (used to keep the live preview fast). When null
+  /// the photo is processed at full resolution.
+  final int? maxDim;
+  final int quality;
+}
+
+/// Composites the logos onto the photo and returns encoded JPEG bytes.
+///
+/// Drawing order (bottom layer first): top-left row, bottom row, then the
+/// top-right main logo on top. Rows run left-to-right with logos touching.
+///
+/// Top-level so it can run inside [compute] off the UI thread.
+Uint8List renderWatermark(WatermarkRequest r) {
+  var photo = img.decodeImage(r.photoBytes);
+  if (photo == null) return r.photoBytes;
+  photo = img.bakeOrientation(photo);
+
+  final maxDim = r.maxDim;
+  if (maxDim != null && (photo.width > maxDim || photo.height > maxDim)) {
+    photo = photo.width >= photo.height
+        ? img.copyResize(photo, width: maxDim)
+        : img.copyResize(photo, height: maxDim);
+  }
+
+  final shortest =
+      (photo.width < photo.height ? photo.width : photo.height).toDouble();
+
+  // Decode each distinct logo only once (duplicates share the same bytes ref).
+  final cache = <Uint8List, img.Image?>{};
+  img.Image? decode(Uint8List bytes) => cache.putIfAbsent(bytes, () {
+        final d = img.decodeImage(bytes);
+        return d == null ? null : img.bakeOrientation(d);
+      });
+
+  // Top-left row (lowest layer).
+  _drawRow(
+    photo,
+    r.topLeftLogos,
+    decode,
+    height: shortest * r.topLeftHeight,
+    startX: shortest * r.topLeftLeft,
+    top: shortest * r.topLeftTop,
+  );
+
+  // Bottom row.
+  final bottomH = shortest * r.bottomHeight;
+  _drawRow(
+    photo,
+    r.bottomLogos,
+    decode,
+    height: bottomH,
+    startX: shortest * r.bottomLeft,
+    top: photo.height - shortest * r.bottomMargin - bottomH,
+  );
+
+  // Top-right main logo (top layer).
+  final cornerBytes = r.cornerLogo;
+  if (cornerBytes != null) {
+    final logo = decode(cornerBytes);
+    if (logo != null) {
+      final h = (shortest * r.cornerHeight).round().clamp(1, photo.height);
+      final resized = img.copyResize(logo, height: h);
+      final margin = shortest * r.cornerMargin;
+      final x = (photo.width - margin - resized.width).round();
+      final y = margin.round();
+      img.compositeImage(photo, resized, dstX: x, dstY: y);
+    }
+  }
+
+  return img.encodeJpg(photo, quality: r.quality);
+}
+
+void _drawRow(
+  img.Image dst,
+  List<Uint8List> logos,
+  img.Image? Function(Uint8List) decode, {
+  required double height,
+  required double startX,
+  required double top,
+}) {
+  if (logos.isEmpty) return;
+  final h = height.round().clamp(1, dst.height);
+  final y = top.round();
+  var x = startX;
+  for (final bytes in logos) {
+    final logo = decode(bytes);
+    if (logo == null) continue;
+    final resized = img.copyResize(logo, height: h);
+    img.compositeImage(dst, resized, dstX: x.round(), dstY: y);
+    x += resized.width;
+    if (x > dst.width) break; // Stop once the row has left the frame.
+  }
+}

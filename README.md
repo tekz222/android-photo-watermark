@@ -51,16 +51,17 @@ Depois é só salvar todas na galeria.
 
 ### Padrões / valores ajustáveis
 
-| Parâmetro                                | Padrão | Intervalo |
-|------------------------------------------|--------|-----------|
-| Base — tamanho (altura)                  | 12% do menor lado | 5%–30% |
-| Base — distância da borda inferior       | 3% do menor lado  | 0%–15% |
-| Base — distância da borda esquerda       | 3% do menor lado  | 0%–15% |
-| Canto sup. esquerdo — tamanho (altura)   | 12% do menor lado | 5%–30% |
-| Canto sup. esquerdo — distância do topo  | 3% do menor lado  | 0%–15% |
-| Canto sup. esquerdo — distância esquerda | 3% do menor lado  | 0%–15% |
-| Logo principal — tamanho (altura)        | 12% do menor lado | 5%–30% |
-| Logo principal — distância do canto      | 4% do menor lado  | 0%–15% |
+| Parâmetro                                  | Padrão | Intervalo |
+|--------------------------------------------|--------|-----------|
+| Tamanho das logos (cima **e** baixo)       | 12% do menor lado | 5%–30% |
+| Distância da borda esquerda (cima **e** baixo) | 3% do menor lado | 0%–15% |
+| Base — distância da borda inferior         | 3% do menor lado  | 0%–15% |
+| Topo — distância da borda superior         | 3% do menor lado  | 0%–15% |
+| Logo principal — tamanho (altura)          | 12% do menor lado | 5%–30% |
+| Logo principal — distância do canto        | 4% do menor lado  | 0%–15% |
+
+> **Tamanho** e **distância da esquerda** são compartilhados entre as fileiras de
+> cima e de baixo: mexer num desses controles muda as duas fileiras ao mesmo tempo.
 
 ## Como compilar
 

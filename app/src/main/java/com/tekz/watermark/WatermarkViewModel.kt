@@ -35,14 +35,13 @@ data class WatermarkUiState(
     val photoUris: List<Uri> = emptyList(),
     // Bottom row of logos.
     val logos: List<LogoItem> = emptyList(),
+    // Size and left margin are SHARED by the bottom and top rows.
     val logoHeightPercent: Float = 12f,
+    val leftMarginPercent: Float = 3f,
     val bottomMarginPercent: Float = 3f,
-    val bottomLeftMarginPercent: Float = 3f,
     // Top-left row of logos.
     val topLeftLogos: List<LogoItem> = emptyList(),
-    val topLeftLogoHeightPercent: Float = 12f,
-    val topLeftTopMarginPercent: Float = 3f,
-    val topLeftLeftMarginPercent: Float = 3f,
+    val topMarginPercent: Float = 3f,
     // Single top-right main company logo.
     val cornerLogoUri: Uri? = null,
     val cornerLogoHeightPercent: Float = 12f,
@@ -116,24 +115,18 @@ class WatermarkViewModel(app: Application) : AndroidViewModel(app) {
         it.copy(cornerLogoUri = uri, lastResult = null)
     }
 
-    // Bottom row adjustments.
+    // Shared by both rows.
     fun setLogoHeightPercent(value: Float) = _uiState.update { it.copy(logoHeightPercent = value) }
 
+    fun setLeftMarginPercent(value: Float) =
+        _uiState.update { it.copy(leftMarginPercent = value) }
+
+    // Row-specific edge distances.
     fun setBottomMarginPercent(value: Float) =
         _uiState.update { it.copy(bottomMarginPercent = value) }
 
-    fun setBottomLeftMarginPercent(value: Float) =
-        _uiState.update { it.copy(bottomLeftMarginPercent = value) }
-
-    // Top-left row adjustments.
-    fun setTopLeftLogoHeightPercent(value: Float) =
-        _uiState.update { it.copy(topLeftLogoHeightPercent = value) }
-
-    fun setTopLeftTopMarginPercent(value: Float) =
-        _uiState.update { it.copy(topLeftTopMarginPercent = value) }
-
-    fun setTopLeftLeftMarginPercent(value: Float) =
-        _uiState.update { it.copy(topLeftLeftMarginPercent = value) }
+    fun setTopMarginPercent(value: Float) =
+        _uiState.update { it.copy(topMarginPercent = value) }
 
     // Top-right main logo adjustments.
     fun setCornerLogoHeightPercent(value: Float) =
@@ -199,10 +192,10 @@ class WatermarkViewModel(app: Application) : AndroidViewModel(app) {
                             cornerLogo = cornerLogo,
                             bottomLogoHeightFraction = state.logoHeightPercent / 100f,
                             bottomMarginFraction = state.bottomMarginPercent / 100f,
-                            bottomLeftMarginFraction = state.bottomLeftMarginPercent / 100f,
-                            topLeftLogoHeightFraction = state.topLeftLogoHeightPercent / 100f,
-                            topLeftTopMarginFraction = state.topLeftTopMarginPercent / 100f,
-                            topLeftLeftMarginFraction = state.topLeftLeftMarginPercent / 100f,
+                            bottomLeftMarginFraction = state.leftMarginPercent / 100f,
+                            topLeftLogoHeightFraction = state.logoHeightPercent / 100f,
+                            topLeftTopMarginFraction = state.topMarginPercent / 100f,
+                            topLeftLeftMarginFraction = state.leftMarginPercent / 100f,
                             cornerLogoHeightFraction = state.cornerLogoHeightPercent / 100f,
                             cornerMarginFraction = state.cornerMarginPercent / 100f
                         )

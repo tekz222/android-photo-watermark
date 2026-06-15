@@ -188,11 +188,9 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                     topLeftLogoUris = state.topLeftLogos.map { it.uri },
                     cornerLogoUri = state.cornerLogoUri,
                     logoHeightPercent = state.logoHeightPercent,
+                    leftMarginPercent = state.leftMarginPercent,
                     bottomMarginPercent = state.bottomMarginPercent,
-                    bottomLeftMarginPercent = state.bottomLeftMarginPercent,
-                    topLeftLogoHeightPercent = state.topLeftLogoHeightPercent,
-                    topLeftTopMarginPercent = state.topLeftTopMarginPercent,
-                    topLeftLeftMarginPercent = state.topLeftLeftMarginPercent,
+                    topMarginPercent = state.topMarginPercent,
                     cornerLogoHeightPercent = state.cornerLogoHeightPercent,
                     cornerMarginPercent = state.cornerMarginPercent
                 )
@@ -267,10 +265,17 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                 if (state.logos.isNotEmpty()) {
                     Spacer(Modifier.height(12.dp))
                     LabeledSlider(
-                        label = stringResource(R.string.logo_size, state.logoHeightPercent.roundToInt()),
+                        label = stringResource(R.string.logo_size_all, state.logoHeightPercent.roundToInt()),
                         value = state.logoHeightPercent,
                         valueRange = 5f..30f,
                         onValueChange = viewModel::setLogoHeightPercent
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    LabeledSlider(
+                        label = stringResource(R.string.left_margin_all, state.leftMarginPercent.roundToInt()),
+                        value = state.leftMarginPercent,
+                        valueRange = 0f..15f,
+                        onValueChange = viewModel::setLeftMarginPercent
                     )
                     Spacer(Modifier.height(8.dp))
                     LabeledSlider(
@@ -278,13 +283,6 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                         value = state.bottomMarginPercent,
                         valueRange = 0f..15f,
                         onValueChange = viewModel::setBottomMarginPercent
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    LabeledSlider(
-                        label = stringResource(R.string.left_margin, state.bottomLeftMarginPercent.roundToInt()),
-                        value = state.bottomLeftMarginPercent,
-                        valueRange = 0f..15f,
-                        onValueChange = viewModel::setBottomLeftMarginPercent
                     )
                 }
             }
@@ -313,24 +311,24 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                 if (state.topLeftLogos.isNotEmpty()) {
                     Spacer(Modifier.height(12.dp))
                     LabeledSlider(
-                        label = stringResource(R.string.logo_size, state.topLeftLogoHeightPercent.roundToInt()),
-                        value = state.topLeftLogoHeightPercent,
+                        label = stringResource(R.string.logo_size_all, state.logoHeightPercent.roundToInt()),
+                        value = state.logoHeightPercent,
                         valueRange = 5f..30f,
-                        onValueChange = viewModel::setTopLeftLogoHeightPercent
+                        onValueChange = viewModel::setLogoHeightPercent
                     )
                     Spacer(Modifier.height(8.dp))
                     LabeledSlider(
-                        label = stringResource(R.string.top_margin, state.topLeftTopMarginPercent.roundToInt()),
-                        value = state.topLeftTopMarginPercent,
+                        label = stringResource(R.string.left_margin_all, state.leftMarginPercent.roundToInt()),
+                        value = state.leftMarginPercent,
                         valueRange = 0f..15f,
-                        onValueChange = viewModel::setTopLeftTopMarginPercent
+                        onValueChange = viewModel::setLeftMarginPercent
                     )
                     Spacer(Modifier.height(8.dp))
                     LabeledSlider(
-                        label = stringResource(R.string.left_margin, state.topLeftLeftMarginPercent.roundToInt()),
-                        value = state.topLeftLeftMarginPercent,
+                        label = stringResource(R.string.top_margin, state.topMarginPercent.roundToInt()),
+                        value = state.topMarginPercent,
                         valueRange = 0f..15f,
-                        onValueChange = viewModel::setTopLeftLeftMarginPercent
+                        onValueChange = viewModel::setTopMarginPercent
                     )
                 }
             }
@@ -677,11 +675,9 @@ private fun LockedPreview(
     topLeftLogoUris: List<Uri>,
     cornerLogoUri: Uri?,
     logoHeightPercent: Float,
+    leftMarginPercent: Float,
     bottomMarginPercent: Float,
-    bottomLeftMarginPercent: Float,
-    topLeftLogoHeightPercent: Float,
-    topLeftTopMarginPercent: Float,
-    topLeftLeftMarginPercent: Float,
+    topMarginPercent: Float,
     cornerLogoHeightPercent: Float,
     cornerMarginPercent: Float
 ) {
@@ -720,8 +716,7 @@ private fun LockedPreview(
     var previews by remember { mutableStateOf<List<Bitmap>>(emptyList()) }
     LaunchedEffect(
         srcs, lg, tl, corner,
-        logoHeightPercent, bottomMarginPercent, bottomLeftMarginPercent,
-        topLeftLogoHeightPercent, topLeftTopMarginPercent, topLeftLeftMarginPercent,
+        logoHeightPercent, leftMarginPercent, bottomMarginPercent, topMarginPercent,
         cornerLogoHeightPercent, cornerMarginPercent
     ) {
         if (srcs != null && lg != null && tl != null &&
@@ -736,10 +731,10 @@ private fun LockedPreview(
                         cornerLogo = corner,
                         bottomLogoHeightFraction = logoHeightPercent / 100f,
                         bottomMarginFraction = bottomMarginPercent / 100f,
-                        bottomLeftMarginFraction = bottomLeftMarginPercent / 100f,
-                        topLeftLogoHeightFraction = topLeftLogoHeightPercent / 100f,
-                        topLeftTopMarginFraction = topLeftTopMarginPercent / 100f,
-                        topLeftLeftMarginFraction = topLeftLeftMarginPercent / 100f,
+                        bottomLeftMarginFraction = leftMarginPercent / 100f,
+                        topLeftLogoHeightFraction = logoHeightPercent / 100f,
+                        topLeftTopMarginFraction = topMarginPercent / 100f,
+                        topLeftLeftMarginFraction = leftMarginPercent / 100f,
                         cornerLogoHeightFraction = cornerLogoHeightPercent / 100f,
                         cornerMarginFraction = cornerMarginPercent / 100f
                     )
