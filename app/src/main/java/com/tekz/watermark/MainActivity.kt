@@ -51,6 +51,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -207,7 +208,8 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                     bottomMarginPercent = state.bottomMarginPercent,
                     topMarginPercent = state.topMarginPercent,
                     cornerLogoHeightPercent = state.cornerLogoHeightPercent,
-                    cornerMarginPercent = state.cornerMarginPercent
+                    cornerMarginPercent = state.cornerMarginPercent,
+                    centered = state.centered
                 )
             }
             Column(
@@ -279,19 +281,26 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                 )
                 if (state.logos.isNotEmpty()) {
                     Spacer(Modifier.height(12.dp))
+                    AlignmentChooser(
+                        centered = state.centered,
+                        onChange = viewModel::setCentered
+                    )
+                    Spacer(Modifier.height(8.dp))
                     LabeledSlider(
                         label = stringResource(R.string.logo_size_all, state.logoHeightPercent.roundToInt()),
                         value = state.logoHeightPercent,
                         valueRange = 5f..30f,
                         onValueChange = viewModel::setLogoHeightPercent
                     )
-                    Spacer(Modifier.height(8.dp))
-                    LabeledSlider(
-                        label = stringResource(R.string.left_margin_all, state.leftMarginPercent.roundToInt()),
-                        value = state.leftMarginPercent,
-                        valueRange = 0f..15f,
-                        onValueChange = viewModel::setLeftMarginPercent
-                    )
+                    if (!state.centered) {
+                        Spacer(Modifier.height(8.dp))
+                        LabeledSlider(
+                            label = stringResource(R.string.left_margin_all, state.leftMarginPercent.roundToInt()),
+                            value = state.leftMarginPercent,
+                            valueRange = 0f..15f,
+                            onValueChange = viewModel::setLeftMarginPercent
+                        )
+                    }
                     Spacer(Modifier.height(8.dp))
                     LabeledSlider(
                         label = stringResource(R.string.logo_opacity_all, state.logoOpacityPercent.roundToInt()),
@@ -332,19 +341,26 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                 )
                 if (state.topLeftLogos.isNotEmpty()) {
                     Spacer(Modifier.height(12.dp))
+                    AlignmentChooser(
+                        centered = state.centered,
+                        onChange = viewModel::setCentered
+                    )
+                    Spacer(Modifier.height(8.dp))
                     LabeledSlider(
                         label = stringResource(R.string.logo_size_all, state.logoHeightPercent.roundToInt()),
                         value = state.logoHeightPercent,
                         valueRange = 5f..30f,
                         onValueChange = viewModel::setLogoHeightPercent
                     )
-                    Spacer(Modifier.height(8.dp))
-                    LabeledSlider(
-                        label = stringResource(R.string.left_margin_all, state.leftMarginPercent.roundToInt()),
-                        value = state.leftMarginPercent,
-                        valueRange = 0f..15f,
-                        onValueChange = viewModel::setLeftMarginPercent
-                    )
+                    if (!state.centered) {
+                        Spacer(Modifier.height(8.dp))
+                        LabeledSlider(
+                            label = stringResource(R.string.left_margin_all, state.leftMarginPercent.roundToInt()),
+                            value = state.leftMarginPercent,
+                            valueRange = 0f..15f,
+                            onValueChange = viewModel::setLeftMarginPercent
+                        )
+                    }
                     Spacer(Modifier.height(8.dp))
                     LabeledSlider(
                         label = stringResource(R.string.logo_opacity_all, state.logoOpacityPercent.roundToInt()),
@@ -403,7 +419,7 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                     LabeledSlider(
                         label = stringResource(R.string.logo_size, state.cornerLogoHeightPercent.roundToInt()),
                         value = state.cornerLogoHeightPercent,
-                        valueRange = 5f..30f,
+                        valueRange = 5f..40f,
                         onValueChange = viewModel::setCornerLogoHeightPercent
                     )
                     Spacer(Modifier.height(8.dp))
@@ -750,7 +766,8 @@ private fun LockedPreview(
     bottomMarginPercent: Float,
     topMarginPercent: Float,
     cornerLogoHeightPercent: Float,
-    cornerMarginPercent: Float
+    cornerMarginPercent: Float,
+    centered: Boolean
 ) {
     val context = LocalContext.current
 
@@ -788,7 +805,7 @@ private fun LockedPreview(
     LaunchedEffect(
         srcs, lg, tl, corner,
         logoHeightPercent, leftMarginPercent, logoOpacityPercent, bottomMarginPercent,
-        topMarginPercent, cornerLogoHeightPercent, cornerMarginPercent
+        topMarginPercent, cornerLogoHeightPercent, cornerMarginPercent, centered
     ) {
         if (srcs != null && lg != null && tl != null &&
             (lg.isNotEmpty() || tl.isNotEmpty() || corner != null)
@@ -808,7 +825,8 @@ private fun LockedPreview(
                         topLeftLeftMarginFraction = leftMarginPercent / 100f,
                         cornerLogoHeightFraction = cornerLogoHeightPercent / 100f,
                         cornerMarginFraction = cornerMarginPercent / 100f,
-                        rowLogoOpacity = logoOpacityPercent / 100f
+                        rowLogoOpacity = logoOpacityPercent / 100f,
+                        centered = centered
                     )
                 }
             }
@@ -935,6 +953,30 @@ private fun PlacementIcon(placement: Placement, modifier: Modifier = Modifier.si
                     cornerRadius = CornerRadius(boxH * 0.3f, boxH * 0.3f)
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun AlignmentChooser(centered: Boolean, onChange: (Boolean) -> Unit) {
+    Column {
+        Text(
+            stringResource(R.string.align_label),
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium
+        )
+        Spacer(Modifier.height(4.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(
+                selected = !centered,
+                onClick = { onChange(false) },
+                label = { Text(stringResource(R.string.align_left)) }
+            )
+            FilterChip(
+                selected = centered,
+                onClick = { onChange(true) },
+                label = { Text(stringResource(R.string.align_center)) }
+            )
         }
     }
 }

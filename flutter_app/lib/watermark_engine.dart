@@ -19,6 +19,7 @@ class WatermarkRequest {
     required this.cornerHeight,
     required this.cornerMargin,
     this.rowOpacity = 1.0,
+    this.centered = false,
     this.maxDim,
     this.quality = 95,
   });
@@ -42,6 +43,9 @@ class WatermarkRequest {
 
   /// Opacity (0..1) applied to the bottom and top rows (not the corner logo).
   final double rowOpacity;
+
+  /// false = rows anchored left (left-to-right); true = rows centered.
+  final bool centered;
 
   /// Optional longest-edge cap (used to keep the live preview fast). When null
   /// the photo is processed at full resolution.
@@ -77,25 +81,32 @@ Uint8List renderWatermark(WatermarkRequest r) {
         return d == null ? null : img.bakeOrientation(d);
       });
 
-  // Top-left row (lowest layer).
+  // Top-left / top row (lowest layer).
+  final topH = shortest * r.topLeftHeight;
+  final topStartX = r.centered
+      ? (photo.width - _rowWidth(r.topLeftLogos, decode, topH)) / 2
+      : shortest * r.topLeftLeft;
   _drawRow(
     photo,
     r.topLeftLogos,
     decode,
-    height: shortest * r.topLeftHeight,
-    startX: shortest * r.topLeftLeft,
+    height: topH,
+    startX: topStartX,
     top: shortest * r.topLeftTop,
     opacity: r.rowOpacity,
   );
 
   // Bottom row.
   final bottomH = shortest * r.bottomHeight;
+  final bottomStartX = r.centered
+      ? (photo.width - _rowWidth(r.bottomLogos, decode, bottomH)) / 2
+      : shortest * r.bottomLeft;
   _drawRow(
     photo,
     r.bottomLogos,
     decode,
     height: bottomH,
-    startX: shortest * r.bottomLeft,
+    startX: bottomStartX,
     top: photo.height - shortest * r.bottomMargin - bottomH,
     opacity: r.rowOpacity,
   );
@@ -138,6 +149,21 @@ void _drawRow(
     x += resized.width;
     if (x > dst.width) break; // Stop once the row has left the frame.
   }
+}
+
+/// Total width of [logos] laid out touching at the given [height].
+double _rowWidth(
+  List<Uint8List> logos,
+  img.Image? Function(Uint8List) decode,
+  double height,
+) {
+  double w = 0;
+  for (final bytes in logos) {
+    final logo = decode(bytes);
+    if (logo == null) continue;
+    w += height * (logo.width / logo.height);
+  }
+  return w;
 }
 
 /// Returns a copy of [src] with its alpha scaled by [opacity] (0..1).

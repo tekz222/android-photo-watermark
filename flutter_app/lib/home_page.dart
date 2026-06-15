@@ -42,11 +42,12 @@ class _HomePageState extends State<HomePage> {
   // Adjustments (percent of the photo's shortest side).
   // Size and left margin are SHARED by the bottom and top rows.
   double _logoSize = 12;
-  double _leftMargin = 3;
+  double _leftMargin = 2;
   double _logoOpacity = 100; // shared by both rows (not the main logo)
-  double _bottomMargin = 3; // distance from the bottom edge
-  double _topMargin = 3; // distance from the top edge
+  double _bottomMargin = 1; // distance from the bottom edge
+  double _topMargin = 1; // distance from the top edge
   double _cornerHeight = 12, _cornerMargin = 4;
+  bool _centered = false; // false = left-to-right, true = centered rows
 
   // Preview state.
   final Map<String, Uint8List> _photoCache = {};
@@ -159,6 +160,7 @@ class _HomePageState extends State<HomePage> {
       cornerHeight: _cornerHeight / 100,
       cornerMargin: _cornerMargin / 100,
       rowOpacity: _logoOpacity / 100,
+      centered: _centered,
       maxDim: maxDim,
       quality: quality,
     );
@@ -246,10 +248,12 @@ class _HomePageState extends State<HomePage> {
                       'Tamanho e distância da esquerda valem para as de cima e de baixo.',
                   onAdd: () => _pickLogos(_bottomLogos),
                   sliders: [
+                    _alignmentChooser(),
                     _slider('Tamanho (todas)', _logoSize, 5, 30,
                         (v) => setState(() => _logoSize = v)),
-                    _slider('Distância da borda esquerda (todas)', _leftMargin, 0,
-                        15, (v) => setState(() => _leftMargin = v)),
+                    if (!_centered)
+                      _slider('Distância da borda esquerda (todas)', _leftMargin,
+                          0, 15, (v) => setState(() => _leftMargin = v)),
                     _slider('Opacidade (todas)', _logoOpacity, 0, 100,
                         (v) => setState(() => _logoOpacity = v)),
                     _slider('Distância da borda inferior', _bottomMargin, 0, 15,
@@ -266,10 +270,12 @@ class _HomePageState extends State<HomePage> {
                       'Tamanho e distância da esquerda valem para as de cima e de baixo.',
                   onAdd: () => _pickLogos(_topLeftLogos),
                   sliders: [
+                    _alignmentChooser(),
                     _slider('Tamanho (todas)', _logoSize, 5, 30,
                         (v) => setState(() => _logoSize = v)),
-                    _slider('Distância da borda esquerda (todas)', _leftMargin, 0,
-                        15, (v) => setState(() => _leftMargin = v)),
+                    if (!_centered)
+                      _slider('Distância da borda esquerda (todas)', _leftMargin,
+                          0, 15, (v) => setState(() => _leftMargin = v)),
                     _slider('Opacidade (todas)', _logoOpacity, 0, 100,
                         (v) => setState(() => _logoOpacity = v)),
                     _slider('Distância da borda superior', _topMargin, 0, 15,
@@ -518,7 +524,7 @@ class _HomePageState extends State<HomePage> {
                 _schedulePreview();
               },
             ),
-            _slider('Tamanho', _cornerHeight, 5, 30,
+            _slider('Tamanho', _cornerHeight, 5, 40,
                 (v) => setState(() => _cornerHeight = v)),
             _slider('Distância do canto', _cornerMargin, 0, 15,
                 (v) => setState(() => _cornerMargin = v)),
@@ -559,6 +565,42 @@ class _HomePageState extends State<HomePage> {
         const SizedBox(height: 6),
         Text('As imagens são salvas no álbum “Watermarked”.',
             style: Theme.of(context).textTheme.bodySmall),
+      ],
+    );
+  }
+
+  Widget _alignmentChooser() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Alinhamento das logos:',
+            style: TextStyle(fontWeight: FontWeight.w500)),
+        const SizedBox(height: 4),
+        Wrap(
+          spacing: 8,
+          children: [
+            ChoiceChip(
+              label: const Text('Esquerda → direita'),
+              selected: !_centered,
+              onSelected: _processing
+                  ? null
+                  : (s) {
+                      setState(() => _centered = false);
+                      _schedulePreview();
+                    },
+            ),
+            ChoiceChip(
+              label: const Text('Centralizado'),
+              selected: _centered,
+              onSelected: _processing
+                  ? null
+                  : (s) {
+                      setState(() => _centered = true);
+                      _schedulePreview();
+                    },
+            ),
+          ],
+        ),
       ],
     );
   }

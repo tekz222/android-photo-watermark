@@ -55,7 +55,8 @@ object WatermarkEngine {
         topLeftLeftMarginFraction: Float = 0.03f,
         cornerLogoHeightFraction: Float = 0.12f,
         cornerMarginFraction: Float = 0.04f,
-        rowLogoOpacity: Float = 1f
+        rowLogoOpacity: Float = 1f,
+        centered: Boolean = false
     ): Bitmap {
         val result = photo.copy(Bitmap.Config.ARGB_8888, true)
         if (bottomLogos.isEmpty() && topLeftLogos.isEmpty() && cornerLogo == null) return result
@@ -74,11 +75,15 @@ object WatermarkEngine {
             isDither = true
         }
 
-        // ---- Top-left row ----
+        // ---- Top-left / top row ----
         if (topLeftLogos.isNotEmpty()) {
             val height = (shortestSide * topLeftLogoHeightFraction).coerceAtLeast(1f)
             val top = shortestSide * topLeftTopMarginFraction
-            val startX = shortestSide * topLeftLeftMarginFraction
+            val startX = if (centered) {
+                (result.width - rowWidth(topLeftLogos, height)) / 2f
+            } else {
+                shortestSide * topLeftLeftMarginFraction
+            }
             drawRow(canvas, topLeftLogos, startX, top, height, rowPaint)
         }
 
@@ -86,7 +91,11 @@ object WatermarkEngine {
         if (bottomLogos.isNotEmpty()) {
             val height = (shortestSide * bottomLogoHeightFraction).coerceAtLeast(1f)
             val top = result.height - shortestSide * bottomMarginFraction - height
-            val startX = shortestSide * bottomLeftMarginFraction
+            val startX = if (centered) {
+                (result.width - rowWidth(bottomLogos, height)) / 2f
+            } else {
+                shortestSide * bottomLeftMarginFraction
+            }
             drawRow(canvas, bottomLogos, startX, top, height, rowPaint)
         }
 
@@ -105,6 +114,12 @@ object WatermarkEngine {
 
         return result
     }
+
+    /** Total width of [logos] laid out touching at the given [height]. */
+    private fun rowWidth(logos: List<Bitmap>, height: Float): Float =
+        logos.fold(0f) { acc, logo ->
+            acc + height * (logo.width.toFloat() / logo.height.toFloat())
+        }
 
     /**
      * Draws [logos] as a single horizontal row starting at [startX]/[top], each

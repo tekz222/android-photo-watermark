@@ -37,12 +37,14 @@ data class WatermarkUiState(
     val logos: List<LogoItem> = emptyList(),
     // Size and left margin are SHARED by the bottom and top rows.
     val logoHeightPercent: Float = 12f,
-    val leftMarginPercent: Float = 3f,
+    val leftMarginPercent: Float = 2f,
     val logoOpacityPercent: Float = 100f,
-    val bottomMarginPercent: Float = 3f,
+    val bottomMarginPercent: Float = 1f,
     // Top-left row of logos.
     val topLeftLogos: List<LogoItem> = emptyList(),
-    val topMarginPercent: Float = 3f,
+    val topMarginPercent: Float = 1f,
+    // Layout of each row: false = left-to-right (anchored left), true = centered.
+    val centered: Boolean = false,
     // Single top-right main company logo.
     val cornerLogoUri: Uri? = null,
     val cornerLogoHeightPercent: Float = 12f,
@@ -141,6 +143,8 @@ class WatermarkViewModel(app: Application) : AndroidViewModel(app) {
     fun setLogoOpacityPercent(value: Float) =
         _uiState.update { it.copy(logoOpacityPercent = value) }
 
+    fun setCentered(value: Boolean) = _uiState.update { it.copy(centered = value) }
+
     // Row-specific edge distances.
     fun setBottomMarginPercent(value: Float) =
         _uiState.update { it.copy(bottomMarginPercent = value) }
@@ -222,7 +226,8 @@ class WatermarkViewModel(app: Application) : AndroidViewModel(app) {
                             topLeftLeftMarginFraction = state.leftMarginPercent / 100f,
                             cornerLogoHeightFraction = state.cornerLogoHeightPercent / 100f,
                             cornerMarginFraction = state.cornerMarginPercent / 100f,
-                            rowLogoOpacity = state.logoOpacityPercent / 100f
+                            rowLogoOpacity = state.logoOpacityPercent / 100f,
+                            centered = state.centered
                         )
                         val name = "watermarked_${stamp}_${index + 1}.jpg"
                         val uri = WatermarkEngine.saveToGallery(context, output, name)
