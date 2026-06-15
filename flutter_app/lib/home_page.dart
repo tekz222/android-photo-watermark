@@ -200,7 +200,7 @@ class _HomePageState extends State<HomePage> {
       processed.add(next.path);
       try {
         final bytes = await next.readAsBytes();
-        final out = await compute(renderWatermark, _request(bytes, quality: 95));
+        final out = await compute(renderWatermark, _request(bytes, quality: 100));
         await Gal.putImageBytes(out, album: 'Watermarked');
         saved++;
       } catch (_) {

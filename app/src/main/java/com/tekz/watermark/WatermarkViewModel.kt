@@ -209,7 +209,8 @@ class WatermarkViewModel(app: Application) : AndroidViewModel(app) {
                 var failed = 0
 
                 state.photoUris.forEachIndexed { index, photoUri ->
-                    val photo = WatermarkEngine.loadBitmap(resolver, photoUri)
+                    // Load at high resolution so saved images keep their size.
+                    val photo = WatermarkEngine.loadBitmap(resolver, photoUri, maxDimension = 8192)
                     if (photo == null) {
                         failed++
                     } else {
@@ -230,7 +231,7 @@ class WatermarkViewModel(app: Application) : AndroidViewModel(app) {
                             centered = state.centered
                         )
                         val name = "watermarked_${stamp}_${index + 1}.jpg"
-                        val uri = WatermarkEngine.saveToGallery(context, output, name)
+                        val uri = WatermarkEngine.saveToGallery(context, output, name, quality = 100)
                         if (uri != null) saved++ else failed++
 
                         photo.recycle()

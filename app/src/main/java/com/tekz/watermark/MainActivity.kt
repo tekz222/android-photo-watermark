@@ -18,6 +18,10 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -914,12 +918,7 @@ private fun LockedPreview(
                     .background(Color.Black)
             ) {
                 HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
-                    Image(
-                        bitmap = previews[page].asImageBitmap(),
-                        contentDescription = null,
-                        contentScale = ContentScale.Fit,
-                        modifier = Modifier.fillMaxSize()
-                    )
+                    ZoomableImage(bitmap = previews[page].asImageBitmap())
                 }
                 if (previews.size > 1) {
                     Text(
@@ -952,6 +951,52 @@ private fun LockedPreview(
                 }
             }
         }
+    }
+}
+
+/**
+ * Full-screen image that supports pinch-to-zoom and pan. Single-finger drags are
+ * left unconsumed at 1x so the surrounding pager can still swipe between photos.
+ */
+@Composable
+private fun ZoomableImage(bitmap: androidx.compose.ui.graphics.ImageBitmap) {
+    var scale by remember { mutableFloatStateOf(1f) }
+    var offset by remember { mutableStateOf(Offset.Zero) }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    do {
+                        val event = awaitPointerEvent()
+                        val zoom = event.calculateZoom()
+                        if (event.changes.size >= 2) {
+                            scale = (scale * zoom).coerceIn(1f, 5f)
+                            offset += event.calculatePan()
+                            event.changes.forEach { it.consume() }
+                        } else if (scale > 1f) {
+                            offset += event.calculatePan()
+                            event.changes.forEach { it.consume() }
+                        }
+                        if (scale <= 1f) offset = Offset.Zero
+                    } while (event.changes.any { it.pressed })
+                }
+            }
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+                translationX = offset.x
+                translationY = offset.y
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Image(
+            bitmap = bitmap,
+            contentDescription = null,
+            contentScale = ContentScale.Fit,
+            modifier = Modifier.fillMaxSize()
+        )
     }
 }
 
