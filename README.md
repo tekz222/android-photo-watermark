@@ -16,8 +16,9 @@ Depois é só salvar todas na galeria.
 2. **Logos da base** — selecione **uma ou mais** logos (de preferência PNG com
    fundo transparente). Ficam numa fileira no rodapé, **encostadas** da esquerda
    para a direita. Pode **adicionar a mesma logo várias vezes** — elas vão sendo
-   anexadas até saírem do quadro. Ajuste tamanho, distância da borda inferior e
-   da esquerda.
+   anexadas até saírem do quadro — e **reordenar** segurando e arrastando cada
+   logo para cima/baixo (de cima para baixo na lista = da esquerda para a direita
+   na foto). Ajuste tamanho, distância da borda inferior e da esquerda.
 3. **Logos do canto superior esquerdo** — mesma ideia da base, mas no topo.
    Ajuste tamanho, distância do topo e da esquerda.
 4. **Logo principal (canto superior direito)** — escolha **uma** logo. Dá para

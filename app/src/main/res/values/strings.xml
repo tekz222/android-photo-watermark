@@ -21,6 +21,8 @@
     <string name="corner_logo_hint">Uma única logo no canto superior direito.</string>
     <string name="photos_selected">%1$d foto(s)</string>
     <string name="logos_selected">%1$d logo(s)</string>
+    <string name="reorder_hint">Segure e arraste para cima/baixo para reordenar.</string>
+    <string name="logo_position">Logo %1$d</string>
 
     <string name="logo_size">Tamanho: %1$d%%</string>
     <string name="bottom_margin">Distância da borda inferior: %1$d%%</string>

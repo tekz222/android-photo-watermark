@@ -15,6 +15,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -37,6 +39,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material3.Button
@@ -58,8 +61,10 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -70,12 +75,16 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -249,7 +258,8 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                             PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
                         )
                     },
-                    onRemove = { viewModel.removeLogo(it) }
+                    onRemove = { viewModel.removeLogo(it) },
+                    onMove = { from, to -> viewModel.moveLogo(from, to) }
                 )
                 if (state.logos.isNotEmpty()) {
                     Spacer(Modifier.height(12.dp))
@@ -294,7 +304,8 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                             PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
                         )
                     },
-                    onRemove = { viewModel.removeTopLeftLogo(it) }
+                    onRemove = { viewModel.removeTopLeftLogo(it) },
+                    onMove = { from, to -> viewModel.moveTopLeftLogo(from, to) }
                 )
                 if (state.topLeftLogos.isNotEmpty()) {
                     Spacer(Modifier.height(12.dp))
@@ -505,7 +516,8 @@ private fun MultiLogoPicker(
     items: List<LogoItem>,
     hint: String,
     onAdd: () -> Unit,
-    onRemove: (Long) -> Unit
+    onRemove: (Long) -> Unit,
+    onMove: (Int, Int) -> Unit
 ) {
     OutlinedButton(
         onClick = onAdd,
@@ -529,14 +541,112 @@ private fun MultiLogoPicker(
             style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.Medium
         )
+        if (items.size > 1) {
+            Text(
+                text = stringResource(R.string.reorder_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
         Spacer(Modifier.height(8.dp))
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(items, key = { it.id }) { item ->
-                RemovableThumbnail(
-                    uri = item.uri,
+        ReorderableLogoList(items = items, onRemove = onRemove, onMove = onMove)
+    }
+}
+
+/**
+ * Vertical list of logos that can be reordered by long-pressing the drag handle
+ * and dragging up or down. Top-to-bottom here is the same as left-to-right in
+ * the photo. Each row has a fixed height so the drag distance maps cleanly to a
+ * change in position.
+ */
+@Composable
+private fun ReorderableLogoList(
+    items: List<LogoItem>,
+    onRemove: (Long) -> Unit,
+    onMove: (Int, Int) -> Unit
+) {
+    val rowHeight = 64.dp
+    val rowHeightPx = with(LocalDensity.current) { rowHeight.toPx() }
+    val latestItems by rememberUpdatedState(items)
+
+    var draggingId by remember { mutableStateOf<Long?>(null) }
+    var dragOffset by remember { mutableFloatStateOf(0f) }
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        items.forEachIndexed { index, item ->
+            val isDragging = item.id == draggingId
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(rowHeight)
+                    .zIndex(if (isDragging) 1f else 0f)
+                    .offset { IntOffset(0, if (isDragging) dragOffset.roundToInt() else 0) }
+            ) {
+                AsyncImage(
+                    model = item.uri,
+                    contentDescription = null,
                     contentScale = ContentScale.Fit,
-                    onRemove = { onRemove(item.id) }
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
                 )
+                Text(
+                    text = stringResource(R.string.logo_position, index + 1),
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(start = 12.dp)
+                )
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .clickable { onRemove(item.id) }
+                ) {
+                    Icon(
+                        Icons.Filled.Close,
+                        contentDescription = stringResource(R.string.remove_logo),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .size(44.dp)
+                        .pointerInput(item.id) {
+                            detectDragGesturesAfterLongPress(
+                                onDragStart = {
+                                    draggingId = item.id
+                                    dragOffset = 0f
+                                },
+                                onDragEnd = { draggingId = null; dragOffset = 0f },
+                                onDragCancel = { draggingId = null; dragOffset = 0f },
+                                onDrag = { change, dragAmount ->
+                                    change.consume()
+                                    dragOffset += dragAmount.y
+                                    val cur = latestItems.indexOfFirst { it.id == item.id }
+                                    if (cur >= 0) {
+                                        val target = (cur + (dragOffset / rowHeightPx).roundToInt())
+                                            .coerceIn(0, latestItems.lastIndex)
+                                        if (target != cur) {
+                                            onMove(cur, target)
+                                            dragOffset -= (target - cur) * rowHeightPx
+                                        }
+                                    }
+                                }
+                            )
+                        }
+                ) {
+                    Icon(
+                        Icons.Filled.DragHandle,
+                        contentDescription = stringResource(R.string.reorder_hint),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         }
     }

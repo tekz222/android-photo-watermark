@@ -96,6 +96,21 @@ class WatermarkViewModel(app: Application) : AndroidViewModel(app) {
         it.copy(topLeftLogos = it.topLeftLogos.filterNot { item -> item.id == id }, lastResult = null)
     }
 
+    /** Reorders the bottom row by moving the logo at [from] to index [to]. */
+    fun moveLogo(from: Int, to: Int) = _uiState.update {
+        it.copy(logos = it.logos.moveItem(from, to), lastResult = null)
+    }
+
+    /** Reorders the top-left row by moving the logo at [from] to index [to]. */
+    fun moveTopLeftLogo(from: Int, to: Int) = _uiState.update {
+        it.copy(topLeftLogos = it.topLeftLogos.moveItem(from, to), lastResult = null)
+    }
+
+    private fun <T> List<T>.moveItem(from: Int, to: Int): List<T> {
+        if (from == to || from !in indices || to !in indices) return this
+        return toMutableList().apply { add(to, removeAt(from)) }
+    }
+
     /** Sets (or replaces) the single top-right main company logo. */
     fun setCornerLogo(uri: Uri?) = _uiState.update {
         it.copy(cornerLogoUri = uri, lastResult = null)
