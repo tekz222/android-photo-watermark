@@ -74,11 +74,24 @@ class _HomePageState extends State<HomePage> {
   Future<void> _pickLogos(List<LogoItem> target) async {
     final picked = await _picker.pickMultiImage();
     if (picked.isEmpty) return;
+    // The same logo can't be in both rows.
+    final other = identical(target, _bottomLogos) ? _topLeftLogos : _bottomLogos;
+    final blocked = other.map((e) => e.path).toSet();
+    var skipped = 0;
     for (final x in picked) {
+      if (blocked.contains(x.path)) {
+        skipped++;
+        continue;
+      }
       final bytes = await x.readAsBytes();
-      target.add(LogoItem(_nextLogoId++, bytes));
+      target.add(LogoItem(_nextLogoId++, x.path, bytes));
     }
     setState(() {});
+    if (skipped > 0) {
+      _snack(identical(target, _bottomLogos)
+          ? 'Logo(s) já usada(s) no topo — ignorada(s).'
+          : 'Logo(s) já usada(s) na base — ignorada(s).');
+    }
     _schedulePreview();
   }
 

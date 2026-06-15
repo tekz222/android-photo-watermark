@@ -175,6 +175,14 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
         viewModel.clearResult()
     }
 
+    // Surface one-off info messages (e.g. a logo skipped because it's already in
+    // the other section).
+    LaunchedEffect(state.messageRes) {
+        val res = state.messageRes ?: return@LaunchedEffect
+        snackbarHostState.showSnackbar(context.getString(res))
+        viewModel.clearMessage()
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(title = { Text(stringResource(R.string.app_name)) })

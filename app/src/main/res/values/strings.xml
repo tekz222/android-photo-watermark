@@ -23,6 +23,8 @@
     <string name="logos_selected">%1$d logo(s)</string>
     <string name="reorder_hint">Segure e arraste para cima/baixo para reordenar.</string>
     <string name="logo_position">Logo %1$d</string>
+    <string name="dup_in_top">Logo(s) já usada(s) no topo — ignorada(s).</string>
+    <string name="dup_in_bottom">Logo(s) já usada(s) na base — ignorada(s).</string>
 
     <string name="logo_size">Tamanho: %1$d%%</string>
     <string name="logo_size_all">Tamanho (cima e baixo): %1$d%%</string>

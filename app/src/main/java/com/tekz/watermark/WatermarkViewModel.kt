@@ -50,7 +50,9 @@ data class WatermarkUiState(
     val isProcessing: Boolean = false,
     val processed: Int = 0,
     val total: Int = 0,
-    val lastResult: ProcessResult? = null
+    val lastResult: ProcessResult? = null,
+    /** One-off message (string resource id) to surface as a snackbar. */
+    val messageRes: Int? = null
 ) {
     val hasAnyLogo: Boolean
         get() = logos.isNotEmpty() || topLeftLogos.isNotEmpty() || cornerLogoUri != null
@@ -78,18 +80,32 @@ class WatermarkViewModel(app: Application) : AndroidViewModel(app) {
         it.copy(photoUris = it.photoUris.filterNot { u -> u == uri }, lastResult = null)
     }
 
-    /** Appends newly picked bottom logos (duplicates allowed). */
+    /** Appends newly picked bottom logos (duplicates allowed within the row), but
+     * skips any logo already used in the top row. */
     fun addLogos(uris: List<Uri>) = _uiState.update {
-        it.copy(logos = it.logos + newLogoItems(uris), lastResult = null)
+        val inTop = it.topLeftLogos.mapTo(HashSet()) { item -> item.uri }
+        val allowed = uris.filterNot { u -> u in inTop }
+        it.copy(
+            logos = it.logos + newLogoItems(allowed),
+            messageRes = if (allowed.size < uris.size) R.string.dup_in_top else null,
+            lastResult = null
+        )
     }
 
     fun removeLogo(id: Long) = _uiState.update {
         it.copy(logos = it.logos.filterNot { item -> item.id == id }, lastResult = null)
     }
 
-    /** Appends newly picked top-left logos (duplicates allowed). */
+    /** Appends newly picked top-left logos, but skips any logo already used in the
+     * bottom row. */
     fun addTopLeftLogos(uris: List<Uri>) = _uiState.update {
-        it.copy(topLeftLogos = it.topLeftLogos + newLogoItems(uris), lastResult = null)
+        val inBottom = it.logos.mapTo(HashSet()) { item -> item.uri }
+        val allowed = uris.filterNot { u -> u in inBottom }
+        it.copy(
+            topLeftLogos = it.topLeftLogos + newLogoItems(allowed),
+            messageRes = if (allowed.size < uris.size) R.string.dup_in_bottom else null,
+            lastResult = null
+        )
     }
 
     fun removeTopLeftLogo(id: Long) = _uiState.update {
@@ -141,6 +157,10 @@ class WatermarkViewModel(app: Application) : AndroidViewModel(app) {
 
     fun clearResult() {
         _uiState.update { it.copy(lastResult = null) }
+    }
+
+    fun clearMessage() {
+        _uiState.update { it.copy(messageRes = null) }
     }
 
     /**
