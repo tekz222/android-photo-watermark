@@ -46,7 +46,7 @@ class _HomePageState extends State<HomePage> {
   double _logoOpacity = 100; // shared by both rows (not the main logo)
   double _bottomMargin = 1; // distance from the bottom edge
   double _topMargin = 1; // distance from the top edge
-  double _cornerHeight = 12, _cornerMargin = 4;
+  double _cornerHeight = 12, _cornerMargin = 2;
   bool _centered = false; // false = left-to-right, true = centered rows
 
   // Preview state.
