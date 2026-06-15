@@ -27,6 +27,7 @@
     <string name="logo_size">Tamanho: %1$d%%</string>
     <string name="logo_size_all">Tamanho (cima e baixo): %1$d%%</string>
     <string name="left_margin_all">Distância da borda esquerda (cima e baixo): %1$d%%</string>
+    <string name="logo_opacity_all">Opacidade (cima e baixo): %1$d%%</string>
     <string name="bottom_margin">Distância da borda inferior: %1$d%%</string>
     <string name="top_margin">Distância da borda superior: %1$d%%</string>
     <string name="corner_margin">Distância do canto: %1$d%%</string>

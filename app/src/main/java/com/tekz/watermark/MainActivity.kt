@@ -11,8 +11,9 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.animate
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -65,7 +66,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -194,6 +195,7 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                     cornerLogoUri = state.cornerLogoUri,
                     logoHeightPercent = state.logoHeightPercent,
                     leftMarginPercent = state.leftMarginPercent,
+                    logoOpacityPercent = state.logoOpacityPercent,
                     bottomMarginPercent = state.bottomMarginPercent,
                     topMarginPercent = state.topMarginPercent,
                     cornerLogoHeightPercent = state.cornerLogoHeightPercent,
@@ -284,6 +286,13 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                     )
                     Spacer(Modifier.height(8.dp))
                     LabeledSlider(
+                        label = stringResource(R.string.logo_opacity_all, state.logoOpacityPercent.roundToInt()),
+                        value = state.logoOpacityPercent,
+                        valueRange = 0f..100f,
+                        onValueChange = viewModel::setLogoOpacityPercent
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    LabeledSlider(
                         label = stringResource(R.string.bottom_margin, state.bottomMarginPercent.roundToInt()),
                         value = state.bottomMarginPercent,
                         valueRange = 0f..15f,
@@ -327,6 +336,13 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                         value = state.leftMarginPercent,
                         valueRange = 0f..15f,
                         onValueChange = viewModel::setLeftMarginPercent
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    LabeledSlider(
+                        label = stringResource(R.string.logo_opacity_all, state.logoOpacityPercent.roundToInt()),
+                        value = state.logoOpacityPercent,
+                        valueRange = 0f..100f,
+                        onValueChange = viewModel::setLogoOpacityPercent
                     )
                     Spacer(Modifier.height(8.dp))
                     LabeledSlider(
@@ -561,9 +577,9 @@ private fun MultiLogoPicker(
 
 /**
  * Vertical list of logos reordered by long-pressing the drag handle and dragging
- * up or down. The dragged row follows the finger; the other rows slide out of
- * the way with a spring animation (the list isn't mutated until the finger is
- * lifted, so nothing snaps). Dragging across several positions is seamless.
+ * up or down. The order updates live as you cross each row, and every row a logo
+ * passes slides smoothly into its new spot. On release the dragged row is already
+ * in its final position, so it only settles the last few pixels — no re-move.
  * Top-to-bottom here is the same as left-to-right in the photo.
  */
 @Composable
@@ -577,30 +593,23 @@ private fun ReorderableLogoList(
     val latestItems by rememberUpdatedState(items)
     val scope = rememberCoroutineScope()
 
-    var dragIndex by remember { mutableIntStateOf(-1) }
+    var draggedId by remember { mutableStateOf<Long?>(null) }
     var dragOffset by remember { mutableFloatStateOf(0f) }
+    // Per-row slide animations for the logos the dragged one swaps with.
+    val slides = remember { mutableStateMapOf<Long, Animatable<Float, AnimationVector1D>>() }
 
-    // Where the dragged row currently wants to land.
-    val targetIndex =
-        if (dragIndex >= 0) {
-            (dragIndex + (dragOffset / rowHeightPx).roundToInt()).coerceIn(0, items.lastIndex)
-        } else {
-            -1
+    fun slideFrom(id: Long, fromPx: Float) {
+        val anim = slides.getOrPut(id) { Animatable(0f) }
+        scope.launch {
+            anim.snapTo(fromPx)
+            anim.animateTo(0f, animationSpec = tween(160))
         }
+    }
 
     Column(modifier = Modifier.fillMaxWidth()) {
         items.forEachIndexed { index, item ->
-            val isDragging = index == dragIndex
-
-            // Resting shift for the rows the dragged one is passing over.
-            val shift = when {
-                dragIndex < 0 || isDragging -> 0f
-                dragIndex < targetIndex && index in (dragIndex + 1)..targetIndex -> -rowHeightPx
-                dragIndex > targetIndex && index in targetIndex until dragIndex -> rowHeightPx
-                else -> 0f
-            }
-            val animatedShift by animateFloatAsState(targetValue = shift, label = "shift")
-            val translateY = if (isDragging) dragOffset else animatedShift
+            val isDragging = item.id == draggedId
+            val translateY = if (isDragging) dragOffset else (slides[item.id]?.value ?: 0f)
 
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -647,41 +656,47 @@ private fun ReorderableLogoList(
                         .pointerInput(item.id) {
                             detectDragGesturesAfterLongPress(
                                 onDragStart = {
-                                    dragIndex = latestItems.indexOfFirst { it.id == item.id }
+                                    draggedId = item.id
                                     dragOffset = 0f
                                 },
                                 onDragEnd = {
-                                    val from = dragIndex
-                                    val to = if (from >= 0) {
-                                        (from + (dragOffset / rowHeightPx).roundToInt())
-                                            .coerceIn(0, latestItems.lastIndex)
-                                    } else {
-                                        from
-                                    }
+                                    val start = dragOffset
                                     scope.launch {
-                                        // Glide the dragged row into the open slot, then commit.
-                                        animate(
-                                            dragOffset,
-                                            (to - from) * rowHeightPx,
-                                            animationSpec = tween(150)
-                                        ) { v, _ -> dragOffset = v }
-                                        if (from >= 0 && to >= 0 && from != to) onMove(from, to)
-                                        dragIndex = -1
+                                        animate(start, 0f, animationSpec = tween(140)) { v, _ ->
+                                            dragOffset = v
+                                        }
+                                        draggedId = null
                                         dragOffset = 0f
                                     }
                                 },
                                 onDragCancel = {
+                                    val start = dragOffset
                                     scope.launch {
-                                        animate(dragOffset, 0f, animationSpec = tween(150)) { v, _ ->
+                                        animate(start, 0f, animationSpec = tween(140)) { v, _ ->
                                             dragOffset = v
                                         }
-                                        dragIndex = -1
+                                        draggedId = null
                                         dragOffset = 0f
                                     }
                                 },
                                 onDrag = { change, dragAmount ->
                                     change.consume()
                                     dragOffset += dragAmount.y
+                                    val cur = latestItems.indexOfFirst { it.id == item.id }
+                                    if (cur < 0) return@detectDragGesturesAfterLongPress
+                                    // Move at most one slot per event; the list updates
+                                    // before the next event arrives.
+                                    if (dragOffset > rowHeightPx / 2f && cur < latestItems.lastIndex) {
+                                        val neighbor = latestItems[cur + 1].id
+                                        onMove(cur, cur + 1)
+                                        dragOffset -= rowHeightPx
+                                        slideFrom(neighbor, rowHeightPx) // it moved up
+                                    } else if (dragOffset < -rowHeightPx / 2f && cur > 0) {
+                                        val neighbor = latestItems[cur - 1].id
+                                        onMove(cur, cur - 1)
+                                        dragOffset += rowHeightPx
+                                        slideFrom(neighbor, -rowHeightPx) // it moved down
+                                    }
                                 }
                             )
                         }
@@ -720,6 +735,7 @@ private fun LockedPreview(
     cornerLogoUri: Uri?,
     logoHeightPercent: Float,
     leftMarginPercent: Float,
+    logoOpacityPercent: Float,
     bottomMarginPercent: Float,
     topMarginPercent: Float,
     cornerLogoHeightPercent: Float,
@@ -760,8 +776,8 @@ private fun LockedPreview(
     var previews by remember { mutableStateOf<List<Bitmap>>(emptyList()) }
     LaunchedEffect(
         srcs, lg, tl, corner,
-        logoHeightPercent, leftMarginPercent, bottomMarginPercent, topMarginPercent,
-        cornerLogoHeightPercent, cornerMarginPercent
+        logoHeightPercent, leftMarginPercent, logoOpacityPercent, bottomMarginPercent,
+        topMarginPercent, cornerLogoHeightPercent, cornerMarginPercent
     ) {
         if (srcs != null && lg != null && tl != null &&
             (lg.isNotEmpty() || tl.isNotEmpty() || corner != null)
@@ -780,7 +796,8 @@ private fun LockedPreview(
                         topLeftTopMarginFraction = topMarginPercent / 100f,
                         topLeftLeftMarginFraction = leftMarginPercent / 100f,
                         cornerLogoHeightFraction = cornerLogoHeightPercent / 100f,
-                        cornerMarginFraction = cornerMarginPercent / 100f
+                        cornerMarginFraction = cornerMarginPercent / 100f,
+                        rowLogoOpacity = logoOpacityPercent / 100f
                     )
                 }
             }

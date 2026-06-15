@@ -34,6 +34,7 @@ class _HomePageState extends State<HomePage> {
   // Size and left margin are SHARED by the bottom and top rows.
   double _logoSize = 12;
   double _leftMargin = 3;
+  double _logoOpacity = 100; // shared by both rows (not the main logo)
   double _bottomMargin = 3; // distance from the bottom edge
   double _topMargin = 3; // distance from the top edge
   double _cornerHeight = 12, _cornerMargin = 4;
@@ -129,6 +130,7 @@ class _HomePageState extends State<HomePage> {
       topLeftLeft: _leftMargin / 100,
       cornerHeight: _cornerHeight / 100,
       cornerMargin: _cornerMargin / 100,
+      rowOpacity: _logoOpacity / 100,
       maxDim: maxDim,
       quality: quality,
     );
@@ -202,6 +204,8 @@ class _HomePageState extends State<HomePage> {
                         (v) => setState(() => _logoSize = v)),
                     _slider('Distância da borda esquerda (todas)', _leftMargin, 0,
                         15, (v) => setState(() => _leftMargin = v)),
+                    _slider('Opacidade (todas)', _logoOpacity, 0, 100,
+                        (v) => setState(() => _logoOpacity = v)),
                     _slider('Distância da borda inferior', _bottomMargin, 0, 15,
                         (v) => setState(() => _bottomMargin = v)),
                   ],
@@ -220,6 +224,8 @@ class _HomePageState extends State<HomePage> {
                         (v) => setState(() => _logoSize = v)),
                     _slider('Distância da borda esquerda (todas)', _leftMargin, 0,
                         15, (v) => setState(() => _leftMargin = v)),
+                    _slider('Opacidade (todas)', _logoOpacity, 0, 100,
+                        (v) => setState(() => _logoOpacity = v)),
                     _slider('Distância da borda superior', _topMargin, 0, 15,
                         (v) => setState(() => _topMargin = v)),
                   ],

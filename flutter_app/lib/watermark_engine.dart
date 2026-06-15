@@ -18,6 +18,7 @@ class WatermarkRequest {
     required this.topLeftLeft,
     required this.cornerHeight,
     required this.cornerMargin,
+    this.rowOpacity = 1.0,
     this.maxDim,
     this.quality = 95,
   });
@@ -38,6 +39,9 @@ class WatermarkRequest {
   final double topLeftLeft;
   final double cornerHeight;
   final double cornerMargin;
+
+  /// Opacity (0..1) applied to the bottom and top rows (not the corner logo).
+  final double rowOpacity;
 
   /// Optional longest-edge cap (used to keep the live preview fast). When null
   /// the photo is processed at full resolution.
@@ -81,6 +85,7 @@ Uint8List renderWatermark(WatermarkRequest r) {
     height: shortest * r.topLeftHeight,
     startX: shortest * r.topLeftLeft,
     top: shortest * r.topLeftTop,
+    opacity: r.rowOpacity,
   );
 
   // Bottom row.
@@ -92,6 +97,7 @@ Uint8List renderWatermark(WatermarkRequest r) {
     height: bottomH,
     startX: shortest * r.bottomLeft,
     top: photo.height - shortest * r.bottomMargin - bottomH,
+    opacity: r.rowOpacity,
   );
 
   // Top-right main logo (top layer).
@@ -118,6 +124,7 @@ void _drawRow(
   required double height,
   required double startX,
   required double top,
+  double opacity = 1.0,
 }) {
   if (logos.isEmpty) return;
   final h = height.round().clamp(1, dst.height);
@@ -126,9 +133,19 @@ void _drawRow(
   for (final bytes in logos) {
     final logo = decode(bytes);
     if (logo == null) continue;
-    final resized = img.copyResize(logo, height: h);
+    final resized = _withOpacity(img.copyResize(logo, height: h), opacity);
     img.compositeImage(dst, resized, dstX: x.round(), dstY: y);
     x += resized.width;
     if (x > dst.width) break; // Stop once the row has left the frame.
   }
+}
+
+/// Returns a copy of [src] with its alpha scaled by [opacity] (0..1).
+img.Image _withOpacity(img.Image src, double opacity) {
+  if (opacity >= 1.0) return src;
+  final out = src.convert(numChannels: 4);
+  for (final p in out) {
+    p.a = p.a * opacity;
+  }
+  return out;
 }

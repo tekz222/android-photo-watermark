@@ -55,7 +55,7 @@ object WatermarkEngine {
         topLeftLeftMarginFraction: Float = 0.03f,
         cornerLogoHeightFraction: Float = 0.12f,
         cornerMarginFraction: Float = 0.04f,
-        opacity: Float = 1f
+        rowLogoOpacity: Float = 1f
     ): Bitmap {
         val result = photo.copy(Bitmap.Config.ARGB_8888, true)
         if (bottomLogos.isEmpty() && topLeftLogos.isEmpty() && cornerLogo == null) return result
@@ -63,10 +63,15 @@ object WatermarkEngine {
         val canvas = Canvas(result)
         val shortestSide = minOf(result.width, result.height).toFloat()
 
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        // Opacity applies to the bottom and top rows; the main corner logo stays opaque.
+        val rowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             isFilterBitmap = true
             isDither = true
-            alpha = (opacity.coerceIn(0f, 1f) * 255).toInt()
+            alpha = (rowLogoOpacity.coerceIn(0f, 1f) * 255).toInt()
+        }
+        val cornerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            isFilterBitmap = true
+            isDither = true
         }
 
         // ---- Top-left row ----
@@ -74,7 +79,7 @@ object WatermarkEngine {
             val height = (shortestSide * topLeftLogoHeightFraction).coerceAtLeast(1f)
             val top = shortestSide * topLeftTopMarginFraction
             val startX = shortestSide * topLeftLeftMarginFraction
-            drawRow(canvas, topLeftLogos, startX, top, height, paint)
+            drawRow(canvas, topLeftLogos, startX, top, height, rowPaint)
         }
 
         // ---- Bottom row ----
@@ -82,7 +87,7 @@ object WatermarkEngine {
             val height = (shortestSide * bottomLogoHeightFraction).coerceAtLeast(1f)
             val top = result.height - shortestSide * bottomMarginFraction - height
             val startX = shortestSide * bottomLeftMarginFraction
-            drawRow(canvas, bottomLogos, startX, top, height, paint)
+            drawRow(canvas, bottomLogos, startX, top, height, rowPaint)
         }
 
         // ---- Top-right corner logo (main company logo) ----
@@ -95,7 +100,7 @@ object WatermarkEngine {
             val top = margin
             val dest = RectF(left, top, right, top + height)
             val src = Rect(0, 0, cornerLogo.width, cornerLogo.height)
-            canvas.drawBitmap(cornerLogo, src, dest, paint)
+            canvas.drawBitmap(cornerLogo, src, dest, cornerPaint)
         }
 
         return result
