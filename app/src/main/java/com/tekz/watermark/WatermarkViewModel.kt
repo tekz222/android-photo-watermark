@@ -22,13 +22,14 @@ data class ProcessResult(
 )
 
 /**
- * A single logo placed in a row. Each entry carries a unique [id] so the *same*
- * image can be added several times (the row simply keeps appending logos until
- * they run off the frame) while still being individually removable.
+ * A single logo placed in a row. [uri] points to an internal copy of the image
+ * (so it survives process death); [sourceKey] is the original picked uri, used to
+ * keep the same logo out of both rows.
  */
 data class LogoItem(
     val id: Long,
-    val uri: Uri
+    val uri: Uri,
+    val sourceKey: String
 )
 
 data class WatermarkUiState(
@@ -49,6 +50,7 @@ data class WatermarkUiState(
     val cornerLogoUri: Uri? = null,
     val cornerLogoHeightPercent: Float = 22f,
     val cornerMarginPercent: Float = 2f,
+    val isImporting: Boolean = false,
     val isProcessing: Boolean = false,
     val processed: Int = 0,
     val total: Int = 0,
@@ -68,7 +70,33 @@ class WatermarkViewModel(app: Application) : AndroidViewModel(app) {
     private val _uiState = MutableStateFlow(WatermarkUiState())
     val uiState: StateFlow<WatermarkUiState> = _uiState.asStateFlow()
 
+    /** Monotonic id source so every appended logo entry is unique. */
+    private var nextLogoId = 0L
+
+    private val appCtx get() = getApplication<Application>()
+
     init {
+        // Restore the saved project (survives the app being killed).
+        ProjectStore.load(appCtx)?.let { s ->
+            nextLogoId = s.nextLogoId
+            _uiState.update {
+                it.copy(
+                    photoUris = s.photoUris,
+                    logos = s.logos,
+                    topLeftLogos = s.topLeftLogos,
+                    cornerLogoUri = s.cornerLogoUri,
+                    logoHeightPercent = s.logoHeight,
+                    leftMarginPercent = s.leftMargin,
+                    logoOpacityPercent = s.opacity,
+                    bottomMarginPercent = s.bottomMargin,
+                    topMarginPercent = s.topMargin,
+                    cornerLogoHeightPercent = s.cornerHeight,
+                    cornerMarginPercent = s.cornerMargin,
+                    centered = s.centered
+                )
+            }
+        }
+
         // Mirror the background service's progress into the UI state.
         viewModelScope.launch {
             WatermarkJob.progress.collect { p ->
@@ -92,66 +120,110 @@ class WatermarkViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Monotonic id source so every appended logo entry is unique. */
-    private var nextLogoId = 0L
-    private fun newLogoItems(uris: List<Uri>): List<LogoItem> =
-        uris.map { LogoItem(id = nextLogoId++, uri = it) }
+    private fun persist() = ProjectStore.save(appCtx, _uiState.value, nextLogoId)
 
-    /** Adds newly picked photos, ignoring duplicates already present. When a save
-     * is running, the new photos are queued into the background job too. */
+    /** Copies a picked image into the app's internal storage so we keep access to
+     * it after the process is recreated. Returns the internal `file://` uri. */
+    private fun copyToInternal(src: Uri, subdir: String): Uri? {
+        return try {
+            val dir = java.io.File(appCtx.filesDir, subdir).apply { mkdirs() }
+            val file = java.io.File(dir, java.util.UUID.randomUUID().toString())
+            val stream = appCtx.contentResolver.openInputStream(src) ?: return null
+            stream.use { input -> file.outputStream().use { out -> input.copyTo(out) } }
+            Uri.fromFile(file)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun deleteInternal(uri: Uri) {
+        if (uri.scheme == "file") uri.path?.let { runCatching { java.io.File(it).delete() } }
+    }
+
+    /** Copies newly picked photos into internal storage, then adds them. When a
+     * save is running, the new photos are queued into the background job too. */
     fun addPhotos(uris: List<Uri>) {
-        _uiState.update {
-            it.copy(photoUris = (it.photoUris + uris).distinct(), lastResult = null)
+        viewModelScope.launch {
+            _uiState.update { it.copy(isImporting = true, lastResult = null) }
+            val copied = withContext(Dispatchers.IO) { uris.mapNotNull { copyToInternal(it, "photos") } }
+            _uiState.update { it.copy(photoUris = it.photoUris + copied, isImporting = false) }
+            persist()
+            if (_uiState.value.isProcessing) WatermarkJob.addPhotos(copied)
         }
-        if (_uiState.value.isProcessing) {
-            WatermarkJob.addPhotos(uris)
+    }
+
+    fun removePhoto(uri: Uri) {
+        _uiState.update { it.copy(photoUris = it.photoUris.filterNot { u -> u == uri }, lastResult = null) }
+        deleteInternal(uri)
+        persist()
+    }
+
+    /** Appends newly picked bottom logos (copied internally), skipping any logo
+     * already used in the top row. */
+    fun addLogos(uris: List<Uri>) = addLogosTo(bottom = true, uris = uris)
+
+    /** Appends newly picked top-left logos, skipping any already in the bottom row. */
+    fun addTopLeftLogos(uris: List<Uri>) = addLogosTo(bottom = false, uris = uris)
+
+    private fun addLogosTo(bottom: Boolean, uris: List<Uri>) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isImporting = true, lastResult = null) }
+            val state = _uiState.value
+            val otherKeys = (if (bottom) state.topLeftLogos else state.logos)
+                .mapTo(HashSet()) { it.sourceKey }
+            var skipped = 0
+            val items = withContext(Dispatchers.IO) {
+                uris.mapNotNull { src ->
+                    val key = src.toString()
+                    if (key in otherKeys) {
+                        skipped++
+                        return@mapNotNull null
+                    }
+                    val internal = copyToInternal(src, "logos") ?: return@mapNotNull null
+                    LogoItem(id = nextLogoId++, uri = internal, sourceKey = key)
+                }
+            }
+            _uiState.update {
+                if (bottom) {
+                    it.copy(
+                        logos = it.logos + items,
+                        isImporting = false,
+                        messageRes = if (skipped > 0) R.string.dup_in_top else null
+                    )
+                } else {
+                    it.copy(
+                        topLeftLogos = it.topLeftLogos + items,
+                        isImporting = false,
+                        messageRes = if (skipped > 0) R.string.dup_in_bottom else null
+                    )
+                }
+            }
+            persist()
         }
     }
 
-    fun removePhoto(uri: Uri) = _uiState.update {
-        it.copy(photoUris = it.photoUris.filterNot { u -> u == uri }, lastResult = null)
+    fun removeLogo(id: Long) {
+        _uiState.value.logos.firstOrNull { it.id == id }?.let { deleteInternal(it.uri) }
+        _uiState.update { it.copy(logos = it.logos.filterNot { item -> item.id == id }, lastResult = null) }
+        persist()
     }
 
-    /** Appends newly picked bottom logos (duplicates allowed within the row), but
-     * skips any logo already used in the top row. */
-    fun addLogos(uris: List<Uri>) = _uiState.update {
-        val inTop = it.topLeftLogos.mapTo(HashSet()) { item -> item.uri }
-        val allowed = uris.filterNot { u -> u in inTop }
-        it.copy(
-            logos = it.logos + newLogoItems(allowed),
-            messageRes = if (allowed.size < uris.size) R.string.dup_in_top else null,
-            lastResult = null
-        )
-    }
-
-    fun removeLogo(id: Long) = _uiState.update {
-        it.copy(logos = it.logos.filterNot { item -> item.id == id }, lastResult = null)
-    }
-
-    /** Appends newly picked top-left logos, but skips any logo already used in the
-     * bottom row. */
-    fun addTopLeftLogos(uris: List<Uri>) = _uiState.update {
-        val inBottom = it.logos.mapTo(HashSet()) { item -> item.uri }
-        val allowed = uris.filterNot { u -> u in inBottom }
-        it.copy(
-            topLeftLogos = it.topLeftLogos + newLogoItems(allowed),
-            messageRes = if (allowed.size < uris.size) R.string.dup_in_bottom else null,
-            lastResult = null
-        )
-    }
-
-    fun removeTopLeftLogo(id: Long) = _uiState.update {
-        it.copy(topLeftLogos = it.topLeftLogos.filterNot { item -> item.id == id }, lastResult = null)
+    fun removeTopLeftLogo(id: Long) {
+        _uiState.value.topLeftLogos.firstOrNull { it.id == id }?.let { deleteInternal(it.uri) }
+        _uiState.update { it.copy(topLeftLogos = it.topLeftLogos.filterNot { item -> item.id == id }, lastResult = null) }
+        persist()
     }
 
     /** Reorders the bottom row by moving the logo at [from] to index [to]. */
-    fun moveLogo(from: Int, to: Int) = _uiState.update {
-        it.copy(logos = it.logos.moveItem(from, to), lastResult = null)
+    fun moveLogo(from: Int, to: Int) {
+        _uiState.update { it.copy(logos = it.logos.moveItem(from, to), lastResult = null) }
+        persist()
     }
 
     /** Reorders the top-left row by moving the logo at [from] to index [to]. */
-    fun moveTopLeftLogo(from: Int, to: Int) = _uiState.update {
-        it.copy(topLeftLogos = it.topLeftLogos.moveItem(from, to), lastResult = null)
+    fun moveTopLeftLogo(from: Int, to: Int) {
+        _uiState.update { it.copy(topLeftLogos = it.topLeftLogos.moveItem(from, to), lastResult = null) }
+        persist()
     }
 
     private fun <T> List<T>.moveItem(from: Int, to: Int): List<T> {
@@ -160,34 +232,42 @@ class WatermarkViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Sets (or replaces) the single top-right main company logo. */
-    fun setCornerLogo(uri: Uri?) = _uiState.update {
-        it.copy(cornerLogoUri = uri, lastResult = null)
+    fun setCornerLogo(uri: Uri?) {
+        if (uri == null) {
+            _uiState.value.cornerLogoUri?.let { deleteInternal(it) }
+            _uiState.update { it.copy(cornerLogoUri = null, lastResult = null) }
+            persist()
+            return
+        }
+        viewModelScope.launch {
+            _uiState.update { it.copy(isImporting = true, lastResult = null) }
+            val internal = withContext(Dispatchers.IO) { copyToInternal(uri, "logos") }
+            _uiState.update {
+                if (internal != null) it.copy(cornerLogoUri = internal, isImporting = false)
+                else it.copy(isImporting = false)
+            }
+            persist()
+        }
     }
 
     // Shared by both rows.
-    fun setLogoHeightPercent(value: Float) = _uiState.update { it.copy(logoHeightPercent = value) }
+    fun setLogoHeightPercent(value: Float) { _uiState.update { it.copy(logoHeightPercent = value) }; persist() }
 
-    fun setLeftMarginPercent(value: Float) =
-        _uiState.update { it.copy(leftMarginPercent = value) }
+    fun setLeftMarginPercent(value: Float) { _uiState.update { it.copy(leftMarginPercent = value) }; persist() }
 
-    fun setLogoOpacityPercent(value: Float) =
-        _uiState.update { it.copy(logoOpacityPercent = value) }
+    fun setLogoOpacityPercent(value: Float) { _uiState.update { it.copy(logoOpacityPercent = value) }; persist() }
 
-    fun setCentered(value: Boolean) = _uiState.update { it.copy(centered = value) }
+    fun setCentered(value: Boolean) { _uiState.update { it.copy(centered = value) }; persist() }
 
     // Row-specific edge distances.
-    fun setBottomMarginPercent(value: Float) =
-        _uiState.update { it.copy(bottomMarginPercent = value) }
+    fun setBottomMarginPercent(value: Float) { _uiState.update { it.copy(bottomMarginPercent = value) }; persist() }
 
-    fun setTopMarginPercent(value: Float) =
-        _uiState.update { it.copy(topMarginPercent = value) }
+    fun setTopMarginPercent(value: Float) { _uiState.update { it.copy(topMarginPercent = value) }; persist() }
 
     // Top-right main logo adjustments.
-    fun setCornerLogoHeightPercent(value: Float) =
-        _uiState.update { it.copy(cornerLogoHeightPercent = value) }
+    fun setCornerLogoHeightPercent(value: Float) { _uiState.update { it.copy(cornerLogoHeightPercent = value) }; persist() }
 
-    fun setCornerMarginPercent(value: Float) =
-        _uiState.update { it.copy(cornerMarginPercent = value) }
+    fun setCornerMarginPercent(value: Float) { _uiState.update { it.copy(cornerMarginPercent = value) }; persist() }
 
     fun clearResult() {
         _uiState.update { it.copy(lastResult = null) }

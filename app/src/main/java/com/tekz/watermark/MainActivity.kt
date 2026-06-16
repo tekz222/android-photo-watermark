@@ -319,6 +319,17 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                     Spacer(Modifier.width(8.dp))
                     Text(stringResource(R.string.add_photos))
                 }
+                if (state.isImporting) {
+                    Spacer(Modifier.height(12.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            stringResource(R.string.importing),
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                }
                 if (state.photoUris.isNotEmpty()) {
                     Spacer(Modifier.height(12.dp))
                     Text(
