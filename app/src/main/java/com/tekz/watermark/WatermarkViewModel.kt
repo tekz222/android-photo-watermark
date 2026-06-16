@@ -5,6 +5,9 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -75,26 +78,35 @@ class WatermarkViewModel(app: Application) : AndroidViewModel(app) {
 
     private val appCtx get() = getApplication<Application>()
 
+    /** Bundled logo used as the default main (top-right) logo on a fresh project. */
+    private val defaultCornerUri: Uri
+        get() = Uri.parse("android.resource://${appCtx.packageName}/drawable/default_corner_logo")
+
     init {
         // Restore the saved project (survives the app being killed).
-        ProjectStore.load(appCtx)?.let { s ->
-            nextLogoId = s.nextLogoId
+        val saved = ProjectStore.load(appCtx)
+        if (saved != null) {
+            nextLogoId = saved.nextLogoId
             _uiState.update {
                 it.copy(
-                    photoUris = s.photoUris,
-                    logos = s.logos,
-                    topLeftLogos = s.topLeftLogos,
-                    cornerLogoUri = s.cornerLogoUri,
-                    logoHeightPercent = s.logoHeight,
-                    leftMarginPercent = s.leftMargin,
-                    logoOpacityPercent = s.opacity,
-                    bottomMarginPercent = s.bottomMargin,
-                    topMarginPercent = s.topMargin,
-                    cornerLogoHeightPercent = s.cornerHeight,
-                    cornerMarginPercent = s.cornerMargin,
-                    centered = s.centered
+                    photoUris = saved.photoUris,
+                    logos = saved.logos,
+                    topLeftLogos = saved.topLeftLogos,
+                    cornerLogoUri = saved.cornerLogoUri,
+                    logoHeightPercent = saved.logoHeight,
+                    leftMarginPercent = saved.leftMargin,
+                    logoOpacityPercent = saved.opacity,
+                    bottomMarginPercent = saved.bottomMargin,
+                    topMarginPercent = saved.topMargin,
+                    cornerLogoHeightPercent = saved.cornerHeight,
+                    cornerMarginPercent = saved.cornerMargin,
+                    centered = saved.centered
                 )
             }
+        } else {
+            // Fresh start: pre-fill the default main logo.
+            _uiState.update { it.copy(cornerLogoUri = defaultCornerUri) }
+            persist()
         }
 
         // Mirror the background service's progress into the UI state.
@@ -145,7 +157,11 @@ class WatermarkViewModel(app: Application) : AndroidViewModel(app) {
     fun addPhotos(uris: List<Uri>) {
         viewModelScope.launch {
             _uiState.update { it.copy(isImporting = true, lastResult = null) }
-            val copied = withContext(Dispatchers.IO) { uris.mapNotNull { copyToInternal(it, "photos") } }
+            // Copy in parallel so importing many photos is fast.
+            val copied = withContext(Dispatchers.IO) {
+                coroutineScope { uris.map { async { copyToInternal(it, "photos") } }.awaitAll() }
+                    .filterNotNull()
+            }
             _uiState.update { it.copy(photoUris = it.photoUris + copied, isImporting = false) }
             persist()
             if (_uiState.value.isProcessing) WatermarkJob.addPhotos(copied)

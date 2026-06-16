@@ -108,5 +108,6 @@ object ProjectStore {
     }
 
     private fun exists(uri: Uri): Boolean =
-        uri.path?.let { File(it).exists() } ?: false
+        if (uri.scheme == "file") uri.path?.let { File(it).exists() } ?: false
+        else true // bundled resource / other schemes are always available
 }
