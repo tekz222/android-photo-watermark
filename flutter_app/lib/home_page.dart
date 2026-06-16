@@ -483,38 +483,24 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _openFullscreen(int index) {
-    showDialog<void>(
-      context: context,
-      barrierColor: Colors.black,
-      builder: (ctx) {
-        final controller = PageController(initialPage: index);
-        return Dialog.fullscreen(
-          backgroundColor: Colors.black,
-          child: Stack(
-            children: [
-              PageView.builder(
-                controller: controller,
-                itemCount: _previews.length,
-                itemBuilder: (c, i) => InteractiveViewer(
-                  child: Center(
-                    child: Image.memory(_previews[i].bytes, fit: BoxFit.contain),
-                  ),
-                ),
-              ),
-              SafeArea(
-                child: Align(
-                  alignment: Alignment.topRight,
-                  child: IconButton(
-                    icon: const Icon(Icons.close, color: Colors.white, size: 30),
-                    onPressed: () => Navigator.of(ctx).pop(),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        fullscreenDialog: true,
+        builder: (_) => _FullscreenViewer(
+          initialPage: index,
+          lowRes: _previews.map((e) => e.bytes).toList(),
+          renderHiRes: _renderHiRes,
+        ),
+      ),
     );
+  }
+
+  /// Renders the watermarked photo at high resolution for a crisp zoom.
+  Future<Uint8List?> _renderHiRes(int page) async {
+    if (page < 0 || page >= _photos.length) return null;
+    final p = _photos[page];
+    final bytes = _photoCache[p.path] ??= await p.readAsBytes();
+    return compute(renderWatermark, _request(bytes, maxDim: 3000, quality: 95));
   }
 
   Widget _photosCard() {
@@ -943,4 +929,88 @@ class _PlacementPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _PlacementPainter old) =>
       old.placement != placement || old.color != color;
+}
+
+/// Full-screen, swipeable image viewer. Shows the low-res preview instantly,
+/// then renders the current page at high resolution (with a spinner) for a
+/// crisp pinch-zoom. InteractiveViewer keeps panning within the image bounds.
+class _FullscreenViewer extends StatefulWidget {
+  const _FullscreenViewer({
+    required this.initialPage,
+    required this.lowRes,
+    required this.renderHiRes,
+  });
+
+  final int initialPage;
+  final List<Uint8List> lowRes;
+  final Future<Uint8List?> Function(int page) renderHiRes;
+
+  @override
+  State<_FullscreenViewer> createState() => _FullscreenViewerState();
+}
+
+class _FullscreenViewerState extends State<_FullscreenViewer> {
+  late final PageController _controller;
+  late int _page;
+  final Map<int, Uint8List> _hi = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _page = widget.initialPage;
+    _controller = PageController(initialPage: widget.initialPage);
+    _loadHi(_page);
+  }
+
+  Future<void> _loadHi(int page) async {
+    if (_hi.containsKey(page)) return;
+    final out = await widget.renderHiRes(page);
+    if (!mounted || out == null) return;
+    setState(() => _hi[page] = out);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Stack(
+        children: [
+          PageView.builder(
+            controller: _controller,
+            itemCount: widget.lowRes.length,
+            onPageChanged: (p) {
+              setState(() => _page = p);
+              _loadHi(p);
+            },
+            itemBuilder: (c, i) {
+              final bytes = _hi[i] ?? widget.lowRes[i];
+              return InteractiveViewer(
+                maxScale: 6,
+                child: Center(
+                  child: Image.memory(bytes, fit: BoxFit.contain, gaplessPlayback: true),
+                ),
+              );
+            },
+          ),
+          if (!_hi.containsKey(_page))
+            const Center(child: CircularProgressIndicator(color: Colors.white)),
+          SafeArea(
+            child: Align(
+              alignment: Alignment.topRight,
+              child: IconButton(
+                icon: const Icon(Icons.close, color: Colors.white, size: 30),
+                onPressed: () => Navigator.of(context).pop(),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }

@@ -1027,6 +1027,13 @@ private fun LockedPreview(
                     val bmp = if (hi != null && hi.first == page) hi.second else previews[page]
                     ZoomableImage(bitmap = bmp.asImageBitmap())
                 }
+                // Spinner while the high-resolution version of this page renders.
+                if (hiRes?.first != pagerState.currentPage) {
+                    CircularProgressIndicator(
+                        color = Color.White,
+                        modifier = Modifier.align(Alignment.Center)
+                    )
+                }
                 if (previews.size > 1) {
                     Text(
                         text = "${pagerState.currentPage + 1}/${previews.size}",
