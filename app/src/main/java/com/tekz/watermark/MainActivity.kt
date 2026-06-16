@@ -47,14 +47,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AddPhotoAlternate
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.DragHandle
-import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.Image
-import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -102,6 +94,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntSize
@@ -258,7 +251,7 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                         showHistory = true
                     }) {
                         Icon(
-                            Icons.Filled.History,
+                            painterResource(R.drawable.ic_history),
                             contentDescription = stringResource(R.string.history_title)
                         )
                     }
@@ -301,7 +294,7 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
             StepCard(
                 number = 1,
                 title = stringResource(R.string.step_photos),
-                icon = { Icon(Icons.Filled.PhotoLibrary, contentDescription = null) }
+                icon = { Icon(painterResource(R.drawable.ic_photo_library), contentDescription = null) }
             ) {
                 Button(
                     onClick = {
@@ -315,7 +308,7 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Icon(Icons.Filled.AddPhotoAlternate, contentDescription = null)
+                    Icon(painterResource(R.drawable.ic_add_photo), contentDescription = null)
                     Spacer(Modifier.width(8.dp))
                     Text(stringResource(R.string.add_photos))
                 }
@@ -488,7 +481,7 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                     enabled = state.photoUris.isNotEmpty(),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Icon(Icons.Filled.Image, contentDescription = null)
+                    Icon(painterResource(R.drawable.ic_image), contentDescription = null)
                     Spacer(Modifier.width(8.dp))
                     Text(
                         stringResource(
@@ -554,7 +547,7 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                         .fillMaxWidth()
                         .height(52.dp)
                 ) {
-                    Icon(Icons.Filled.CheckCircle, contentDescription = null)
+                    Icon(painterResource(R.drawable.ic_check_circle), contentDescription = null)
                     Spacer(Modifier.width(8.dp))
                     Text(stringResource(R.string.apply_and_save), fontSize = 16.sp)
                 }
@@ -642,7 +635,7 @@ private fun RemovableThumbnail(
                 .clickable { onRemove() }
         ) {
             Icon(
-                Icons.Filled.Close,
+                painterResource(R.drawable.ic_close),
                 contentDescription = stringResource(R.string.remove_photo),
                 tint = Color.White,
                 modifier = Modifier.size(14.dp)
@@ -665,7 +658,7 @@ private fun MultiLogoPicker(
         enabled = enabled,
         modifier = Modifier.fillMaxWidth()
     ) {
-        Icon(Icons.Filled.Image, contentDescription = null)
+        Icon(painterResource(R.drawable.ic_image), contentDescription = null)
         Spacer(Modifier.width(8.dp))
         Text(stringResource(R.string.add_logos))
     }
@@ -764,7 +757,7 @@ private fun ReorderableLogoList(
                         .clickable { onRemove(item.id) }
                 ) {
                     Icon(
-                        Icons.Filled.Close,
+                        painterResource(R.drawable.ic_close),
                         contentDescription = stringResource(R.string.remove_logo),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(20.dp)
@@ -824,7 +817,7 @@ private fun ReorderableLogoList(
                         }
                 ) {
                     Icon(
-                        Icons.Filled.DragHandle,
+                        painterResource(R.drawable.ic_drag_handle),
                         contentDescription = stringResource(R.string.reorder_hint),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -1079,7 +1072,7 @@ private fun LockedPreview(
                         .clickable { fullscreenIndex = -1 }
                 ) {
                     Icon(
-                        Icons.Filled.Close,
+                        painterResource(R.drawable.ic_close),
                         contentDescription = stringResource(R.string.close),
                         tint = Color.White
                     )

@@ -41,10 +41,9 @@ android {
 
     buildTypes {
         release {
-            // R8 shrinks the big libraries; our own code is kept (see
-            // proguard-rules.pro) to avoid the earlier launch crash.
-            isMinifyEnabled = true
-            isShrinkResources = true
+            // R8 kept crashing the app on launch and can't be debugged without a
+            // device here, so it's off. Size is reduced other (safe) ways instead.
+            isMinifyEnabled = false
             if (keystorePropsFile.exists()) {
                 signingConfig = signingConfigs.getByName("release")
             }
@@ -91,7 +90,6 @@ dependencies {
 
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
-    implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.compose.material3:material3")
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
