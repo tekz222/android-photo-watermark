@@ -6,6 +6,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:gal/gal.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
@@ -117,6 +118,9 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _loadProject() async {
     final p = await SharedPreferences.getInstance();
+    final firstRun = !(p.containsKey('p_bottom') ||
+        p.containsKey('p_photos') ||
+        p.containsKey('p_corner'));
     List<LogoItem> parseLogos(String? s) {
       if (s == null || s.isEmpty) return [];
       final out = <LogoItem>[];
@@ -166,6 +170,16 @@ class _HomePageState extends State<HomePage> {
       _cornerMargin = p.getDouble('p_cornerMargin') ?? 2;
       _centered = p.getBool('p_centered') ?? false;
     });
+
+    // First launch: pre-fill the default main (top-right) logo.
+    if (firstRun) {
+      final data = await rootBundle.load('assets/default_corner_logo.png');
+      final bytes = data.buffer.asUint8List();
+      final path = await _copyBytesToApp(bytes, 'logos');
+      if (!mounted) return;
+      setState(() => _cornerLogo =
+          LogoItem(_nextLogoId++, path, 'asset:default_corner', bytes));
+    }
     _schedulePreview();
   }
 
@@ -196,13 +210,13 @@ class _HomePageState extends State<HomePage> {
     final picked = await _picker.pickMultiImage();
     if (picked.isEmpty) return;
     setState(() => _importing = true);
-    final paths = <String>[];
-    for (final x in picked) {
+    // Copy in parallel so importing many photos is fast.
+    final paths = await Future.wait(picked.map((x) async {
       final bytes = await x.readAsBytes();
       final path = await _copyBytesToApp(bytes, 'photos');
       _photoCache[path] = bytes;
-      paths.add(path);
-    }
+      return path;
+    }));
     setState(() {
       _photoPaths.addAll(paths);
       _importing = false;
