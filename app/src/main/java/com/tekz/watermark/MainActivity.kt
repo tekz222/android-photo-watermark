@@ -122,10 +122,52 @@ private const val MAX_PREVIEW = 5
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val crashFile = java.io.File(filesDir, "last_crash.txt")
+        if (crashFile.exists()) {
+            val text = runCatching { crashFile.readText() }.getOrDefault("(sem detalhes)")
+            setContent {
+                PhotoWatermarkTheme {
+                    CrashScreen(text) { crashFile.delete(); recreate() }
+                }
+            }
+            return
+        }
         setContent {
             PhotoWatermarkTheme {
                 WatermarkScreen()
             }
+        }
+    }
+}
+
+@Composable
+private fun CrashScreen(text: String, onRetry: () -> Unit) {
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    Surface(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp)
+                .verticalScroll(rememberScrollState())
+        ) {
+            Text(
+                "O app fechou por um erro. Toque em Copiar e me envie este texto:",
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(Modifier.height(8.dp))
+            Row {
+                Button(onClick = {
+                    clipboard.setText(androidx.compose.ui.text.AnnotatedString(text))
+                }) { Text("Copiar erro") }
+                Spacer(Modifier.width(8.dp))
+                OutlinedButton(onClick = onRetry) { Text("Tentar de novo") }
+            }
+            Spacer(Modifier.height(12.dp))
+            Text(
+                text = text,
+                fontSize = 11.sp,
+                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+            )
         }
     }
 }
