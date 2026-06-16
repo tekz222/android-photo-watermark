@@ -533,7 +533,7 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                             PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
                         )
                     },
-                    enabled = state.photoUris.isNotEmpty(),
+                    enabled = !state.isProcessing,
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Icon(painterResource(R.drawable.ic_image), contentDescription = null)
