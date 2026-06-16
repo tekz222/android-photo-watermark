@@ -78,10 +78,6 @@ class WatermarkViewModel(app: Application) : AndroidViewModel(app) {
 
     private val appCtx get() = getApplication<Application>()
 
-    /** Bundled logo used as the default main (top-right) logo on a fresh project. */
-    private val defaultCornerUri: Uri
-        get() = Uri.parse("android.resource://${appCtx.packageName}/drawable/default_corner_logo")
-
     init {
         // Restore the saved project (survives the app being killed).
         val saved = ProjectStore.load(appCtx)
@@ -104,9 +100,8 @@ class WatermarkViewModel(app: Application) : AndroidViewModel(app) {
                 )
             }
         } else {
-            // Fresh start: pre-fill the default main logo.
-            _uiState.update { it.copy(cornerLogoUri = defaultCornerUri) }
-            persist()
+            // Fresh start: install the bundled default main logo.
+            installDefaultCornerLogo()
         }
 
         // Mirror the background service's progress into the UI state.
@@ -145,6 +140,29 @@ class WatermarkViewModel(app: Application) : AndroidViewModel(app) {
             Uri.fromFile(file)
         } catch (e: Exception) {
             null
+        }
+    }
+
+    /** Copies the bundled default logo (from assets, untouched) into internal
+     * storage and sets it as the main logo. Runs once on a fresh project. */
+    private fun installDefaultCornerLogo() {
+        viewModelScope.launch {
+            val uri = withContext(Dispatchers.IO) {
+                try {
+                    val dir = java.io.File(appCtx.filesDir, "logos").apply { mkdirs() }
+                    val file = java.io.File(dir, "default_corner_logo.png")
+                    appCtx.assets.open("default_corner_logo.png").use { input ->
+                        file.outputStream().use { out -> input.copyTo(out) }
+                    }
+                    Uri.fromFile(file)
+                } catch (e: Exception) {
+                    null
+                }
+            }
+            if (uri != null) {
+                _uiState.update { it.copy(cornerLogoUri = uri) }
+                persist()
+            }
         }
     }
 
