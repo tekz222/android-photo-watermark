@@ -1,6 +1,7 @@
 package com.tekz.watermark
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.net.Uri
@@ -122,6 +123,8 @@ private const val MAX_PREVIEW = 5
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Lets us detect when the app is swiped away (closed) to reset the project.
+        runCatching { startService(Intent(this, TaskCleanupService::class.java)) }
         val crashFile = java.io.File(filesDir, "last_crash.txt")
         if (crashFile.exists()) {
             val text = runCatching { crashFile.readText() }.getOrDefault("(sem detalhes)")
@@ -181,6 +184,7 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
     var confirmAddDuringSave by remember { mutableStateOf(false) }
     var showHistory by remember { mutableStateOf(false) }
     var historyRuns by remember { mutableStateOf<List<SaveRun>>(emptyList()) }
+    var fullscreenLogo by remember { mutableStateOf<Uri?>(null) }
 
     // Whether the user is allowed to write to storage (only matters on API <= 28).
     var hasLegacyWritePermission by remember {
@@ -281,6 +285,10 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
 
     if (showHistory) {
         HistoryDialog(runs = historyRuns, onDismiss = { showHistory = false })
+    }
+
+    fullscreenLogo?.let { logoUri ->
+        LogoFullscreenDialog(uri = logoUri, onDismiss = { fullscreenLogo = null })
     }
 
     Scaffold(
@@ -404,7 +412,8 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                         )
                     },
                     onRemove = { viewModel.removeLogo(it) },
-                    onMove = { from, to -> viewModel.moveLogo(from, to) }
+                    onMove = { from, to -> viewModel.moveLogo(from, to) },
+                    onView = { fullscreenLogo = it }
                 )
                 if (state.logos.isNotEmpty()) {
                     Spacer(Modifier.height(12.dp))
@@ -467,7 +476,8 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                         )
                     },
                     onRemove = { viewModel.removeTopLeftLogo(it) },
-                    onMove = { from, to -> viewModel.moveTopLeftLogo(from, to) }
+                    onMove = { from, to -> viewModel.moveTopLeftLogo(from, to) },
+                    onView = { fullscreenLogo = it }
                 )
                 if (state.topLeftLogos.isNotEmpty()) {
                     Spacer(Modifier.height(12.dp))
@@ -543,7 +553,8 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                     RemovableThumbnail(
                         uri = state.cornerLogoUri!!,
                         contentScale = ContentScale.Fit,
-                        onRemove = { viewModel.setCornerLogo(null) }
+                        onRemove = { viewModel.setCornerLogo(null) },
+                        onClick = { fullscreenLogo = state.cornerLogoUri }
                     )
                     Spacer(Modifier.height(12.dp))
                     LabeledSlider(
@@ -654,7 +665,8 @@ private fun StepCard(
 private fun RemovableThumbnail(
     uri: Uri,
     contentScale: ContentScale,
-    onRemove: () -> Unit
+    onRemove: () -> Unit,
+    onClick: (() -> Unit)? = null
 ) {
     Box(modifier = Modifier.size(76.dp)) {
         AsyncImage(
@@ -665,6 +677,7 @@ private fun RemovableThumbnail(
                 .fillMaxSize()
                 .clip(RoundedCornerShape(8.dp))
                 .background(MaterialTheme.colorScheme.surfaceVariant)
+                .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
         )
         Box(
             contentAlignment = Alignment.Center,
@@ -687,13 +700,61 @@ private fun RemovableThumbnail(
 }
 
 @Composable
+private fun LogoFullscreenDialog(uri: Uri, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    var bmp by remember(uri) { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(uri) {
+        bmp = withContext(Dispatchers.Default) {
+            WatermarkEngine.loadBitmap(context.contentResolver, uri, maxDimension = 2560)
+        }
+    }
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black)
+        ) {
+            val b = bmp
+            if (b != null) {
+                ZoomableImage(bitmap = b.asImageBitmap())
+            } else {
+                CircularProgressIndicator(
+                    color = Color.White,
+                    modifier = Modifier.align(Alignment.Center)
+                )
+            }
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(12.dp)
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.5f))
+                    .clickable { onDismiss() }
+            ) {
+                Icon(
+                    painterResource(R.drawable.ic_close),
+                    contentDescription = stringResource(R.string.close),
+                    tint = Color.White
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun MultiLogoPicker(
     enabled: Boolean,
     items: List<LogoItem>,
     hint: String,
     onAdd: () -> Unit,
     onRemove: (Long) -> Unit,
-    onMove: (Int, Int) -> Unit
+    onMove: (Int, Int) -> Unit,
+    onView: (Uri) -> Unit
 ) {
     OutlinedButton(
         onClick = onAdd,
@@ -725,7 +786,7 @@ private fun MultiLogoPicker(
             )
         }
         Spacer(Modifier.height(8.dp))
-        ReorderableLogoList(items = items, onRemove = onRemove, onMove = onMove)
+        ReorderableLogoList(items = items, onRemove = onRemove, onMove = onMove, onView = onView)
     }
 }
 
@@ -741,7 +802,8 @@ private fun MultiLogoPicker(
 private fun ReorderableLogoList(
     items: List<LogoItem>,
     onRemove: (Long) -> Unit,
-    onMove: (Int, Int) -> Unit
+    onMove: (Int, Int) -> Unit,
+    onView: (Uri) -> Unit
 ) {
     val rowHeight = 64.dp
     val rowHeightPx = with(LocalDensity.current) { rowHeight.toPx() }
@@ -783,6 +845,7 @@ private fun ReorderableLogoList(
                         .size(48.dp)
                         .clip(RoundedCornerShape(8.dp))
                         .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .clickable { onView(item.uri) }
                 )
                 Text(
                     text = stringResource(R.string.logo_position, index + 1),

@@ -39,6 +39,11 @@
             android:name=".WatermarkService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+
+        <service
+            android:name=".TaskCleanupService"
+            android:exported="false"
+            android:stopWithTask="false" />
     </application>
 
 </manifest>

@@ -16,6 +16,14 @@ object ProjectStore {
     private const val PREFS = "watermark_project"
     private const val KEY = "state"
 
+    /** Wipes the saved project and copied media (used when the app is closed). */
+    fun clear(context: Context) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().clear().apply()
+        listOf("photos", "logos").forEach { sub ->
+            runCatching { File(context.filesDir, sub).deleteRecursively() }
+        }
+    }
+
     fun save(context: Context, s: WatermarkUiState, nextLogoId: Long) {
         val o = JSONObject()
         o.put("photos", JSONArray(s.photoUris.map { it.toString() }))

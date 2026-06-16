@@ -41,9 +41,11 @@ android {
 
     buildTypes {
         release {
-            // R8 kept crashing the app on launch and can't be debugged without a
-            // device here, so it's off. Size is reduced other (safe) ways instead.
-            isMinifyEnabled = false
+            // R8 in non-full mode + keep rules (proguard-rules.pro) keep our code
+            // and shrink the libraries. The on-screen crash reporter surfaces any
+            // remaining issue.
+            isMinifyEnabled = true
+            isShrinkResources = true
             if (keystorePropsFile.exists()) {
                 signingConfig = signingConfigs.getByName("release")
             }
