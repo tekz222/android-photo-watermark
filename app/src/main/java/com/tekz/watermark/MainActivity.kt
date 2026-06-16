@@ -74,6 +74,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -184,7 +185,8 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
     var confirmAddDuringSave by remember { mutableStateOf(false) }
     var showHistory by remember { mutableStateOf(false) }
     var historyRuns by remember { mutableStateOf<List<SaveRun>>(emptyList()) }
-    var fullscreenLogo by remember { mutableStateOf<Uri?>(null) }
+    // Fullscreen logo viewer: (uris of the tapped group, start index).
+    var fullscreenLogos by remember { mutableStateOf<Pair<List<Uri>, Int>?>(null) }
 
     // Whether the user is allowed to write to storage (only matters on API <= 28).
     var hasLegacyWritePermission by remember {
@@ -287,8 +289,8 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
         HistoryDialog(runs = historyRuns, onDismiss = { showHistory = false })
     }
 
-    fullscreenLogo?.let { logoUri ->
-        LogoFullscreenDialog(uri = logoUri, onDismiss = { fullscreenLogo = null })
+    fullscreenLogos?.let { (uris, index) ->
+        LogoFullscreenViewer(uris = uris, initialIndex = index) { fullscreenLogos = null }
     }
 
     Scaffold(
@@ -413,7 +415,7 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                     },
                     onRemove = { viewModel.removeLogo(it) },
                     onMove = { from, to -> viewModel.moveLogo(from, to) },
-                    onView = { fullscreenLogo = it }
+                    onView = { idx -> fullscreenLogos = state.logos.map { it.uri } to idx }
                 )
                 if (state.logos.isNotEmpty()) {
                     Spacer(Modifier.height(12.dp))
@@ -477,7 +479,7 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                     },
                     onRemove = { viewModel.removeTopLeftLogo(it) },
                     onMove = { from, to -> viewModel.moveTopLeftLogo(from, to) },
-                    onView = { fullscreenLogo = it }
+                    onView = { idx -> fullscreenLogos = state.topLeftLogos.map { it.uri } to idx }
                 )
                 if (state.topLeftLogos.isNotEmpty()) {
                     Spacer(Modifier.height(12.dp))
@@ -554,7 +556,9 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                         uri = state.cornerLogoUri!!,
                         contentScale = ContentScale.Fit,
                         onRemove = { viewModel.setCornerLogo(null) },
-                        onClick = { fullscreenLogo = state.cornerLogoUri }
+                        onClick = {
+                            state.cornerLogoUri?.let { fullscreenLogos = listOf(it) to 0 }
+                        }
                     )
                     Spacer(Modifier.height(12.dp))
                     LabeledSlider(
@@ -699,31 +703,54 @@ private fun RemovableThumbnail(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun LogoFullscreenDialog(uri: Uri, onDismiss: () -> Unit) {
+private fun LogoFullscreenViewer(uris: List<Uri>, initialIndex: Int, onDismiss: () -> Unit) {
     val context = LocalContext.current
-    var bmp by remember(uri) { mutableStateOf<Bitmap?>(null) }
-    LaunchedEffect(uri) {
-        bmp = withContext(Dispatchers.Default) {
-            WatermarkEngine.loadBitmap(context.contentResolver, uri, maxDimension = 2560)
-        }
-    }
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
+        val pagerState = rememberPagerState(
+            initialPage = initialIndex.coerceIn(0, (uris.size - 1).coerceAtLeast(0))
+        ) { uris.size }
+        // Decode each logo at high resolution, cached per page.
+        val bitmaps = remember { mutableStateMapOf<Int, Bitmap>() }
+        LaunchedEffect(pagerState.currentPage) {
+            val page = pagerState.currentPage
+            if (bitmaps[page] == null) {
+                val b = withContext(Dispatchers.Default) {
+                    WatermarkEngine.loadBitmap(context.contentResolver, uris[page], maxDimension = 2560)
+                }
+                if (b != null) bitmaps[page] = b
+            }
+        }
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color.Black)
         ) {
-            val b = bmp
-            if (b != null) {
-                ZoomableImage(bitmap = b.asImageBitmap())
-            } else {
-                CircularProgressIndicator(
+            HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
+                val b = bitmaps[page]
+                if (b != null) {
+                    ZoomableImage(bitmap = b.asImageBitmap())
+                } else {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(color = Color.White)
+                    }
+                }
+            }
+            if (uris.size > 1) {
+                Text(
+                    text = "${pagerState.currentPage + 1}/${uris.size}",
+                    style = MaterialTheme.typography.labelMedium,
                     color = Color.White,
-                    modifier = Modifier.align(Alignment.Center)
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = 16.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color.Black.copy(alpha = 0.5f))
+                        .padding(horizontal = 10.dp, vertical = 4.dp)
                 )
             }
             Box(
@@ -754,7 +781,7 @@ private fun MultiLogoPicker(
     onAdd: () -> Unit,
     onRemove: (Long) -> Unit,
     onMove: (Int, Int) -> Unit,
-    onView: (Uri) -> Unit
+    onView: (Int) -> Unit
 ) {
     OutlinedButton(
         onClick = onAdd,
@@ -803,7 +830,7 @@ private fun ReorderableLogoList(
     items: List<LogoItem>,
     onRemove: (Long) -> Unit,
     onMove: (Int, Int) -> Unit,
-    onView: (Uri) -> Unit
+    onView: (Int) -> Unit
 ) {
     val rowHeight = 64.dp
     val rowHeightPx = with(LocalDensity.current) { rowHeight.toPx() }
@@ -845,7 +872,7 @@ private fun ReorderableLogoList(
                         .size(48.dp)
                         .clip(RoundedCornerShape(8.dp))
                         .background(MaterialTheme.colorScheme.surfaceVariant)
-                        .clickable { onView(item.uri) }
+                        .clickable { onView(index) }
                 )
                 Text(
                     text = stringResource(R.string.logo_position, index + 1),
