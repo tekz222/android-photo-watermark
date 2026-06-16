@@ -54,6 +54,7 @@ class _HomePageState extends State<HomePage> {
   // Preview state.
   final Map<String, Uint8List> _photoCache = {};
   List<_Preview> _previews = [];
+  List<Uint8List> _hiResPreviews = [];
   int _previewToken = 0;
   Timer? _debounce;
 
@@ -147,7 +148,10 @@ class _HomePageState extends State<HomePage> {
     final token = ++_previewToken;
     final photos = _photos.take(kMaxPreview).toList();
     if (photos.isEmpty || !_hasAnyLogo) {
-      setState(() => _previews = []);
+      setState(() {
+        _previews = [];
+        _hiResPreviews = [];
+      });
       return;
     }
     final results = <_Preview>[];
@@ -166,6 +170,19 @@ class _HomePageState extends State<HomePage> {
       if (token != _previewToken) return;
       results.add(_Preview(out, aspect));
       setState(() => _previews = List.of(results));
+    }
+
+    // Pre-render high-resolution versions (compressed bytes are cheap to hold),
+    // so the full-screen viewer is already crisp without a spinner.
+    final hi = <Uint8List>[];
+    for (final p in photos) {
+      final bytes = _photoCache[p.path]!;
+      if (token != _previewToken) return;
+      final out =
+          await compute(renderWatermark, _request(bytes, maxDim: 2560, quality: 92));
+      if (token != _previewToken) return;
+      hi.add(out);
+      setState(() => _hiResPreviews = List.of(hi));
     }
   }
 
@@ -483,24 +500,20 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _openFullscreen(int index) {
+    final lowRes = _previews.map((e) => e.bytes).toList();
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         fullscreenDialog: true,
         builder: (_) => _FullscreenViewer(
           initialPage: index,
-          lowRes: _previews.map((e) => e.bytes).toList(),
-          renderHiRes: _renderHiRes,
+          // Use the pre-rendered high-res when available, else the low-res.
+          images: [
+            for (var i = 0; i < lowRes.length; i++)
+              i < _hiResPreviews.length ? _hiResPreviews[i] : lowRes[i]
+          ],
         ),
       ),
     );
-  }
-
-  /// Renders the watermarked photo at high resolution for a crisp zoom.
-  Future<Uint8List?> _renderHiRes(int page) async {
-    if (page < 0 || page >= _photos.length) return null;
-    final p = _photos[page];
-    final bytes = _photoCache[p.path] ??= await p.readAsBytes();
-    return compute(renderWatermark, _request(bytes, maxDim: 3000, quality: 95));
   }
 
   Widget _photosCard() {
@@ -931,19 +944,14 @@ class _PlacementPainter extends CustomPainter {
       old.placement != placement || old.color != color;
 }
 
-/// Full-screen, swipeable image viewer. Shows the low-res preview instantly,
-/// then renders the current page at high resolution (with a spinner) for a
-/// crisp pinch-zoom. InteractiveViewer keeps panning within the image bounds.
+/// Full-screen, swipeable image viewer over the (pre-rendered) images. No
+/// spinner — the images are already prepared. InteractiveViewer keeps panning
+/// within the image bounds.
 class _FullscreenViewer extends StatefulWidget {
-  const _FullscreenViewer({
-    required this.initialPage,
-    required this.lowRes,
-    required this.renderHiRes,
-  });
+  const _FullscreenViewer({required this.initialPage, required this.images});
 
   final int initialPage;
-  final List<Uint8List> lowRes;
-  final Future<Uint8List?> Function(int page) renderHiRes;
+  final List<Uint8List> images;
 
   @override
   State<_FullscreenViewer> createState() => _FullscreenViewerState();
@@ -951,22 +959,11 @@ class _FullscreenViewer extends StatefulWidget {
 
 class _FullscreenViewerState extends State<_FullscreenViewer> {
   late final PageController _controller;
-  late int _page;
-  final Map<int, Uint8List> _hi = {};
 
   @override
   void initState() {
     super.initState();
-    _page = widget.initialPage;
     _controller = PageController(initialPage: widget.initialPage);
-    _loadHi(_page);
-  }
-
-  Future<void> _loadHi(int page) async {
-    if (_hi.containsKey(page)) return;
-    final out = await widget.renderHiRes(page);
-    if (!mounted || out == null) return;
-    setState(() => _hi[page] = out);
   }
 
   @override
@@ -983,23 +980,14 @@ class _FullscreenViewerState extends State<_FullscreenViewer> {
         children: [
           PageView.builder(
             controller: _controller,
-            itemCount: widget.lowRes.length,
-            onPageChanged: (p) {
-              setState(() => _page = p);
-              _loadHi(p);
-            },
-            itemBuilder: (c, i) {
-              final bytes = _hi[i] ?? widget.lowRes[i];
-              return InteractiveViewer(
-                maxScale: 6,
-                child: Center(
-                  child: Image.memory(bytes, fit: BoxFit.contain, gaplessPlayback: true),
-                ),
-              );
-            },
+            itemCount: widget.images.length,
+            itemBuilder: (c, i) => InteractiveViewer(
+              maxScale: 6,
+              child: Center(
+                child: Image.memory(widget.images[i], fit: BoxFit.contain),
+              ),
+            ),
           ),
-          if (!_hi.containsKey(_page))
-            const Center(child: CircularProgressIndicator(color: Colors.white)),
           SafeArea(
             child: Align(
               alignment: Alignment.topRight,

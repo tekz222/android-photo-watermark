@@ -916,6 +916,51 @@ private fun LockedPreview(
         }
     }
 
+    // High-resolution sources + previews, pre-rendered in the background so the
+    // full-screen viewer is already crisp (no spinner, no per-image waiting).
+    var hiResSources by remember(photoUris) { mutableStateOf<List<Bitmap>?>(null) }
+    LaunchedEffect(photoUris) {
+        hiResSources = withContext(Dispatchers.Default) {
+            photoUris.mapNotNull {
+                WatermarkEngine.loadBitmap(context.contentResolver, it, maxDimension = 2560)
+            }
+        }
+    }
+    val hiSrcs = hiResSources
+    var hiResPreviews by remember { mutableStateOf<List<Bitmap>>(emptyList()) }
+    LaunchedEffect(
+        hiSrcs, lg, tl, corner,
+        logoHeightPercent, leftMarginPercent, logoOpacityPercent, bottomMarginPercent,
+        topMarginPercent, cornerLogoHeightPercent, cornerMarginPercent, centered
+    ) {
+        if (hiSrcs != null && lg != null && tl != null &&
+            (lg.isNotEmpty() || tl.isNotEmpty() || corner != null)
+        ) {
+            // Wait for settings to settle so dragging sliders stays smooth.
+            kotlinx.coroutines.delay(250)
+            hiResPreviews = withContext(Dispatchers.Default) {
+                hiSrcs.map { src ->
+                    WatermarkEngine.applyWatermarks(
+                        photo = src,
+                        bottomLogos = lg,
+                        topLeftLogos = tl,
+                        cornerLogo = corner,
+                        bottomLogoHeightFraction = logoHeightPercent / 100f,
+                        bottomMarginFraction = bottomMarginPercent / 100f,
+                        bottomLeftMarginFraction = leftMarginPercent / 100f,
+                        topLeftLogoHeightFraction = logoHeightPercent / 100f,
+                        topLeftTopMarginFraction = topMarginPercent / 100f,
+                        topLeftLeftMarginFraction = leftMarginPercent / 100f,
+                        cornerLogoHeightFraction = cornerLogoHeightPercent / 100f,
+                        cornerMarginFraction = cornerMarginPercent / 100f,
+                        rowLogoOpacity = logoOpacityPercent / 100f,
+                        centered = centered
+                    )
+                }
+            }
+        }
+    }
+
     var fullscreenIndex by remember { mutableIntStateOf(-1) }
 
     Surface(
@@ -985,54 +1030,16 @@ private fun LockedPreview(
             properties = DialogProperties(usePlatformDefaultWidth = false)
         ) {
             val pagerState = rememberPagerState(initialPage = fullscreenIndex) { previews.size }
-            // Render the visible page at high resolution for a crisp zoom.
-            var hiRes by remember { mutableStateOf<Pair<Int, Bitmap>?>(null) }
-            DisposableEffect(Unit) { onDispose { hiRes?.second?.recycle() } }
-            LaunchedEffect(pagerState.currentPage, lg, tl, corner) {
-                val page = pagerState.currentPage
-                if (lg == null || tl == null) return@LaunchedEffect
-                val rendered = withContext(Dispatchers.Default) {
-                    val src = WatermarkEngine.loadBitmap(
-                        context.contentResolver, photoUris[page], maxDimension = 3000
-                    ) ?: return@withContext null
-                    val out = WatermarkEngine.applyWatermarks(
-                        photo = src,
-                        bottomLogos = lg,
-                        topLeftLogos = tl,
-                        cornerLogo = corner,
-                        bottomLogoHeightFraction = logoHeightPercent / 100f,
-                        bottomMarginFraction = bottomMarginPercent / 100f,
-                        bottomLeftMarginFraction = leftMarginPercent / 100f,
-                        topLeftLogoHeightFraction = logoHeightPercent / 100f,
-                        topLeftTopMarginFraction = topMarginPercent / 100f,
-                        topLeftLeftMarginFraction = leftMarginPercent / 100f,
-                        cornerLogoHeightFraction = cornerLogoHeightPercent / 100f,
-                        cornerMarginFraction = cornerMarginPercent / 100f,
-                        rowLogoOpacity = logoOpacityPercent / 100f,
-                        centered = centered
-                    )
-                    src.recycle()
-                    out
-                }
-                hiRes?.second?.recycle()
-                hiRes = if (rendered != null) page to rendered else null
-            }
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(Color.Black)
             ) {
                 HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
-                    val hi = hiRes
-                    val bmp = if (hi != null && hi.first == page) hi.second else previews[page]
+                    // Use the pre-rendered high-res image when ready; otherwise the
+                    // low-res preview (no spinner, upgrades silently).
+                    val bmp = hiResPreviews.getOrNull(page) ?: previews[page]
                     ZoomableImage(bitmap = bmp.asImageBitmap())
-                }
-                // Spinner while the high-resolution version of this page renders.
-                if (hiRes?.first != pagerState.currentPage) {
-                    CircularProgressIndicator(
-                        color = Color.White,
-                        modifier = Modifier.align(Alignment.Center)
-                    )
                 }
                 if (previews.size > 1) {
                     Text(
