@@ -18,10 +18,11 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/** Result of the last batch run, surfaced to the UI as a one-off message. */
+/** Result of the last batch run, surfaced to the UI as a persistent banner. */
 data class ProcessResult(
     val saved: Int,
-    val failed: Int
+    val failed: Int,
+    val album: String
 )
 
 /**
@@ -60,15 +61,27 @@ data class WatermarkUiState(
     val lastResult: ProcessResult? = null,
     /** One-off message (string resource id) to surface as a snackbar. */
     val messageRes: Int? = null,
-    /** True once everything has been saved successfully and nothing has changed
-     * since. Greys out the "save all" button until the user edits something. */
-    val savedAll: Boolean = false
+    /** Photos already saved in the current project (by internal uri). The save
+     * button only ever processes photos NOT in this set, so re-pressing it after
+     * adding more photos saves just the new ones — into [currentAlbum]. */
+    val savedPhotoUris: Set<Uri> = emptySet(),
+    /** Album (gallery folder) the current project saves into. Set on the first
+     * save; reused for later additions so they land in the same place. */
+    val currentAlbum: String? = null
 ) {
     val hasAnyLogo: Boolean
         get() = logos.isNotEmpty() || topLeftLogos.isNotEmpty() || cornerLogoUri != null
 
+    /** Photos selected but not yet saved in this project. */
+    val unsavedPhotos: List<Uri>
+        get() = photoUris.filterNot { it in savedPhotoUris }
+
     val canProcess: Boolean
-        get() = !isProcessing && !savedAll && photoUris.isNotEmpty() && hasAnyLogo
+        get() = !isProcessing && hasAnyLogo && unsavedPhotos.isNotEmpty()
+
+    /** Everything currently selected has already been saved. */
+    val allSaved: Boolean
+        get() = photoUris.isNotEmpty() && hasAnyLogo && unsavedPhotos.isEmpty()
 }
 
 class WatermarkViewModel(app: Application) : AndroidViewModel(app) {
@@ -99,7 +112,10 @@ class WatermarkViewModel(app: Application) : AndroidViewModel(app) {
                     topMarginPercent = saved.topMargin,
                     cornerLogoHeightPercent = saved.cornerHeight,
                     cornerMarginPercent = saved.cornerMargin,
-                    centered = saved.centered
+                    centered = saved.centered,
+                    // Keep only saved markers for photos that still exist.
+                    savedPhotoUris = saved.savedPhotoUris.intersect(saved.photoUris.toSet()),
+                    currentAlbum = saved.currentAlbum
                 )
             }
         } else {
@@ -110,16 +126,26 @@ class WatermarkViewModel(app: Application) : AndroidViewModel(app) {
         // Mirror the background service's progress into the UI state.
         viewModelScope.launch {
             WatermarkJob.progress.collect { p ->
+                var finishedNow = false
                 _uiState.update { s ->
                     when {
-                        p.finished && s.isProcessing -> s.copy(
-                            isProcessing = false,
-                            processed = p.processed,
-                            total = p.total,
-                            lastResult = ProcessResult(saved = p.saved, failed = p.failed),
-                            // Grey out the save button only on a fully successful run.
-                            savedAll = p.failed == 0
-                        )
+                        p.finished && s.isProcessing -> {
+                            finishedNow = true
+                            // On a fully successful run, every selected photo (including
+                            // any added mid-save) is now saved into the current album.
+                            val nowSaved = if (p.failed == 0) s.photoUris.toSet() else s.savedPhotoUris
+                            s.copy(
+                                isProcessing = false,
+                                processed = p.processed,
+                                total = p.total,
+                                lastResult = ProcessResult(
+                                    saved = p.saved,
+                                    failed = p.failed,
+                                    album = s.currentAlbum.orEmpty()
+                                ),
+                                savedPhotoUris = nowSaved
+                            )
+                        }
                         !p.finished -> s.copy(
                             isProcessing = p.running,
                             processed = p.processed,
@@ -128,15 +154,23 @@ class WatermarkViewModel(app: Application) : AndroidViewModel(app) {
                         else -> s
                     }
                 }
+                // Persist the new saved-markers / album so they survive a kill.
+                if (finishedNow) persist()
             }
         }
     }
 
-    private fun persist() {
-        // Any persisted change means the project differs from what was last saved,
-        // so re-enable the "save all" button.
-        if (_uiState.value.savedAll) _uiState.update { it.copy(savedAll = false) }
-        ProjectStore.save(appCtx, _uiState.value, nextLogoId)
+    private fun persist() = ProjectStore.save(appCtx, _uiState.value, nextLogoId)
+
+    /** Resets everything to a fresh project: wipes selected photos, logos and the
+     * saved-state, then reinstalls the default main logo. Photos already written
+     * to the gallery are NOT touched. */
+    fun newProject() {
+        if (_uiState.value.isProcessing) return
+        ProjectStore.clear(appCtx)
+        nextLogoId = 0L
+        _uiState.value = WatermarkUiState()
+        installDefaultCornerLogo()
     }
 
     /** Copies a picked image into the app's internal storage so we keep access to
@@ -197,7 +231,13 @@ class WatermarkViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun removePhoto(uri: Uri) {
-        _uiState.update { it.copy(photoUris = it.photoUris.filterNot { u -> u == uri }, lastResult = null) }
+        _uiState.update {
+            it.copy(
+                photoUris = it.photoUris.filterNot { u -> u == uri },
+                savedPhotoUris = it.savedPhotoUris - uri,
+                lastResult = null
+            )
+        }
         deleteInternal(uri)
         persist()
     }
@@ -333,12 +373,16 @@ class WatermarkViewModel(app: Application) : AndroidViewModel(app) {
     fun processAll() {
         val state = _uiState.value
         if (state.isProcessing) return
-        if (state.photoUris.isEmpty()) return
         if (!state.hasAnyLogo) return
+        // Only the photos not yet saved in this project get processed.
+        val toSave = state.unsavedPhotos
+        if (toSave.isEmpty()) return
 
         val context = getApplication<Application>()
-        // Album named by date/time (colon-free so it's a valid folder name).
-        val album = SimpleDateFormat("yyyy-MM-dd HH-mm-ss", Locale.getDefault()).format(Date())
+        // Reuse the project's album so later additions land in the same folder;
+        // on the first save, create one named by date/time (colon-free).
+        val album = state.currentAlbum
+            ?: SimpleDateFormat("yyyy-MM-dd HH-mm-ss", Locale.getDefault()).format(Date())
 
         WatermarkJob.bottomLogoUris = state.logos.map { it.uri }
         WatermarkJob.topLeftLogoUris = state.topLeftLogos.map { it.uri }
@@ -352,19 +396,21 @@ class WatermarkViewModel(app: Application) : AndroidViewModel(app) {
         WatermarkJob.cornerMarginFraction = state.cornerMarginPercent / 100f
         WatermarkJob.centered = state.centered
         WatermarkJob.albumName = album
-        WatermarkJob.reset(state.photoUris)
+        WatermarkJob.reset(toSave)
         WatermarkJob.progress.value = WatermarkJob.Progress(
-            running = true, processed = 0, total = state.photoUris.size
+            running = true, processed = 0, total = toSave.size
         )
 
         _uiState.update {
             it.copy(
                 isProcessing = true,
                 processed = 0,
-                total = state.photoUris.size,
-                lastResult = null
+                total = toSave.size,
+                lastResult = null,
+                currentAlbum = album
             )
         }
+        persist()
         WatermarkService.start(context)
     }
 }

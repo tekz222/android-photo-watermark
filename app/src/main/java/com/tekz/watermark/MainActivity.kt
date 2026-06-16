@@ -184,6 +184,7 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
     var confirmAddDuringSave by remember { mutableStateOf(false) }
+    var confirmNewProject by remember { mutableStateOf(false) }
     var showHistory by remember { mutableStateOf(false) }
     var historyRuns by remember { mutableStateOf<List<SaveRun>>(emptyList()) }
     // Fullscreen logo viewer: (uris of the tapped group, start index).
@@ -245,17 +246,8 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
         }
     }
 
-    // Surface the result of the last batch run as a snackbar.
-    LaunchedEffect(state.lastResult) {
-        val result = state.lastResult ?: return@LaunchedEffect
-        val message = if (result.failed == 0) {
-            context.getString(R.string.result_success, result.saved)
-        } else {
-            context.getString(R.string.result_partial, result.saved, result.failed)
-        }
-        snackbarHostState.showSnackbar(message)
-        viewModel.clearResult()
-    }
+    // The result of the last run is shown as a persistent banner (see below), not
+    // a snackbar, so it stays on screen until the user dismisses it.
 
     // Surface one-off info messages (e.g. a logo skipped because it's already in
     // the other section).
@@ -286,6 +278,25 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
         )
     }
 
+    if (confirmNewProject) {
+        AlertDialog(
+            onDismissRequest = { confirmNewProject = false },
+            title = { Text(stringResource(R.string.new_project_confirm_title)) },
+            text = { Text(stringResource(R.string.new_project_confirm_msg)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmNewProject = false
+                    viewModel.newProject()
+                }) { Text(stringResource(R.string.new_project)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmNewProject = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            }
+        )
+    }
+
     if (showHistory) {
         HistoryDialog(runs = historyRuns, onDismiss = { showHistory = false })
     }
@@ -299,6 +310,12 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
             TopAppBar(
                 title = { Text(stringResource(R.string.app_name)) },
                 actions = {
+                    TextButton(
+                        onClick = { confirmNewProject = true },
+                        enabled = !state.isProcessing
+                    ) {
+                        Text(stringResource(R.string.new_project))
+                    }
                     IconButton(onClick = {
                         historyRuns = viewModel.history()
                         showHistory = true
@@ -343,6 +360,11 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
+            // ---- Persistent result banner (stays until dismissed) ----
+            state.lastResult?.let { result ->
+                ResultBanner(result = result, onDismiss = { viewModel.clearResult() })
+            }
+
             // ---- Step 1: photos ----
             StepCard(
                 number = 1,
@@ -612,6 +634,10 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                     )
                 }
             } else {
+                // After the first save, only the newly added photos are saved, so
+                // the button reflects how many are still pending.
+                val pending = state.unsavedPhotos.size
+                val continuing = state.savedPhotoUris.isNotEmpty()
                 Button(
                     onClick = { startProcessing() },
                     enabled = state.canProcess,
@@ -621,10 +647,24 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                 ) {
                     Icon(painterResource(R.drawable.ic_check_circle), contentDescription = null)
                     Spacer(Modifier.width(8.dp))
-                    Text(stringResource(R.string.apply_and_save), fontSize = 16.sp)
+                    Text(
+                        text = if (continuing && pending > 0) {
+                            stringResource(R.string.save_new, pending)
+                        } else {
+                            stringResource(R.string.apply_and_save)
+                        },
+                        fontSize = 16.sp
+                    )
                 }
                 Text(
-                    text = stringResource(R.string.save_location),
+                    text = if (state.allSaved && state.currentAlbum != null) {
+                        stringResource(
+                            R.string.all_saved_hint,
+                            stringResource(R.string.save_location_album, state.currentAlbum!!)
+                        )
+                    } else {
+                        stringResource(R.string.save_location)
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.fillMaxWidth()
@@ -676,6 +716,56 @@ private fun StepCard(
             }
             Spacer(Modifier.height(12.dp))
             content()
+        }
+    }
+}
+
+/**
+ * Persistent banner summarizing the last save: how many photos were saved and the
+ * gallery album they landed in. Stays until the user taps the ✕.
+ */
+@Composable
+private fun ResultBanner(result: ProcessResult, onDismiss: () -> Unit) {
+    val success = result.failed == 0
+    val location = stringResource(R.string.save_location_album, result.album)
+    val message = if (success) {
+        stringResource(R.string.result_saved_in, result.saved, location)
+    } else {
+        stringResource(R.string.result_partial_in, result.saved, result.failed, location)
+    }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = if (success) MaterialTheme.colorScheme.primaryContainer
+            else MaterialTheme.colorScheme.errorContainer
+        )
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 8.dp)
+        ) {
+            Icon(
+                painterResource(R.drawable.ic_check_circle),
+                contentDescription = null,
+                tint = if (success) MaterialTheme.colorScheme.onPrimaryContainer
+                else MaterialTheme.colorScheme.onErrorContainer
+            )
+            Spacer(Modifier.width(12.dp))
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (success) MaterialTheme.colorScheme.onPrimaryContainer
+                else MaterialTheme.colorScheme.onErrorContainer,
+                modifier = Modifier.weight(1f)
+            )
+            IconButton(onClick = onDismiss) {
+                Icon(
+                    painterResource(R.drawable.ic_close),
+                    contentDescription = stringResource(R.string.close),
+                    tint = if (success) MaterialTheme.colorScheme.onPrimaryContainer
+                    else MaterialTheme.colorScheme.onErrorContainer
+                )
+            }
         }
     }
 }

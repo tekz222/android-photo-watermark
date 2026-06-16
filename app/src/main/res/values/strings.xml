@@ -46,15 +46,27 @@
     <string name="preview_label_n">Pré-visualização (primeiras %1$d fotos) — arraste para o lado</string>
 
     <string name="apply_and_save">Aplicar e salvar tudo</string>
-    <string name="save_location">As imagens são salvas em Imagens/Watermarked na galeria.</string>
+    <string name="save_new">Salvar fotos novas (%1$d)</string>
+    <string name="save_location">As imagens são salvas numa pasta com a data/hora em Imagens, na galeria.</string>
+    <string name="save_location_album">Imagens/%1$s</string>
+    <string name="all_saved_hint">Tudo salvo em %1$s. Adicione mais fotos para salvá-las nessa mesma pasta.</string>
 
     <string name="processing">Processando %1$d de %2$d…</string>
     <string name="notif_channel_name">Salvamento</string>
     <string name="notif_saving_title">Salvando fotos…</string>
+    <string name="notif_done_title">Fotos salvas</string>
+    <string name="notif_done_text">%1$d foto(s) salva(s) em %2$s</string>
+    <string name="notif_done_partial">%1$d salva(s), %2$d falharam — em %3$s</string>
     <string name="history_title">Histórico de salvamentos</string>
     <string name="history_empty">Nenhum salvamento ainda.</string>
     <string name="importing">Importando…</string>
     <string name="history_entry">%1$s foto(s) · %2$s</string>
     <string name="result_success">Pronto! %1$d foto(s) salva(s) na galeria.</string>
     <string name="result_partial">%1$d salva(s), %2$d falharam.</string>
+    <string name="result_saved_in">Pronto! %1$d foto(s) salva(s) em %2$s.</string>
+    <string name="result_partial_in">%1$d salva(s), %2$d falharam — em %3$s.</string>
+
+    <string name="new_project">Novo projeto</string>
+    <string name="new_project_confirm_title">Começar novo projeto?</string>
+    <string name="new_project_confirm_msg">Isso limpa as fotos e os ajustes atuais e volta para a logo padrão. As fotos que você já salvou na galeria NÃO são afetadas.</string>
 </resources>

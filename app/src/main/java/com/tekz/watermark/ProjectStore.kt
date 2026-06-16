@@ -39,6 +39,8 @@ object ProjectStore {
         o.put("cornerHeight", s.cornerLogoHeightPercent.toDouble())
         o.put("cornerMargin", s.cornerMarginPercent.toDouble())
         o.put("centered", s.centered)
+        o.put("savedPhotos", JSONArray(s.savedPhotoUris.map { it.toString() }))
+        o.put("currentAlbum", s.currentAlbum ?: JSONObject.NULL)
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit().putString(KEY, o.toString()).apply()
     }
@@ -56,7 +58,9 @@ object ProjectStore {
         val topMargin: Float,
         val cornerHeight: Float,
         val cornerMargin: Float,
-        val centered: Boolean
+        val centered: Boolean,
+        val savedPhotoUris: Set<Uri>,
+        val currentAlbum: String?
     )
 
     fun load(context: Context): Loaded? {
@@ -64,7 +68,8 @@ object ProjectStore {
             .getString(KEY, null) ?: return null
         return try {
             val o = JSONObject(str)
-            val cornerStr = if (o.isNull("corner")) null else o.optString("corner", null)
+            val cornerStr = if (o.isNull("corner")) null else o.optString("corner").takeIf { it.isNotEmpty() }
+            val albumStr = if (o.isNull("currentAlbum")) null else o.optString("currentAlbum").takeIf { it.isNotEmpty() }
             Loaded(
                 photoUris = jsonToUris(o.optJSONArray("photos")).filter { exists(it) },
                 logos = jsonToLogos(o.optJSONArray("bottom")).filter { exists(it.uri) },
@@ -78,7 +83,9 @@ object ProjectStore {
                 topMargin = o.optDouble("topMargin", 2.0).toFloat(),
                 cornerHeight = o.optDouble("cornerHeight", 22.0).toFloat(),
                 cornerMargin = o.optDouble("cornerMargin", 2.0).toFloat(),
-                centered = o.optBoolean("centered", false)
+                centered = o.optBoolean("centered", false),
+                savedPhotoUris = jsonToUris(o.optJSONArray("savedPhotos")).toSet(),
+                currentAlbum = albumStr
             )
         } catch (e: Exception) {
             null

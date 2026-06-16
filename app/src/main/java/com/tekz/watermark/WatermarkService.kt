@@ -147,6 +147,7 @@ class WatermarkService : Service() {
         }
         publish(false, saved, failed, finished = true)
         stopForeground(STOP_FOREGROUND_REMOVE)
+        showDoneNotification(saved, failed, WatermarkJob.albumName)
         stopSelf()
     }
 
@@ -193,6 +194,26 @@ class WatermarkService : Service() {
         mgr.notify(NOTIF_ID, buildNotification(processed, total))
     }
 
+    /** A dismissible notification posted when the batch is done, stating how many
+     * photos were saved and into which gallery album. */
+    private fun showDoneNotification(saved: Int, failed: Int, album: String) {
+        if (saved == 0 && failed == 0) return
+        val location = getString(R.string.save_location_album, album)
+        val text = if (failed == 0) {
+            getString(R.string.notif_done_text, saved, location)
+        } else {
+            getString(R.string.notif_done_partial, saved, failed, location)
+        }
+        val notif = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle(getString(R.string.notif_done_title))
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setAutoCancel(true)
+            .build()
+        getSystemService(NotificationManager::class.java).notify(DONE_NOTIF_ID, notif)
+    }
+
     override fun onDestroy() {
         scope.cancel()
         super.onDestroy()
@@ -201,6 +222,7 @@ class WatermarkService : Service() {
     companion object {
         private const val CHANNEL_ID = "watermark_saving"
         private const val NOTIF_ID = 42
+        private const val DONE_NOTIF_ID = 43
 
         fun start(context: Context) {
             val intent = Intent(context, WatermarkService::class.java)
