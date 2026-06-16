@@ -252,7 +252,7 @@ class _HomePageState extends State<HomePage> {
   String _nextAlbum() {
     final d = DateTime.now();
     String two(int v) => v.toString().padLeft(2, '0');
-    return 'Watermarked ${d.year}-${two(d.month)}-${two(d.day)} '
+    return '${d.year}-${two(d.month)}-${two(d.day)} '
         '${two(d.hour)}-${two(d.minute)}-${two(d.second)}';
   }
 

@@ -75,6 +75,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -96,10 +97,12 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -982,13 +985,47 @@ private fun LockedPreview(
             properties = DialogProperties(usePlatformDefaultWidth = false)
         ) {
             val pagerState = rememberPagerState(initialPage = fullscreenIndex) { previews.size }
+            // Render the visible page at high resolution for a crisp zoom.
+            var hiRes by remember { mutableStateOf<Pair<Int, Bitmap>?>(null) }
+            DisposableEffect(Unit) { onDispose { hiRes?.second?.recycle() } }
+            LaunchedEffect(pagerState.currentPage, lg, tl, corner) {
+                val page = pagerState.currentPage
+                if (lg == null || tl == null) return@LaunchedEffect
+                val rendered = withContext(Dispatchers.Default) {
+                    val src = WatermarkEngine.loadBitmap(
+                        context.contentResolver, photoUris[page], maxDimension = 3000
+                    ) ?: return@withContext null
+                    val out = WatermarkEngine.applyWatermarks(
+                        photo = src,
+                        bottomLogos = lg,
+                        topLeftLogos = tl,
+                        cornerLogo = corner,
+                        bottomLogoHeightFraction = logoHeightPercent / 100f,
+                        bottomMarginFraction = bottomMarginPercent / 100f,
+                        bottomLeftMarginFraction = leftMarginPercent / 100f,
+                        topLeftLogoHeightFraction = logoHeightPercent / 100f,
+                        topLeftTopMarginFraction = topMarginPercent / 100f,
+                        topLeftLeftMarginFraction = leftMarginPercent / 100f,
+                        cornerLogoHeightFraction = cornerLogoHeightPercent / 100f,
+                        cornerMarginFraction = cornerMarginPercent / 100f,
+                        rowLogoOpacity = logoOpacityPercent / 100f,
+                        centered = centered
+                    )
+                    src.recycle()
+                    out
+                }
+                hiRes?.second?.recycle()
+                hiRes = if (rendered != null) page to rendered else null
+            }
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(Color.Black)
             ) {
                 HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
-                    ZoomableImage(bitmap = previews[page].asImageBitmap())
+                    val hi = hiRes
+                    val bmp = if (hi != null && hi.first == page) hi.second else previews[page]
+                    ZoomableImage(bitmap = bmp.asImageBitmap())
                 }
                 if (previews.size > 1) {
                     Text(
@@ -1032,21 +1069,39 @@ private fun LockedPreview(
 private fun ZoomableImage(bitmap: androidx.compose.ui.graphics.ImageBitmap) {
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
+    var box by remember { mutableStateOf(IntSize.Zero) }
+    val aspect = if (bitmap.height == 0) 1f
+    else bitmap.width.toFloat() / bitmap.height.toFloat()
+
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .onSizeChanged { box = it }
             .pointerInput(Unit) {
                 awaitEachGesture {
                     awaitFirstDown(requireUnconsumed = false)
                     do {
                         val event = awaitPointerEvent()
-                        val zoom = event.calculateZoom()
-                        if (event.changes.size >= 2) {
-                            scale = (scale * zoom).coerceIn(1f, 5f)
-                            offset += event.calculatePan()
-                            event.changes.forEach { it.consume() }
-                        } else if (scale > 1f) {
-                            offset += event.calculatePan()
+                        if (event.changes.size >= 2 || scale > 1f) {
+                            scale = (scale * event.calculateZoom()).coerceIn(1f, 6f)
+                            // Size the image takes inside the box (ContentScale.Fit).
+                            val bw = box.width.toFloat()
+                            val bh = box.height.toFloat()
+                            val fittedW: Float
+                            val fittedH: Float
+                            if (bh > 0f && bw / bh > aspect) {
+                                fittedH = bh; fittedW = bh * aspect
+                            } else {
+                                fittedW = bw; fittedH = if (aspect > 0f) bw / aspect else bh
+                            }
+                            // Don't let the image be panned past its edges.
+                            val maxX = ((fittedW * scale - bw) / 2f).coerceAtLeast(0f)
+                            val maxY = ((fittedH * scale - bh) / 2f).coerceAtLeast(0f)
+                            val pan = event.calculatePan()
+                            offset = Offset(
+                                (offset.x + pan.x).coerceIn(-maxX, maxX),
+                                (offset.y + pan.y).coerceIn(-maxY, maxY)
+                            )
                             event.changes.forEach { it.consume() }
                         }
                         if (scale <= 1f) offset = Offset.Zero

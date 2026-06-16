@@ -214,8 +214,7 @@ class WatermarkViewModel(app: Application) : AndroidViewModel(app) {
 
         val context = getApplication<Application>()
         // Album named by date/time (colon-free so it's a valid folder name).
-        val stamp = SimpleDateFormat("yyyy-MM-dd HH-mm-ss", Locale.getDefault()).format(Date())
-        val album = "Watermarked $stamp"
+        val album = SimpleDateFormat("yyyy-MM-dd HH-mm-ss", Locale.getDefault()).format(Date())
 
         WatermarkJob.bottomLogoUris = state.logos.map { it.uri }
         WatermarkJob.topLeftLogoUris = state.topLeftLogos.map { it.uri }
