@@ -41,8 +41,9 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = true
-            isShrinkResources = true
+            // R8 minification is disabled: it stripped runtime-needed code and
+            // crashed the app on launch. This is still a signed release build.
+            isMinifyEnabled = false
             if (keystorePropsFile.exists()) {
                 signingConfig = signingConfigs.getByName("release")
             }
