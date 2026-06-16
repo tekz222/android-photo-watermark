@@ -59,13 +59,16 @@ data class WatermarkUiState(
     val total: Int = 0,
     val lastResult: ProcessResult? = null,
     /** One-off message (string resource id) to surface as a snackbar. */
-    val messageRes: Int? = null
+    val messageRes: Int? = null,
+    /** True once everything has been saved successfully and nothing has changed
+     * since. Greys out the "save all" button until the user edits something. */
+    val savedAll: Boolean = false
 ) {
     val hasAnyLogo: Boolean
         get() = logos.isNotEmpty() || topLeftLogos.isNotEmpty() || cornerLogoUri != null
 
     val canProcess: Boolean
-        get() = !isProcessing && photoUris.isNotEmpty() && hasAnyLogo
+        get() = !isProcessing && !savedAll && photoUris.isNotEmpty() && hasAnyLogo
 }
 
 class WatermarkViewModel(app: Application) : AndroidViewModel(app) {
@@ -113,7 +116,9 @@ class WatermarkViewModel(app: Application) : AndroidViewModel(app) {
                             isProcessing = false,
                             processed = p.processed,
                             total = p.total,
-                            lastResult = ProcessResult(saved = p.saved, failed = p.failed)
+                            lastResult = ProcessResult(saved = p.saved, failed = p.failed),
+                            // Grey out the save button only on a fully successful run.
+                            savedAll = p.failed == 0
                         )
                         !p.finished -> s.copy(
                             isProcessing = p.running,
@@ -127,7 +132,12 @@ class WatermarkViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun persist() = ProjectStore.save(appCtx, _uiState.value, nextLogoId)
+    private fun persist() {
+        // Any persisted change means the project differs from what was last saved,
+        // so re-enable the "save all" button.
+        if (_uiState.value.savedAll) _uiState.update { it.copy(savedAll = false) }
+        ProjectStore.save(appCtx, _uiState.value, nextLogoId)
+    }
 
     /** Copies a picked image into the app's internal storage so we keep access to
      * it after the process is recreated. Returns the internal `file://` uri. */

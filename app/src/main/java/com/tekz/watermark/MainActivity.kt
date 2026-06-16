@@ -389,7 +389,8 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                             RemovableThumbnail(
                                 uri = uri,
                                 contentScale = ContentScale.Crop,
-                                onRemove = { viewModel.removePhoto(uri) }
+                                onRemove = { viewModel.removePhoto(uri) },
+                                enabled = !state.isProcessing
                             )
                         }
                     }
@@ -403,7 +404,7 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                 icon = { PlacementIcon(Placement.BOTTOM) }
             ) {
                 MultiLogoPicker(
-                    enabled = state.photoUris.isNotEmpty(),
+                    enabled = state.photoUris.isNotEmpty() && !state.isProcessing,
                     items = state.logos,
                     hint = stringResource(
                         if (state.photoUris.isEmpty()) R.string.logo_hint
@@ -422,14 +423,16 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                     Spacer(Modifier.height(12.dp))
                     AlignmentChooser(
                         centered = state.centered,
-                        onChange = viewModel::setCentered
+                        onChange = viewModel::setCentered,
+                        enabled = !state.isProcessing
                     )
                     Spacer(Modifier.height(8.dp))
                     LabeledSlider(
                         label = stringResource(R.string.logo_size_all, state.logoHeightPercent.roundToInt()),
                         value = state.logoHeightPercent,
                         valueRange = 5f..30f,
-                        onValueChange = viewModel::setLogoHeightPercent
+                        onValueChange = viewModel::setLogoHeightPercent,
+                        enabled = !state.isProcessing
                     )
                     if (!state.centered) {
                         Spacer(Modifier.height(8.dp))
@@ -437,7 +440,8 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                             label = stringResource(R.string.left_margin_all, state.leftMarginPercent.roundToInt()),
                             value = state.leftMarginPercent,
                             valueRange = 0f..15f,
-                            onValueChange = viewModel::setLeftMarginPercent
+                            onValueChange = viewModel::setLeftMarginPercent,
+                            enabled = !state.isProcessing
                         )
                     }
                     Spacer(Modifier.height(8.dp))
@@ -445,14 +449,16 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                         label = stringResource(R.string.logo_opacity_all, state.logoOpacityPercent.roundToInt()),
                         value = state.logoOpacityPercent,
                         valueRange = 0f..100f,
-                        onValueChange = viewModel::setLogoOpacityPercent
+                        onValueChange = viewModel::setLogoOpacityPercent,
+                        enabled = !state.isProcessing
                     )
                     Spacer(Modifier.height(8.dp))
                     LabeledSlider(
                         label = stringResource(R.string.bottom_margin, state.bottomMarginPercent.roundToInt()),
                         value = state.bottomMarginPercent,
                         valueRange = 0f..15f,
-                        onValueChange = viewModel::setBottomMarginPercent
+                        onValueChange = viewModel::setBottomMarginPercent,
+                        enabled = !state.isProcessing
                     )
                 }
             }
@@ -467,7 +473,7 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                 icon = { PlacementIcon(Placement.TOP_LEFT) }
             ) {
                 MultiLogoPicker(
-                    enabled = state.photoUris.isNotEmpty(),
+                    enabled = state.photoUris.isNotEmpty() && !state.isProcessing,
                     items = state.topLeftLogos,
                     hint = stringResource(
                         if (state.photoUris.isEmpty()) R.string.logo_hint
@@ -486,14 +492,16 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                     Spacer(Modifier.height(12.dp))
                     AlignmentChooser(
                         centered = state.centered,
-                        onChange = viewModel::setCentered
+                        onChange = viewModel::setCentered,
+                        enabled = !state.isProcessing
                     )
                     Spacer(Modifier.height(8.dp))
                     LabeledSlider(
                         label = stringResource(R.string.logo_size_all, state.logoHeightPercent.roundToInt()),
                         value = state.logoHeightPercent,
                         valueRange = 5f..30f,
-                        onValueChange = viewModel::setLogoHeightPercent
+                        onValueChange = viewModel::setLogoHeightPercent,
+                        enabled = !state.isProcessing
                     )
                     if (!state.centered) {
                         Spacer(Modifier.height(8.dp))
@@ -501,7 +509,8 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                             label = stringResource(R.string.left_margin_all, state.leftMarginPercent.roundToInt()),
                             value = state.leftMarginPercent,
                             valueRange = 0f..15f,
-                            onValueChange = viewModel::setLeftMarginPercent
+                            onValueChange = viewModel::setLeftMarginPercent,
+                            enabled = !state.isProcessing
                         )
                     }
                     Spacer(Modifier.height(8.dp))
@@ -509,14 +518,16 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                         label = stringResource(R.string.logo_opacity_all, state.logoOpacityPercent.roundToInt()),
                         value = state.logoOpacityPercent,
                         valueRange = 0f..100f,
-                        onValueChange = viewModel::setLogoOpacityPercent
+                        onValueChange = viewModel::setLogoOpacityPercent,
+                        enabled = !state.isProcessing
                     )
                     Spacer(Modifier.height(8.dp))
                     LabeledSlider(
                         label = stringResource(R.string.top_margin, state.topMarginPercent.roundToInt()),
                         value = state.topMarginPercent,
                         valueRange = 0f..15f,
-                        onValueChange = viewModel::setTopMarginPercent
+                        onValueChange = viewModel::setTopMarginPercent,
+                        enabled = !state.isProcessing
                     )
                 }
             }
@@ -559,21 +570,24 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                         onRemove = { viewModel.setCornerLogo(null) },
                         onClick = {
                             state.cornerLogoUri?.let { fullscreenLogos = listOf(it) to 0 }
-                        }
+                        },
+                        enabled = !state.isProcessing
                     )
                     Spacer(Modifier.height(12.dp))
                     LabeledSlider(
                         label = stringResource(R.string.logo_size, state.cornerLogoHeightPercent.roundToInt()),
                         value = state.cornerLogoHeightPercent,
                         valueRange = 5f..40f,
-                        onValueChange = viewModel::setCornerLogoHeightPercent
+                        onValueChange = viewModel::setCornerLogoHeightPercent,
+                        enabled = !state.isProcessing
                     )
                     Spacer(Modifier.height(8.dp))
                     LabeledSlider(
                         label = stringResource(R.string.corner_margin, state.cornerMarginPercent.roundToInt()),
                         value = state.cornerMarginPercent,
                         valueRange = 0f..15f,
-                        onValueChange = viewModel::setCornerMarginPercent
+                        onValueChange = viewModel::setCornerMarginPercent,
+                        enabled = !state.isProcessing
                     )
                 }
             }
@@ -671,7 +685,8 @@ private fun RemovableThumbnail(
     uri: Uri,
     contentScale: ContentScale,
     onRemove: () -> Unit,
-    onClick: (() -> Unit)? = null
+    onClick: (() -> Unit)? = null,
+    enabled: Boolean = true
 ) {
     Box(modifier = Modifier.size(76.dp)) {
         AsyncImage(
@@ -684,22 +699,25 @@ private fun RemovableThumbnail(
                 .background(MaterialTheme.colorScheme.surfaceVariant)
                 .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
         )
-        Box(
-            contentAlignment = Alignment.Center,
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(2.dp)
-                .size(22.dp)
-                .clip(CircleShape)
-                .background(Color.Black.copy(alpha = 0.6f))
-                .clickable { onRemove() }
-        ) {
-            Icon(
-                painterResource(R.drawable.ic_close),
-                contentDescription = stringResource(R.string.remove_photo),
-                tint = Color.White,
-                modifier = Modifier.size(14.dp)
-            )
+        // The remove button is hidden while saving so nothing can be changed.
+        if (enabled) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(2.dp)
+                    .size(22.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.6f))
+                    .clickable { onRemove() }
+            ) {
+                Icon(
+                    painterResource(R.drawable.ic_close),
+                    contentDescription = stringResource(R.string.remove_photo),
+                    tint = Color.White,
+                    modifier = Modifier.size(14.dp)
+                )
+            }
         }
     }
 }
@@ -814,7 +832,13 @@ private fun MultiLogoPicker(
             )
         }
         Spacer(Modifier.height(8.dp))
-        ReorderableLogoList(items = items, onRemove = onRemove, onMove = onMove, onView = onView)
+        ReorderableLogoList(
+            items = items,
+            onRemove = onRemove,
+            onMove = onMove,
+            onView = onView,
+            enabled = enabled
+        )
     }
 }
 
@@ -831,7 +855,8 @@ private fun ReorderableLogoList(
     items: List<LogoItem>,
     onRemove: (Long) -> Unit,
     onMove: (Int, Int) -> Unit,
-    onView: (Int) -> Unit
+    onView: (Int) -> Unit,
+    enabled: Boolean = true
 ) {
     val rowHeight = 64.dp
     val rowHeightPx = with(LocalDensity.current) { rowHeight.toPx() }
@@ -882,6 +907,9 @@ private fun ReorderableLogoList(
                         .weight(1f)
                         .padding(start = 12.dp)
                 )
+                // While saving, the remove and drag controls are hidden so the
+                // logo list can't be changed mid-save.
+                if (enabled) {
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier
@@ -954,6 +982,7 @@ private fun ReorderableLogoList(
                         contentDescription = stringResource(R.string.reorder_hint),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                }
                 }
             }
         }
@@ -1381,7 +1410,7 @@ private fun HistoryDialog(runs: List<SaveRun>, onDismiss: () -> Unit) {
 }
 
 @Composable
-private fun AlignmentChooser(centered: Boolean, onChange: (Boolean) -> Unit) {
+private fun AlignmentChooser(centered: Boolean, onChange: (Boolean) -> Unit, enabled: Boolean = true) {
     Column {
         Text(
             stringResource(R.string.align_label),
@@ -1393,11 +1422,13 @@ private fun AlignmentChooser(centered: Boolean, onChange: (Boolean) -> Unit) {
             FilterChip(
                 selected = !centered,
                 onClick = { onChange(false) },
+                enabled = enabled,
                 label = { Text(stringResource(R.string.align_left)) }
             )
             FilterChip(
                 selected = centered,
                 onClick = { onChange(true) },
+                enabled = enabled,
                 label = { Text(stringResource(R.string.align_center)) }
             )
         }
@@ -1409,10 +1440,11 @@ private fun LabeledSlider(
     label: String,
     value: Float,
     valueRange: ClosedFloatingPointRange<Float>,
-    onValueChange: (Float) -> Unit
+    onValueChange: (Float) -> Unit,
+    enabled: Boolean = true
 ) {
     Column {
         Text(label, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-        Slider(value = value, onValueChange = onValueChange, valueRange = valueRange)
+        Slider(value = value, onValueChange = onValueChange, valueRange = valueRange, enabled = enabled)
     }
 }
