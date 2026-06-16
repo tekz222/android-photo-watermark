@@ -466,35 +466,40 @@ class _HomePageState extends State<HomePage> {
     return Center(
       child: GestureDetector(
         onTap: () => _openFullscreen(i),
-        child: ClipRRect(
-        borderRadius: BorderRadius.circular(8),
-        child: SizedBox(
-          width: w,
-          height: h,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              Image.memory(p.bytes, fit: BoxFit.cover),
-              if (_previews.length > 1)
-                Positioned(
-                  left: 6,
-                  top: 6,
-                  child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: Colors.black54,
-                      borderRadius: BorderRadius.circular(6),
+        child: Container(
+          // Square corners + light gray frame.
+          decoration: BoxDecoration(
+            border: Border.all(color: Colors.grey.shade400, width: 1),
+          ),
+          child: ClipRect(
+            child: SizedBox(
+              width: w,
+              height: h,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  Image.memory(p.bytes, fit: BoxFit.cover),
+                  if (_previews.length > 1)
+                    Positioned(
+                      left: 6,
+                      top: 6,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.black54,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text('${i + 1}/${_previews.length}',
+                            style: const TextStyle(
+                                color: Colors.white, fontSize: 11)),
+                      ),
                     ),
-                    child: Text('${i + 1}/${_previews.length}',
-                        style:
-                            const TextStyle(color: Colors.white, fontSize: 11)),
-                  ),
-                ),
-            ],
+                ],
+              ),
+            ),
           ),
         ),
-      ),
       ),
     );
   }

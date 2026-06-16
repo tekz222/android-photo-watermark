@@ -17,6 +17,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -92,6 +93,7 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
@@ -994,7 +996,8 @@ private fun LockedPreview(
                             modifier = Modifier
                                 .height(200.dp)
                                 .aspectRatio(aspect)
-                                .clip(RoundedCornerShape(8.dp))
+                                .clip(RectangleShape)
+                                .border(1.dp, Color.LightGray, RectangleShape)
                                 .clickable { fullscreenIndex = index }
                         ) {
                             Image(
