@@ -1,14 +1,14 @@
 import 'dart:typed_data';
 
-/// A single logo in a row. Each entry has a unique [id] so the same image can be
-/// added several times while still being individually removable/reorderable.
-/// [path] identifies the source file, used to keep a logo from being in both the
-/// bottom and the top rows at once.
+/// A single logo in a row. [path] is an internal copy of the image (survives
+/// app restarts); [sourceKey] is the original picked path, used to keep the same
+/// logo out of both rows. [bytes] is the in-memory image for rendering.
 class LogoItem {
-  LogoItem(this.id, this.path, this.bytes);
+  LogoItem(this.id, this.path, this.sourceKey, this.bytes);
 
   final int id;
   final String path;
+  final String sourceKey;
   final Uint8List bytes;
 }
 

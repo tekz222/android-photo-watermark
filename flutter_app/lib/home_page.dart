@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show File;
+import 'dart:io' show Directory, File;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:gal/gal.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
@@ -34,12 +35,14 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   final ImagePicker _picker = ImagePicker();
 
-  final List<XFile> _photos = [];
+  final List<String> _photoPaths = []; // internal copies (survive restarts)
   final List<LogoItem> _bottomLogos = [];
   final List<LogoItem> _topLeftLogos = [];
   LogoItem? _cornerLogo;
 
   int _nextLogoId = 0;
+  int _fileSeq = 0;
+  bool _importing = false;
 
   // Adjustments (percent of the photo's shortest side).
   // Size and left margin are SHARED by the bottom and top rows.
@@ -67,9 +70,103 @@ class _HomePageState extends State<HomePage> {
       _bottomLogos.isNotEmpty || _topLeftLogos.isNotEmpty || _cornerLogo != null;
 
   @override
+  void initState() {
+    super.initState();
+    _loadProject();
+  }
+
+  @override
   void dispose() {
     _debounce?.cancel();
     super.dispose();
+  }
+
+  // ---- Persistence (survives the app being closed/killed) ----
+
+  Future<String> _copyBytesToApp(Uint8List bytes, String sub) async {
+    final dir = await getApplicationDocumentsDirectory();
+    final folder = Directory('${dir.path}/$sub');
+    if (!folder.existsSync()) folder.createSync(recursive: true);
+    final file =
+        File('${folder.path}/${DateTime.now().microsecondsSinceEpoch}_${_fileSeq++}');
+    await file.writeAsBytes(bytes);
+    return file.path;
+  }
+
+  Future<void> _saveProject() async {
+    final p = await SharedPreferences.getInstance();
+    Map<String, dynamic> logoJson(LogoItem e) =>
+        {'id': e.id, 'path': e.path, 'key': e.sourceKey};
+    await p.setStringList('p_photos', _photoPaths);
+    await p.setString(
+        'p_bottom', jsonEncode(_bottomLogos.map(logoJson).toList()));
+    await p.setString(
+        'p_topleft', jsonEncode(_topLeftLogos.map(logoJson).toList()));
+    await p.setString(
+        'p_corner', _cornerLogo == null ? '' : jsonEncode(logoJson(_cornerLogo!)));
+    await p.setInt('p_nextid', _nextLogoId);
+    await p.setDouble('p_logoSize', _logoSize);
+    await p.setDouble('p_leftMargin', _leftMargin);
+    await p.setDouble('p_opacity', _logoOpacity);
+    await p.setDouble('p_bottomMargin', _bottomMargin);
+    await p.setDouble('p_topMargin', _topMargin);
+    await p.setDouble('p_cornerHeight', _cornerHeight);
+    await p.setDouble('p_cornerMargin', _cornerMargin);
+    await p.setBool('p_centered', _centered);
+  }
+
+  Future<void> _loadProject() async {
+    final p = await SharedPreferences.getInstance();
+    List<LogoItem> parseLogos(String? s) {
+      if (s == null || s.isEmpty) return [];
+      final out = <LogoItem>[];
+      for (final e in jsonDecode(s) as List) {
+        final path = e['path'] as String;
+        final f = File(path);
+        if (!f.existsSync()) continue;
+        out.add(LogoItem(
+            e['id'] as int, path, e['key'] as String? ?? path, f.readAsBytesSync()));
+      }
+      return out;
+    }
+
+    final photos =
+        (p.getStringList('p_photos') ?? []).where((x) => File(x).existsSync()).toList();
+    final bottom = parseLogos(p.getString('p_bottom'));
+    final topLeft = parseLogos(p.getString('p_topleft'));
+    LogoItem? corner;
+    final cs = p.getString('p_corner');
+    if (cs != null && cs.isNotEmpty) {
+      final e = jsonDecode(cs);
+      final f = File(e['path'] as String);
+      if (f.existsSync()) {
+        corner = LogoItem(e['id'] as int, e['path'] as String,
+            e['key'] as String? ?? e['path'] as String, f.readAsBytesSync());
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _photoPaths
+        ..clear()
+        ..addAll(photos);
+      _bottomLogos
+        ..clear()
+        ..addAll(bottom);
+      _topLeftLogos
+        ..clear()
+        ..addAll(topLeft);
+      _cornerLogo = corner;
+      _nextLogoId = p.getInt('p_nextid') ?? 0;
+      _logoSize = p.getDouble('p_logoSize') ?? 22;
+      _leftMargin = p.getDouble('p_leftMargin') ?? 1;
+      _logoOpacity = p.getDouble('p_opacity') ?? 90;
+      _bottomMargin = p.getDouble('p_bottomMargin') ?? 2;
+      _topMargin = p.getDouble('p_topMargin') ?? 2;
+      _cornerHeight = p.getDouble('p_cornerHeight') ?? 22;
+      _cornerMargin = p.getDouble('p_cornerMargin') ?? 2;
+      _centered = p.getBool('p_centered') ?? false;
+    });
+    _schedulePreview();
   }
 
   // ---- Picking ----
@@ -98,9 +195,17 @@ class _HomePageState extends State<HomePage> {
     }
     final picked = await _picker.pickMultiImage();
     if (picked.isEmpty) return;
-    final existing = _photos.map((p) => p.path).toSet();
+    setState(() => _importing = true);
+    final paths = <String>[];
+    for (final x in picked) {
+      final bytes = await x.readAsBytes();
+      final path = await _copyBytesToApp(bytes, 'photos');
+      _photoCache[path] = bytes;
+      paths.add(path);
+    }
     setState(() {
-      _photos.addAll(picked.where((p) => !existing.contains(p.path)));
+      _photoPaths.addAll(paths);
+      _importing = false;
     });
     _schedulePreview();
   }
@@ -108,9 +213,10 @@ class _HomePageState extends State<HomePage> {
   Future<void> _pickLogos(List<LogoItem> target) async {
     final picked = await _picker.pickMultiImage();
     if (picked.isEmpty) return;
-    // The same logo can't be in both rows.
+    // The same logo can't be in both rows (compared by original picked path).
     final other = identical(target, _bottomLogos) ? _topLeftLogos : _bottomLogos;
-    final blocked = other.map((e) => e.path).toSet();
+    final blocked = other.map((e) => e.sourceKey).toSet();
+    setState(() => _importing = true);
     var skipped = 0;
     for (final x in picked) {
       if (blocked.contains(x.path)) {
@@ -118,9 +224,10 @@ class _HomePageState extends State<HomePage> {
         continue;
       }
       final bytes = await x.readAsBytes();
-      target.add(LogoItem(_nextLogoId++, x.path, bytes));
+      final path = await _copyBytesToApp(bytes, 'logos');
+      target.add(LogoItem(_nextLogoId++, path, x.path, bytes));
     }
-    setState(() {});
+    setState(() => _importing = false);
     if (skipped > 0) {
       _snack(identical(target, _bottomLogos)
           ? 'Logo(s) já usada(s) no topo — ignorada(s).'
@@ -132,21 +239,27 @@ class _HomePageState extends State<HomePage> {
   Future<void> _pickCornerLogo() async {
     final x = await _picker.pickImage(source: ImageSource.gallery);
     if (x == null) return;
+    setState(() => _importing = true);
     final bytes = await x.readAsBytes();
-    setState(() => _cornerLogo = LogoItem(_nextLogoId++, x.path, bytes));
+    final path = await _copyBytesToApp(bytes, 'logos');
+    setState(() {
+      _cornerLogo = LogoItem(_nextLogoId++, path, x.path, bytes);
+      _importing = false;
+    });
     _schedulePreview();
   }
 
   // ---- Preview ----
 
   void _schedulePreview() {
+    _saveProject();
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 180), _recomputePreviews);
   }
 
   Future<void> _recomputePreviews() async {
     final token = ++_previewToken;
-    final photos = _photos.take(kMaxPreview).toList();
+    final photos = _photoPaths.take(kMaxPreview).toList();
     if (photos.isEmpty || !_hasAnyLogo) {
       setState(() {
         _previews = [];
@@ -155,8 +268,8 @@ class _HomePageState extends State<HomePage> {
       return;
     }
     final results = <_Preview>[];
-    for (final p in photos) {
-      final bytes = _photoCache[p.path] ??= await p.readAsBytes();
+    for (final path in photos) {
+      final bytes = _photoCache[path] ??= await File(path).readAsBytes();
       if (token != _previewToken) return;
       final out =
           await compute(renderWatermark, _request(bytes, maxDim: 900, quality: 85));
@@ -175,8 +288,8 @@ class _HomePageState extends State<HomePage> {
     // Pre-render high-resolution versions (compressed bytes are cheap to hold),
     // so the full-screen viewer is already crisp without a spinner.
     final hi = <Uint8List>[];
-    for (final p in photos) {
-      final bytes = _photoCache[p.path]!;
+    for (final path in photos) {
+      final bytes = _photoCache[path]!;
       if (token != _previewToken) return;
       final out =
           await compute(renderWatermark, _request(bytes, maxDim: 2560, quality: 92));
@@ -212,7 +325,7 @@ class _HomePageState extends State<HomePage> {
   // ---- Saving ----
 
   Future<void> _saveAll() async {
-    if (_processing || _photos.isEmpty || !_hasAnyLogo) return;
+    if (_processing || _photoPaths.isEmpty || !_hasAnyLogo) return;
     final granted = await Gal.requestAccess(toAlbum: true);
     if (!granted) {
       _snack('Permissão da galeria negada.');
@@ -224,7 +337,7 @@ class _HomePageState extends State<HomePage> {
     setState(() {
       _processing = true;
       _done = 0;
-      _total = _photos.length;
+      _total = _photoPaths.length;
     });
 
     // Process by path so photos ADDED during the save are still picked up; each
@@ -232,17 +345,17 @@ class _HomePageState extends State<HomePage> {
     final processed = <String>{};
     var saved = 0, failed = 0;
     while (mounted) {
-      XFile? next;
-      for (final p in _photos) {
-        if (!processed.contains(p.path)) {
-          next = p;
+      String? next;
+      for (final path in _photoPaths) {
+        if (!processed.contains(path)) {
+          next = path;
           break;
         }
       }
       if (next == null) break; // nothing left, including any added meanwhile
-      processed.add(next.path);
+      processed.add(next);
       try {
-        final bytes = await next.readAsBytes();
+        final bytes = _photoCache[next] ?? await File(next).readAsBytes();
         final out = await compute(renderWatermark, _request(bytes, png: true));
         final ts = DateTime.now().microsecondsSinceEpoch;
         await Gal.putImageBytes(out, album: album, name: 'watermarked_$ts.png');
@@ -252,7 +365,7 @@ class _HomePageState extends State<HomePage> {
       }
       setState(() {
         _done = processed.length;
-        _total = _photos.length;
+        _total = _photoPaths.length;
       });
     }
 
@@ -354,7 +467,7 @@ class _HomePageState extends State<HomePage> {
       ),
       body: Column(
         children: [
-          if (_photos.isNotEmpty && _hasAnyLogo) _previewBar(),
+          if (_photoPaths.isNotEmpty && _hasAnyLogo) _previewBar(),
           Expanded(
             child: ListView(
               padding: const EdgeInsets.all(16),
@@ -428,9 +541,9 @@ class _HomePageState extends State<HomePage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              _photos.length <= 1
+              _photoPaths.length <= 1
                   ? 'Pré-visualização (1ª foto)'
-                  : 'Pré-visualização (primeiras ${_photos.length.clamp(0, kMaxPreview)} fotos) — arraste para o lado',
+                  : 'Pré-visualização (primeiras ${_photoPaths.length.clamp(0, kMaxPreview)} fotos) — arraste para o lado',
               style: Theme.of(context).textTheme.labelMedium,
             ),
             const SizedBox(height: 6),
@@ -534,22 +647,38 @@ class _HomePageState extends State<HomePage> {
             icon: const Icon(Icons.add_photo_alternate_outlined),
             label: const Text('Adicionar fotos'),
           ),
-          if (_photos.isNotEmpty) ...[
+          if (_importing) ...[
             const SizedBox(height: 12),
-            Text('${_photos.length} foto(s)',
+            Row(
+              children: const [
+                SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2)),
+                SizedBox(width: 8),
+                Text('Importando…'),
+              ],
+            ),
+          ],
+          if (_photoPaths.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Text('${_photoPaths.length} foto(s)',
                 style: const TextStyle(fontWeight: FontWeight.w500)),
             const SizedBox(height: 8),
             SizedBox(
               height: 76,
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
-                itemCount: _photos.length,
+                itemCount: _photoPaths.length,
                 separatorBuilder: (_, __) => const SizedBox(width: 8),
                 itemBuilder: (context, i) => _thumb(
                   enabled: !_processing,
-                  child: Image.file(File(_photos[i].path), fit: BoxFit.cover),
+                  child: Image.file(File(_photoPaths[i]), fit: BoxFit.cover),
                   onRemove: () {
-                    setState(() => _photos.removeAt(i));
+                    final path = _photoPaths[i];
+                    setState(() => _photoPaths.removeAt(i));
+                    _photoCache.remove(path);
+                    File(path).delete().ignore();
                     _schedulePreview();
                   },
                 ),
@@ -578,13 +707,13 @@ class _HomePageState extends State<HomePage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           OutlinedButton.icon(
-            onPressed: (_photos.isEmpty || _processing) ? null : onAdd,
+            onPressed: (_photoPaths.isEmpty || _processing) ? null : onAdd,
             icon: const Icon(Icons.image_outlined),
             label: const Text('Adicionar logos'),
           ),
           const SizedBox(height: 8),
           Text(
-            _photos.isEmpty
+            _photoPaths.isEmpty
                 ? 'Adicione as fotos primeiro; depois envie as logos.'
                 : hint,
             style: Theme.of(context).textTheme.bodySmall,
@@ -654,7 +783,7 @@ class _HomePageState extends State<HomePage> {
         children: [
           OutlinedButton.icon(
             onPressed:
-                (_photos.isEmpty || _processing) ? null : _pickCornerLogo,
+                (_photoPaths.isEmpty || _processing) ? null : _pickCornerLogo,
             icon: const Icon(Icons.image_outlined),
             label: Text(_cornerLogo == null
                 ? 'Adicionar logo principal'
@@ -700,7 +829,7 @@ class _HomePageState extends State<HomePage> {
         ],
       );
     }
-    final canProcess = _photos.isNotEmpty && _hasAnyLogo;
+    final canProcess = _photoPaths.isNotEmpty && _hasAnyLogo;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
