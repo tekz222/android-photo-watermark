@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Photo Watermark</string>
+    <string name="app_name">JCV Watermarker</string>
 
     <string name="step_photos">Selecione as fotos</string>
     <string name="step_bottom_logos">Logos da base</string>
