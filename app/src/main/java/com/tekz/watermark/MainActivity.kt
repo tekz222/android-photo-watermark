@@ -182,6 +182,10 @@ private fun CrashScreen(text: String, onRetry: () -> Unit) {
 fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
     val state by viewModel.uiState.collectAsState()
     val context = LocalContext.current
+    // Once the project has been saved (an album exists), its configuration is
+    // frozen: every control is disabled except "add more photos". The photos you
+    // add then inherit the same settings and save into the same album.
+    val controlsEnabled = !state.isProcessing && state.currentAlbum == null
     val snackbarHostState = remember { SnackbarHostState() }
     var confirmAddDuringSave by remember { mutableStateOf(false) }
     var confirmNewProject by remember { mutableStateOf(false) }
@@ -312,6 +316,7 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                 actions = {
                     TextButton(
                         onClick = { confirmNewProject = true },
+                        // The reset stays available after the project is locked.
                         enabled = !state.isProcessing
                     ) {
                         Text(stringResource(R.string.new_project))
@@ -385,7 +390,14 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                 ) {
                     Icon(painterResource(R.drawable.ic_add_photo), contentDescription = null)
                     Spacer(Modifier.width(8.dp))
-                    Text(stringResource(R.string.add_photos))
+                    Text(
+                        stringResource(
+                            // After the first save, the project is committed; this is
+                            // the only active control and it adds to the same album.
+                            if (state.currentAlbum != null) R.string.add_more_photos
+                            else R.string.add_photos
+                        )
+                    )
                 }
                 if (state.isImporting) {
                     Spacer(Modifier.height(12.dp))
@@ -412,7 +424,7 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                                 uri = uri,
                                 contentScale = ContentScale.Crop,
                                 onRemove = { viewModel.removePhoto(uri) },
-                                enabled = !state.isProcessing
+                                enabled = controlsEnabled
                             )
                         }
                     }
@@ -426,7 +438,7 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                 icon = { PlacementIcon(Placement.BOTTOM) }
             ) {
                 MultiLogoPicker(
-                    enabled = state.photoUris.isNotEmpty() && !state.isProcessing,
+                    enabled = state.photoUris.isNotEmpty() && controlsEnabled,
                     items = state.logos,
                     hint = stringResource(
                         if (state.photoUris.isEmpty()) R.string.logo_hint
@@ -446,7 +458,7 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                     AlignmentChooser(
                         centered = state.centered,
                         onChange = viewModel::setCentered,
-                        enabled = !state.isProcessing
+                        enabled = controlsEnabled
                     )
                     Spacer(Modifier.height(8.dp))
                     LabeledSlider(
@@ -454,7 +466,7 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                         value = state.logoHeightPercent,
                         valueRange = 5f..30f,
                         onValueChange = viewModel::setLogoHeightPercent,
-                        enabled = !state.isProcessing
+                        enabled = controlsEnabled
                     )
                     if (!state.centered) {
                         Spacer(Modifier.height(8.dp))
@@ -463,7 +475,7 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                             value = state.leftMarginPercent,
                             valueRange = 0f..15f,
                             onValueChange = viewModel::setLeftMarginPercent,
-                            enabled = !state.isProcessing
+                            enabled = controlsEnabled
                         )
                     }
                     Spacer(Modifier.height(8.dp))
@@ -472,7 +484,7 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                         value = state.logoOpacityPercent,
                         valueRange = 0f..100f,
                         onValueChange = viewModel::setLogoOpacityPercent,
-                        enabled = !state.isProcessing
+                        enabled = controlsEnabled
                     )
                     Spacer(Modifier.height(8.dp))
                     LabeledSlider(
@@ -480,7 +492,7 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                         value = state.bottomMarginPercent,
                         valueRange = 0f..15f,
                         onValueChange = viewModel::setBottomMarginPercent,
-                        enabled = !state.isProcessing
+                        enabled = controlsEnabled
                     )
                 }
             }
@@ -495,7 +507,7 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                 icon = { PlacementIcon(Placement.TOP_LEFT) }
             ) {
                 MultiLogoPicker(
-                    enabled = state.photoUris.isNotEmpty() && !state.isProcessing,
+                    enabled = state.photoUris.isNotEmpty() && controlsEnabled,
                     items = state.topLeftLogos,
                     hint = stringResource(
                         if (state.photoUris.isEmpty()) R.string.logo_hint
@@ -515,7 +527,7 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                     AlignmentChooser(
                         centered = state.centered,
                         onChange = viewModel::setCentered,
-                        enabled = !state.isProcessing
+                        enabled = controlsEnabled
                     )
                     Spacer(Modifier.height(8.dp))
                     LabeledSlider(
@@ -523,7 +535,7 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                         value = state.logoHeightPercent,
                         valueRange = 5f..30f,
                         onValueChange = viewModel::setLogoHeightPercent,
-                        enabled = !state.isProcessing
+                        enabled = controlsEnabled
                     )
                     if (!state.centered) {
                         Spacer(Modifier.height(8.dp))
@@ -532,7 +544,7 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                             value = state.leftMarginPercent,
                             valueRange = 0f..15f,
                             onValueChange = viewModel::setLeftMarginPercent,
-                            enabled = !state.isProcessing
+                            enabled = controlsEnabled
                         )
                     }
                     Spacer(Modifier.height(8.dp))
@@ -541,7 +553,7 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                         value = state.logoOpacityPercent,
                         valueRange = 0f..100f,
                         onValueChange = viewModel::setLogoOpacityPercent,
-                        enabled = !state.isProcessing
+                        enabled = controlsEnabled
                     )
                     Spacer(Modifier.height(8.dp))
                     LabeledSlider(
@@ -549,7 +561,7 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                         value = state.topMarginPercent,
                         valueRange = 0f..15f,
                         onValueChange = viewModel::setTopMarginPercent,
-                        enabled = !state.isProcessing
+                        enabled = controlsEnabled
                     )
                 }
             }
@@ -566,7 +578,7 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                             PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
                         )
                     },
-                    enabled = !state.isProcessing,
+                    enabled = controlsEnabled,
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Icon(painterResource(R.drawable.ic_image), contentDescription = null)
@@ -593,7 +605,7 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                         onClick = {
                             state.cornerLogoUri?.let { fullscreenLogos = listOf(it) to 0 }
                         },
-                        enabled = !state.isProcessing
+                        enabled = controlsEnabled
                     )
                     Spacer(Modifier.height(12.dp))
                     LabeledSlider(
@@ -601,7 +613,7 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                         value = state.cornerLogoHeightPercent,
                         valueRange = 5f..40f,
                         onValueChange = viewModel::setCornerLogoHeightPercent,
-                        enabled = !state.isProcessing
+                        enabled = controlsEnabled
                     )
                     Spacer(Modifier.height(8.dp))
                     LabeledSlider(
@@ -609,7 +621,7 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                         value = state.cornerMarginPercent,
                         valueRange = 0f..15f,
                         onValueChange = viewModel::setCornerMarginPercent,
-                        enabled = !state.isProcessing
+                        enabled = controlsEnabled
                     )
                 }
             }

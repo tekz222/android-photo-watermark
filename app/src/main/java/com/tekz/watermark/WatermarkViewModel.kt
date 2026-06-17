@@ -226,7 +226,14 @@ class WatermarkViewModel(app: Application) : AndroidViewModel(app) {
             }
             _uiState.update { it.copy(photoUris = it.photoUris + copied, isImporting = false) }
             persist()
-            if (_uiState.value.isProcessing) WatermarkJob.addPhotos(copied)
+            val s = _uiState.value
+            when {
+                // A save is already running: queue the new photos into it.
+                s.isProcessing -> WatermarkJob.addPhotos(copied)
+                // The project is already committed (saved at least once): new photos
+                // automatically save with the same settings, into the same album.
+                s.currentAlbum != null && copied.isNotEmpty() -> processAll()
+            }
         }
     }
 
