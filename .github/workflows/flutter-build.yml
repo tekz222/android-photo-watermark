@@ -33,15 +33,20 @@ jobs:
           rm -rf lib && cp -R /tmp/lib_backup lib
           cp /tmp/pubspec_backup.yaml pubspec.yaml
 
-      - name: Add iOS photo-library permissions
+      - name: Add iOS photo-library permissions and app name
         run: |
           PLIST=ios/Runner/Info.plist
           /usr/libexec/PlistBuddy -c "Add :NSPhotoLibraryUsageDescription string 'Para escolher fotos e logos.'" "$PLIST" 2>/dev/null \
             || /usr/libexec/PlistBuddy -c "Set :NSPhotoLibraryUsageDescription 'Para escolher fotos e logos.'" "$PLIST"
           /usr/libexec/PlistBuddy -c "Add :NSPhotoLibraryAddUsageDescription string 'Para salvar as fotos com marca dágua na galeria.'" "$PLIST" 2>/dev/null \
             || /usr/libexec/PlistBuddy -c "Set :NSPhotoLibraryAddUsageDescription 'Para salvar as fotos com marca dágua na galeria.'" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string 'JCV Watermarker'" "$PLIST" 2>/dev/null \
+            || /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName 'JCV Watermarker'" "$PLIST"
 
       - run: flutter pub get
+
+      - name: Generate launcher icons
+        run: dart run flutter_launcher_icons
 
       - name: Build unsigned iOS app
         run: |
@@ -87,7 +92,14 @@ jobs:
           rm -rf lib && cp -R /tmp/lib_backup lib
           cp /tmp/pubspec_backup.yaml pubspec.yaml
 
+      - name: Set Android app name
+        run: |
+          sed -i 's/android:label="photo_watermark"/android:label="JCV Watermarker"/' \
+            android/app/src/main/AndroidManifest.xml
+
       - run: flutter pub get
+      - name: Generate launcher icons
+        run: dart run flutter_launcher_icons
       - run: flutter build apk --debug
 
       - uses: actions/upload-artifact@v4

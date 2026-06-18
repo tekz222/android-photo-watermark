@@ -10,10 +10,10 @@ class PhotoWatermarkApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Photo Watermark',
+      title: 'JCV Watermarker',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        colorSchemeSeed: const Color(0xFF3F51B5),
+        colorSchemeSeed: const Color(0xFF05B2AE),
         useMaterial3: true,
       ),
       home: const HomePage(),
