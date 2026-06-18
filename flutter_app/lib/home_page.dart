@@ -470,7 +470,29 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Photo Watermark'),
+        titleSpacing: 12,
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ClipOval(
+              child: Image.asset(
+                'assets/appbar_logo.png',
+                width: 30,
+                height: 30,
+                fit: BoxFit.cover,
+              ),
+            ),
+            const SizedBox(width: 9),
+            const Text(
+              'JCV Watermarker',
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 0.3,
+              ),
+            ),
+          ],
+        ),
         actions: [
           IconButton(
             icon: const Icon(Icons.history),
