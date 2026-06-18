@@ -333,8 +333,9 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                 actions = {
                     TextButton(
                         onClick = { confirmNewProject = true },
-                        // The reset stays available after the project is locked.
-                        enabled = !state.isProcessing
+                        // Greyed out until the project has been saved at least once,
+                        // so you can't wipe everything before saving your photos.
+                        enabled = !state.isProcessing && state.savedPhotoUris.isNotEmpty()
                     ) {
                         Text(stringResource(R.string.new_project))
                     }
