@@ -325,7 +325,7 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
                         Text(
                             text = stringResource(R.string.app_name),
                             fontWeight = FontWeight.Bold,
-                            fontSize = 18.sp,
+                            fontSize = 15.sp,
                             letterSpacing = 0.3.sp
                         )
                     }
