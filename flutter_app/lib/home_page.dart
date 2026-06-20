@@ -151,9 +151,10 @@ class _HomePageState extends State<HomePage> {
     final data = await rootBundle.load('assets/default_corner_logo.png');
     final bytes = data.buffer.asUint8List();
     final path = await _copyBytesToApp(bytes, 'logos');
+    final phash = await compute(perceptualHash, bytes);
     if (!mounted) return;
     setState(() => _cornerLogo =
-        LogoItem(_nextLogoId++, path, 'asset:default_corner', bytes));
+        LogoItem(_nextLogoId++, path, 'asset:default_corner', bytes, phash));
   }
 
   // ---- Picking ----
@@ -224,14 +225,18 @@ class _HomePageState extends State<HomePage> {
       b.isNotEmpty &&
       (a == b || a.contains(b) || b.contains(a));
 
+  // Max perceptual-hash (dHash) distance for two logos to count as "similar".
+  // 0 = identical; higher = more tolerant (blocks more). 64 bits total.
+  static const _kSimilarThreshold = 12;
+
   Future<void> _pickLogos(List<LogoItem> target) async {
     // Logos come from the photo gallery (same as the photos).
     final picked = await _picker.pickMultiImage();
     if (picked.isEmpty) return;
     setState(() => _importing = true);
-    // De-dup against logos already in the rows (and the main logo) by BOTH the
-    // file name (catches near-duplicates like gatti / gatti_pouco_texto) AND the
-    // image content (catches the exact same image even if the name is missing).
+    // De-dup against logos already in the rows (and the main logo): by visual
+    // SIMILARITY (perceptual hash — blocks look-alike variants), by exact image
+    // content, and by file name when available.
     final existing = [
       ..._bottomLogos,
       ..._topLeftLogos,
@@ -239,27 +244,31 @@ class _HomePageState extends State<HomePage> {
     ];
     final usedNames = existing.map((e) => _logoName(e.sourceKey)).toList();
     final usedHashes = existing.map((e) => _logoHash(e.bytes)).toList();
+    final usedPhashes = existing.map((e) => e.phash).toList();
     var skipped = 0;
     for (final x in picked) {
       final bytes = await x.readAsBytes();
       final name = _logoName(x.name);
       final hash = _logoHash(bytes);
+      final phash = await compute(perceptualHash, bytes);
       final dupName =
           name.isNotEmpty && usedNames.any((u) => _namesRelated(u, name));
       final dupContent = usedHashes.contains(hash);
-      if (dupName || dupContent) {
+      final dupSimilar = usedPhashes
+          .any((p) => perceptualDistance(p, phash) <= _kSimilarThreshold);
+      if (dupName || dupContent || dupSimilar) {
         skipped++;
         continue;
       }
       final path = await _copyBytesToApp(bytes, 'logos');
-      target.add(LogoItem(_nextLogoId++, path, x.name, bytes));
+      target.add(LogoItem(_nextLogoId++, path, x.name, bytes, phash));
       usedNames.add(name);
       usedHashes.add(hash);
+      usedPhashes.add(phash);
     }
     setState(() => _importing = false);
     if (skipped > 0) {
-      _snack('$skipped logo(s) ignorada(s): a mesma logo (ou nome parecido) já '
-          'está no projeto.');
+      _snack('$skipped logo(s) ignorada(s): parecida(s) com uma já no projeto.');
     }
     _schedulePreview();
   }
@@ -281,8 +290,9 @@ class _HomePageState extends State<HomePage> {
     final bytes = await x.readAsBytes();
     setState(() => _importing = true);
     final path = await _copyBytesToApp(bytes, 'logos');
+    final phash = await compute(perceptualHash, bytes);
     setState(() {
-      _cornerLogo = LogoItem(_nextLogoId++, path, x.name, bytes);
+      _cornerLogo = LogoItem(_nextLogoId++, path, x.name, bytes, phash);
       _importing = false;
     });
     _schedulePreview();

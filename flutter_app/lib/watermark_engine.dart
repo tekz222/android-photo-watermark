@@ -179,3 +179,40 @@ img.Image _withOpacity(img.Image src, double opacity) {
   }
   return out;
 }
+
+/// Perceptual difference-hash (dHash) of an image, for visual-similarity checks.
+/// Returns a 64-bit fingerprint; two images are "similar" when the Hamming
+/// distance between their hashes is small. Top-level so it can run in an isolate
+/// via [compute].
+int perceptualHash(Uint8List bytes) {
+  final decoded = img.decodeImage(bytes);
+  if (decoded == null) return 0;
+  // Flatten transparency onto white so logos (transparent PNGs) compare on
+  // their visible shape, then reduce to a 9x8 grayscale and build the dHash.
+  final flat = img.Image(width: decoded.width, height: decoded.height);
+  img.fill(flat, color: img.ColorRgb8(255, 255, 255));
+  img.compositeImage(flat, decoded);
+  final small = img.copyResize(img.grayscale(flat), width: 9, height: 8);
+  var hash = 0;
+  var bit = 0;
+  for (var y = 0; y < 8; y++) {
+    for (var x = 0; x < 8; x++) {
+      final left = small.getPixel(x, y).r;
+      final right = small.getPixel(x + 1, y).r;
+      if (left > right) hash |= (1 << bit);
+      bit++;
+    }
+  }
+  return hash;
+}
+
+/// Number of differing bits between two perceptual hashes (0 = identical).
+int perceptualDistance(int a, int b) {
+  var x = a ^ b;
+  var count = 0;
+  while (x != 0) {
+    count += x & 1;
+    x >>= 1;
+  }
+  return count;
+}
