@@ -57,6 +57,7 @@ class _HomePageState extends State<HomePage> {
   int _importDone = 0; // photos copied so far (for the loading message)
   int _importTotal = 0; // photos being copied in the current import
   int _previewTotal = 0; // photos expected in the preview being rendered
+  bool _renderingPreview = false; // a preview render is in progress
 
   // Adjustments (percent of the photo's shortest side).
   // Size and left margin are SHARED by the bottom and top rows.
@@ -300,10 +301,14 @@ class _HomePageState extends State<HomePage> {
       setState(() {
         _previews = [];
         _previewTotal = 0;
+        _renderingPreview = false;
       });
       return;
     }
-    setState(() => _previewTotal = photos.length);
+    setState(() {
+      _previewTotal = photos.length;
+      _renderingPreview = true;
+    });
     // One render per photo (at a medium size) — used for BOTH the thumbnail and
     // the fullscreen viewer. Rendering is pure-Dart, so doing a single pass
     // (instead of a small + a 2560px pass) roughly halves the load time.
@@ -323,6 +328,9 @@ class _HomePageState extends State<HomePage> {
       if (token != _previewToken) return;
       results.add(_Preview(out, aspect));
       setState(() => _previews = List.of(results));
+    }
+    if (token == _previewToken && mounted) {
+      setState(() => _renderingPreview = false);
     }
   }
 
@@ -728,7 +736,7 @@ class _HomePageState extends State<HomePage> {
             icon: const Icon(Icons.add_photo_alternate_outlined),
             label: const Text('Adicionar fotos'),
           ),
-          if (_importing) ...[
+          if (_importing || _renderingPreview) ...[
             const SizedBox(height: 12),
             Row(
               children: [
@@ -737,14 +745,20 @@ class _HomePageState extends State<HomePage> {
                     height: 18,
                     child: CircularProgressIndicator(strokeWidth: 2)),
                 const SizedBox(width: 8),
-                Text(_importTotal > 0
-                    ? 'Carregando fotos… $_importDone de $_importTotal'
-                    : 'Carregando…'),
+                Expanded(
+                  child: Text(_importing
+                      ? (_importTotal > 0
+                          ? 'Carregando fotos… $_importDone de $_importTotal'
+                          : 'Carregando…')
+                      : 'Gerando pré-visualização…'),
+                ),
               ],
             ),
             const SizedBox(height: 8),
             LinearProgressIndicator(
-              value: _importTotal > 0 ? _importDone / _importTotal : null,
+              value: (_importing && _importTotal > 0)
+                  ? _importDone / _importTotal
+                  : null,
             ),
           ],
           if (_photoPaths.isNotEmpty) ...[
@@ -1053,6 +1067,9 @@ class _HomePageState extends State<HomePage> {
       _currentAlbum = null;
       _lastResult = null;
       _previews = [];
+      _previewTotal = 0;
+      _renderingPreview = false;
+      _importing = false;
       _photoCache.clear();
       _logoSize = 22;
       _leftMargin = 1;
