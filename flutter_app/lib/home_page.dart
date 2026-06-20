@@ -54,6 +54,9 @@ class _HomePageState extends State<HomePage> {
   int _nextLogoId = 0;
   int _fileSeq = 0;
   bool _importing = false;
+  int _importDone = 0; // photos copied so far (for the loading message)
+  int _importTotal = 0; // photos being copied in the current import
+  int _previewTotal = 0; // photos expected in the preview being rendered
 
   // Adjustments (percent of the photo's shortest side).
   // Size and left margin are SHARED by the bottom and top rows.
@@ -122,92 +125,24 @@ class _HomePageState extends State<HomePage> {
     return file.path;
   }
 
-  Future<void> _saveProject() async {
-    final p = await SharedPreferences.getInstance();
-    Map<String, dynamic> logoJson(LogoItem e) =>
-        {'id': e.id, 'path': e.path, 'key': e.sourceKey};
-    await p.setStringList('p_photos', _photoPaths);
-    await p.setString(
-        'p_bottom', jsonEncode(_bottomLogos.map(logoJson).toList()));
-    await p.setString(
-        'p_topleft', jsonEncode(_topLeftLogos.map(logoJson).toList()));
-    await p.setString(
-        'p_corner', _cornerLogo == null ? '' : jsonEncode(logoJson(_cornerLogo!)));
-    await p.setInt('p_nextid', _nextLogoId);
-    await p.setDouble('p_logoSize', _logoSize);
-    await p.setDouble('p_leftMargin', _leftMargin);
-    await p.setDouble('p_opacity', _logoOpacity);
-    await p.setDouble('p_bottomMargin', _bottomMargin);
-    await p.setDouble('p_topMargin', _topMargin);
-    await p.setDouble('p_cornerHeight', _cornerHeight);
-    await p.setDouble('p_cornerMargin', _cornerMargin);
-    await p.setBool('p_centered', _centered);
-    await p.setStringList('p_saved', _savedPaths.toList());
-    await p.setString('p_album', _currentAlbum ?? '');
-  }
+  // Persistence is intentionally DISABLED: the working project lives only in
+  // memory. Minimizing / switching apps keeps it (the app stays suspended in
+  // memory), but fully closing the app starts fresh. No-op kept so existing
+  // call sites stay valid.
+  Future<void> _saveProject() async {}
 
   Future<void> _loadProject() async {
-    final p = await SharedPreferences.getInstance();
-    final firstRun = !(p.containsKey('p_bottom') ||
-        p.containsKey('p_photos') ||
-        p.containsKey('p_corner'));
-    List<LogoItem> parseLogos(String? s) {
-      if (s == null || s.isEmpty) return [];
-      final out = <LogoItem>[];
-      for (final e in jsonDecode(s) as List) {
-        final path = e['path'] as String;
-        final f = File(path);
-        if (!f.existsSync()) continue;
-        out.add(LogoItem(
-            e['id'] as int, path, e['key'] as String? ?? path, f.readAsBytesSync()));
+    // Cold start = the app was closed: begin a fresh project and wipe any
+    // leftover image copies from a previous run. (Minimizing does NOT trigger a
+    // relaunch, so this only runs on a real close/relaunch.)
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      for (final sub in ['photos', 'logos']) {
+        final d = Directory('${dir.path}/$sub');
+        if (d.existsSync()) d.deleteSync(recursive: true);
       }
-      return out;
-    }
-
-    final photos =
-        (p.getStringList('p_photos') ?? []).where((x) => File(x).existsSync()).toList();
-    final bottom = parseLogos(p.getString('p_bottom'));
-    final topLeft = parseLogos(p.getString('p_topleft'));
-    LogoItem? corner;
-    final cs = p.getString('p_corner');
-    if (cs != null && cs.isNotEmpty) {
-      final e = jsonDecode(cs);
-      final f = File(e['path'] as String);
-      if (f.existsSync()) {
-        corner = LogoItem(e['id'] as int, e['path'] as String,
-            e['key'] as String? ?? e['path'] as String, f.readAsBytesSync());
-      }
-    }
-    if (!mounted) return;
-    setState(() {
-      _photoPaths
-        ..clear()
-        ..addAll(photos);
-      _bottomLogos
-        ..clear()
-        ..addAll(bottom);
-      _topLeftLogos
-        ..clear()
-        ..addAll(topLeft);
-      _cornerLogo = corner;
-      _nextLogoId = p.getInt('p_nextid') ?? 0;
-      _logoSize = p.getDouble('p_logoSize') ?? 22;
-      _leftMargin = p.getDouble('p_leftMargin') ?? 1;
-      _logoOpacity = p.getDouble('p_opacity') ?? 90;
-      _bottomMargin = p.getDouble('p_bottomMargin') ?? 2;
-      _topMargin = p.getDouble('p_topMargin') ?? 2;
-      _cornerHeight = p.getDouble('p_cornerHeight') ?? 22;
-      _cornerMargin = p.getDouble('p_cornerMargin') ?? 2;
-      _centered = p.getBool('p_centered') ?? false;
-      _savedPaths
-        ..clear()
-        ..addAll((p.getStringList('p_saved') ?? []).where(photos.contains));
-      final alb = p.getString('p_album') ?? '';
-      _currentAlbum = alb.isEmpty ? null : alb;
-    });
-
-    // First launch: pre-fill the default main (top-right) logo.
-    if (firstRun) await _installDefaultCorner();
+    } catch (_) {}
+    await _installDefaultCorner();
     _schedulePreview();
   }
 
@@ -247,12 +182,19 @@ class _HomePageState extends State<HomePage> {
     }
     final picked = await _picker.pickMultiImage();
     if (picked.isEmpty) return;
-    setState(() => _importing = true);
-    // Copy in parallel so importing many photos is fast.
+    setState(() {
+      _importing = true;
+      _importDone = 0;
+      _importTotal = picked.length;
+    });
+    // Copy in parallel so importing many photos is fast; bump a counter as each
+    // finishes so the UI can show "Carregando fotos… X de Y".
+    var done = 0;
     final paths = await Future.wait(picked.map((x) async {
       final bytes = await x.readAsBytes();
       final path = await _copyBytesToApp(bytes, 'photos');
       _photoCache[path] = bytes;
+      if (mounted) setState(() => _importDone = ++done);
       return path;
     }));
     setState(() {
@@ -354,9 +296,13 @@ class _HomePageState extends State<HomePage> {
     final token = ++_previewToken;
     final photos = _photoPaths.take(kMaxPreview).toList();
     if (photos.isEmpty || !_hasAnyLogo) {
-      setState(() => _previews = []);
+      setState(() {
+        _previews = [];
+        _previewTotal = 0;
+      });
       return;
     }
+    setState(() => _previewTotal = photos.length);
     // One render per photo (at a medium size) — used for BOTH the thumbnail and
     // the fullscreen viewer. Rendering is pure-Dart, so doing a single pass
     // (instead of a small + a 2560px pass) roughly halves the load time.
@@ -589,6 +535,10 @@ class _HomePageState extends State<HomePage> {
                   _resultBanner(),
                   const SizedBox(height: 16),
                 ],
+                if (_currentAlbum != null && !_processing) ...[
+                  _lockedBanner(),
+                  const SizedBox(height: 16),
+                ],
                 _photosCard(),
                 const SizedBox(height: 16),
                 _logoCard(
@@ -667,7 +617,21 @@ class _HomePageState extends State<HomePage> {
             SizedBox(
               height: 208,
               child: _previews.isEmpty
-                  ? const Center(child: CircularProgressIndicator())
+                  ? Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const CircularProgressIndicator(),
+                          const SizedBox(height: 10),
+                          Text(
+                            _previewTotal > 0
+                                ? 'Gerando pré-visualização… 0 de $_previewTotal'
+                                : 'Carregando…',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        ],
+                      ),
+                    )
                   : ListView.separated(
                       scrollDirection: Axis.horizontal,
                       itemCount: _previews.length,
@@ -766,14 +730,20 @@ class _HomePageState extends State<HomePage> {
           if (_importing) ...[
             const SizedBox(height: 12),
             Row(
-              children: const [
-                SizedBox(
+              children: [
+                const SizedBox(
                     width: 18,
                     height: 18,
                     child: CircularProgressIndicator(strokeWidth: 2)),
-                SizedBox(width: 8),
-                Text('Importando…'),
+                const SizedBox(width: 8),
+                Text(_importTotal > 0
+                    ? 'Carregando fotos… $_importDone de $_importTotal'
+                    : 'Carregando…'),
               ],
+            ),
+            const SizedBox(height: 8),
+            LinearProgressIndicator(
+              value: _importTotal > 0 ? _importDone / _importTotal : null,
             ),
           ],
           if (_photoPaths.isNotEmpty) ...[
@@ -1012,6 +982,39 @@ class _HomePageState extends State<HomePage> {
           icon: const Icon(Icons.close),
           tooltip: 'Dispensar',
           onPressed: () => setState(() => _lastResult = null),
+        ),
+      ),
+    );
+  }
+
+  /// Shown once a project has been saved: edits are locked, only adding photos
+  /// (into the same album) stays available. Makes the locked state obvious and
+  /// offers a one-tap way out.
+  Widget _lockedBanner() {
+    final scheme = Theme.of(context).colorScheme;
+    return Card(
+      color: scheme.tertiaryContainer,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
+        child: Row(
+          children: [
+            const Icon(Icons.lock_outline),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Projeto já salvo no álbum “$_currentAlbum”. Ajustes e logos '
+                'estão travados; fotos novas vão para o mesmo álbum com a mesma '
+                'configuração. Para editar ou usar outras fotos, comece um novo '
+                'projeto.',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ),
+            const SizedBox(width: 8),
+            FilledButton(
+              onPressed: _confirmNewProject,
+              child: const Text('Novo projeto'),
+            ),
+          ],
         ),
       ),
     );
