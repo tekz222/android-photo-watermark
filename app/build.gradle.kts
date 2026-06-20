@@ -46,8 +46,12 @@ android {
             // remaining issue.
             isMinifyEnabled = true
             isShrinkResources = true
-            if (keystorePropsFile.exists()) {
-                signingConfig = signingConfigs.getByName("release")
+            // Use the real release key when configured (local builds); fall back to
+            // the debug key so CI still produces an installable, R8-shrunk APK.
+            signingConfig = if (keystorePropsFile.exists()) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
             }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
