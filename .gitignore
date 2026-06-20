@@ -11,6 +11,7 @@ local.properties
 /app/build
 /.kotlin
 *.apk
+*.ipa
 # Local release signing — never commit secrets.
 /app/release-key.jks
 /app/keystore.properties
