@@ -72,7 +72,6 @@ class _HomePageState extends State<HomePage> {
   // Preview state.
   final Map<String, Uint8List> _photoCache = {};
   List<_Preview> _previews = [];
-  List<Uint8List> _hiResPreviews = [];
   int _previewToken = 0;
   Timer? _debounce;
 
@@ -336,18 +335,18 @@ class _HomePageState extends State<HomePage> {
     final token = ++_previewToken;
     final photos = _photoPaths.take(kMaxPreview).toList();
     if (photos.isEmpty || !_hasAnyLogo) {
-      setState(() {
-        _previews = [];
-        _hiResPreviews = [];
-      });
+      setState(() => _previews = []);
       return;
     }
+    // One render per photo (at a medium size) — used for BOTH the thumbnail and
+    // the fullscreen viewer. Rendering is pure-Dart, so doing a single pass
+    // (instead of a small + a 2560px pass) roughly halves the load time.
     final results = <_Preview>[];
     for (final path in photos) {
       final bytes = _photoCache[path] ??= await File(path).readAsBytes();
       if (token != _previewToken) return;
-      final out =
-          await compute(renderWatermark, _request(bytes, maxDim: 900, quality: 85));
+      final out = await compute(
+          renderWatermark, _request(bytes, maxDim: 1280, quality: 88));
       if (token != _previewToken) return;
       final codec = await ui.instantiateImageCodec(out);
       final frame = await codec.getNextFrame();
@@ -358,19 +357,6 @@ class _HomePageState extends State<HomePage> {
       if (token != _previewToken) return;
       results.add(_Preview(out, aspect));
       setState(() => _previews = List.of(results));
-    }
-
-    // Pre-render high-resolution versions (compressed bytes are cheap to hold),
-    // so the full-screen viewer is already crisp without a spinner.
-    final hi = <Uint8List>[];
-    for (final path in photos) {
-      final bytes = _photoCache[path]!;
-      if (token != _previewToken) return;
-      final out =
-          await compute(renderWatermark, _request(bytes, maxDim: 2560, quality: 92));
-      if (token != _previewToken) return;
-      hi.add(out);
-      setState(() => _hiResPreviews = List.of(hi));
     }
   }
 
@@ -730,20 +716,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _openFullscreen(int index) {
-    final lowRes = _previews.map((e) => e.bytes).toList();
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        fullscreenDialog: true,
-        builder: (_) => _FullscreenViewer(
-          initialPage: index,
-          // Use the pre-rendered high-res when available, else the low-res.
-          images: [
-            for (var i = 0; i < lowRes.length; i++)
-              i < _hiResPreviews.length ? _hiResPreviews[i] : lowRes[i]
-          ],
-        ),
-      ),
-    );
+    _openImagesFullscreen(_previews.map((e) => e.bytes).toList(), index);
   }
 
   /// Opens any list of image bytes (e.g. logos) in the zoomable fullscreen
@@ -1057,7 +1030,6 @@ class _HomePageState extends State<HomePage> {
       _currentAlbum = null;
       _lastResult = null;
       _previews = [];
-      _hiResPreviews = [];
       _photoCache.clear();
       _logoSize = 22;
       _leftMargin = 1;
