@@ -225,11 +225,15 @@ class _HomePageState extends State<HomePage> {
       b.isNotEmpty &&
       (a == b || a.contains(b) || b.contains(a));
 
+  // Image extensions accepted for logos. Using FileType.custom (instead of
+  // FileType.image) forces the iOS *Files* document picker, which preserves the
+  // real file name — FileType.image would open Photos and lose the name.
+  static const _imageExts = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'heic'];
+
   Future<void> _pickLogos(List<LogoItem> target) async {
-    // Pick logos from Files (not the photo library) so the REAL file name is
-    // preserved — that's what the same-name de-duplication relies on.
     final result = await FilePicker.platform.pickFiles(
-      type: FileType.image,
+      type: FileType.custom,
+      allowedExtensions: _imageExts,
       allowMultiple: true,
       withData: true,
     );
@@ -290,7 +294,8 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _pickCornerLogo() async {
     final result = await FilePicker.platform.pickFiles(
-      type: FileType.image,
+      type: FileType.custom,
+      allowedExtensions: _imageExts,
       withData: true,
     );
     if (result == null || result.files.isEmpty) return;
