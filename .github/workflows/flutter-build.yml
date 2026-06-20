@@ -139,46 +139,6 @@ jobs:
             flutter_app/build/apps.json
             flutter_app/build/icon.png
 
-  android:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: flutter_app
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-
-      - name: Scaffold platform folders (keep our lib/ and pubspec)
-        run: |
-          cp -R lib /tmp/lib_backup
-          cp pubspec.yaml /tmp/pubspec_backup.yaml
-          flutter create --platforms=ios,android --org com.tekz --project-name photo_watermark .
-          rm -rf lib && cp -R /tmp/lib_backup lib
-          cp /tmp/pubspec_backup.yaml pubspec.yaml
-
-      - name: Set Android app name
-        run: |
-          sed -i 's/android:label="photo_watermark"/android:label="JCV Watermarker"/' \
-            android/app/src/main/AndroidManifest.xml
-
-      - run: flutter pub get
-      - name: Generate launcher icons
-        run: dart run flutter_launcher_icons
-      - run: flutter build apk --debug
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: android-apk
-          path: flutter_app/build/app/outputs/flutter-apk/app-debug.apk
-
   # The real Android app is the native Kotlin app at the repo root. Build its
   # optimized (R8) release APK and publish it to the same release as the iOS app.
   android-native:
