@@ -119,7 +119,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ios-latest
-          name: iOS latest (AltStore)
+          name: Latest builds (iOS + Android)
           body: |
             Build mais recente do app iOS (não assinado) para instalar via AltStore.
             Adicione esta fonte no AltStore:
@@ -131,6 +131,9 @@ jobs:
 
   android:
     runs-on: ubuntu-latest
+    needs: ios
+    permissions:
+      contents: write
     defaults:
       run:
         working-directory: flutter_app
@@ -168,3 +171,15 @@ jobs:
         with:
           name: android-apk
           path: flutter_app/build/app/outputs/flutter-apk/app-debug.apk
+
+      - name: Stage APK for release
+        run: |
+          cp build/app/outputs/flutter-apk/app-debug.apk \
+            build/JCV-Watermarker-android.apk
+
+      - name: Publish APK to the same GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ios-latest
+          name: Latest builds (iOS + Android)
+          files: flutter_app/build/JCV-Watermarker-android.apk
