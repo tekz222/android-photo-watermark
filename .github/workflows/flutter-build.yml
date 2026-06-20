@@ -1,8 +1,7 @@
-name: Build Flutter (iOS + Android)
+name: Build iOS app
 
-# Builds the Flutter app in flutter_app/. The iOS job runs on a macOS runner and
-# produces an UNSIGNED .ipa artifact (installable only after you add your own
-# Apple signing). The Android job produces a debug APK.
+# Builds the Flutter app in flutter_app/ on a macOS runner and publishes an
+# UNSIGNED .ipa (+ AltStore source) to the 'ios-latest' release. iOS only.
 
 on:
   workflow_dispatch:
@@ -10,11 +9,6 @@ on:
     branches: [claude/charming-planck-j4zlq6]
     paths:
       - 'flutter_app/**'
-      - 'app/**'
-      - 'build.gradle.kts'
-      - 'settings.gradle.kts'
-      - 'gradle.properties'
-      - 'gradle/**'
       - '.github/workflows/flutter-build.yml'
 
 jobs:
@@ -130,7 +124,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ios-latest
-          name: Latest builds (iOS + Android)
+          name: Latest iOS build
           body: |
             Build mais recente do app iOS (não assinado) para instalar via AltStore.
             Adicione esta fonte no AltStore:
@@ -139,36 +133,3 @@ jobs:
             flutter_app/build/PhotoWatermark-unsigned.ipa
             flutter_app/build/apps.json
             flutter_app/build/icon.png
-
-  # The real Android app is the native Kotlin app at the repo root. Build its
-  # optimized (R8) release APK and publish it to the same release as the iOS app.
-  android-native:
-    runs-on: ubuntu-latest
-    needs: ios
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-
-      - name: Build native release APK
-        run: ./gradlew :app:assembleRelease --no-daemon
-
-      - name: Stage APK for release
-        run: cp app/build/outputs/apk/release/app-release.apk JCV-Watermarker.apk
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: native-android-apk
-          path: JCV-Watermarker.apk
-
-      - name: Publish native APK to the GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ios-latest
-          name: Latest builds (iOS + Android)
-          files: JCV-Watermarker.apk
