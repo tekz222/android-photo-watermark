@@ -555,6 +555,7 @@ class _HomePageState extends State<HomePage> {
       ),
       body: Column(
         children: [
+          if (_importing) const LinearProgressIndicator(minHeight: 3),
           if (_photoPaths.isNotEmpty && _hasAnyLogo) _previewBar(),
           Expanded(
             child: ListView(
@@ -620,6 +621,16 @@ class _HomePageState extends State<HomePage> {
                 const SizedBox(height: 16),
                 _actionArea(),
                 const SizedBox(height: 24),
+                Center(
+                  child: Text(
+                    'Build ${const String.fromEnvironment('APP_BUILD', defaultValue: 'dev')}',
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodySmall
+                        ?.copyWith(color: Theme.of(context).disabledColor),
+                  ),
+                ),
+                const SizedBox(height: 8),
               ],
             ),
           ),

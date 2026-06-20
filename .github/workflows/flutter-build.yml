@@ -63,7 +63,8 @@ jobs:
           # Version grows with the CI run number so AltStore detects updates.
           flutter build ios --release --no-codesign \
             --build-name=1.0.${{ github.run_number }} \
-            --build-number=${{ github.run_number }} || true
+            --build-number=${{ github.run_number }} \
+            --dart-define=APP_BUILD=${{ github.run_number }} || true
           APP=build/ios/iphoneos/Runner.app
           if [ ! -d "$APP" ]; then
             echo "Runner.app was not produced"; ls -R build/ios || true; exit 1
