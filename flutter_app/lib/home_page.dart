@@ -58,7 +58,6 @@ class _HomePageState extends State<HomePage> {
   int _importTotal = 0; // photos being copied in the current import
   int _previewTotal = 0; // photos expected in the preview being rendered
   bool _renderingPreview = false; // a preview render is in progress
-  bool _pickingPhotos = false; // photo picker open / preparing selected photos
 
   // Adjustments (percent of the photo's shortest side).
   // Size and left margin are SHARED by the bottom and top rows.
@@ -182,17 +181,9 @@ class _HomePageState extends State<HomePage> {
       );
       if (ok != true) return;
     }
-    // Loading starts NOW (before the picker returns): after you tap OK, the iOS
-    // picker still spends time preparing the photos (e.g. downloading iCloud
-    // originals) — show the indicator through that pause too.
-    setState(() => _pickingPhotos = true);
     final picked = await _picker.pickMultiImage();
-    if (picked.isEmpty) {
-      if (mounted) setState(() => _pickingPhotos = false);
-      return;
-    }
+    if (picked.isEmpty) return;
     setState(() {
-      _pickingPhotos = false;
       _importing = true;
       _importDone = 0;
       _importTotal = picked.length;
@@ -569,7 +560,7 @@ class _HomePageState extends State<HomePage> {
       ),
       body: Column(
         children: [
-          if (_importing || _pickingPhotos)
+          if (_importing || _renderingPreview)
             const LinearProgressIndicator(minHeight: 4),
           if (_photoPaths.isNotEmpty && _hasAnyLogo) _previewBar(),
           Expanded(
@@ -782,7 +773,7 @@ class _HomePageState extends State<HomePage> {
             icon: const Icon(Icons.add_photo_alternate_outlined),
             label: const Text('Adicionar fotos'),
           ),
-          if (_pickingPhotos || _importing || _renderingPreview) ...[
+          if (_importing || _renderingPreview) ...[
             const SizedBox(height: 12),
             Row(
               children: [
@@ -792,13 +783,11 @@ class _HomePageState extends State<HomePage> {
                     child: CircularProgressIndicator(strokeWidth: 2)),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: Text(_pickingPhotos
-                      ? 'Preparando fotos…'
-                      : _importing
-                          ? (_importTotal > 0
-                              ? 'Carregando fotos… $_importDone de $_importTotal'
-                              : 'Carregando…')
-                          : 'Gerando pré-visualização…'),
+                  child: Text(_importing
+                      ? (_importTotal > 0
+                          ? 'Carregando fotos… $_importDone de $_importTotal'
+                          : 'Carregando…')
+                      : 'Gerando pré-visualização…'),
                 ),
               ],
             ),
@@ -1119,7 +1108,6 @@ class _HomePageState extends State<HomePage> {
       _previewTotal = 0;
       _renderingPreview = false;
       _importing = false;
-      _pickingPhotos = false;
       _photoCache.clear();
       _logoSize = 22;
       _leftMargin = 1;
