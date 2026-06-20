@@ -26,6 +26,15 @@ class _Preview {
   final double aspect; // width / height
 }
 
+/// Outcome of a save run, shown in the persistent result banner.
+class _ProcessResult {
+  _ProcessResult(
+      {required this.saved, required this.failed, required this.album});
+  final int saved;
+  final int failed;
+  final String album;
+}
+
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
 
@@ -55,6 +64,11 @@ class _HomePageState extends State<HomePage> {
   double _cornerHeight = 22, _cornerMargin = 2;
   bool _centered = false; // false = left-to-right, true = centered rows
 
+  // ---- Save state: incremental save into ONE album per project ----
+  final Set<String> _savedPaths = {}; // photo paths already saved this project
+  String? _currentAlbum; // album reused for the whole project
+  _ProcessResult? _lastResult; // persistent result banner
+
   // Preview state.
   final Map<String, Uint8List> _photoCache = {};
   List<_Preview> _previews = [];
@@ -69,6 +83,18 @@ class _HomePageState extends State<HomePage> {
 
   bool get _hasAnyLogo =>
       _bottomLogos.isNotEmpty || _topLeftLogos.isNotEmpty || _cornerLogo != null;
+
+  /// Photos selected but not yet saved in this project.
+  List<String> get _unsavedPaths =>
+      _photoPaths.where((p) => !_savedPaths.contains(p)).toList();
+
+  /// Once the project has been saved (an album exists) its configuration is
+  /// locked; only adding more photos stays available.
+  bool get _controlsEnabled => !_processing && _currentAlbum == null;
+  bool get _canProcess =>
+      !_processing && _hasAnyLogo && _unsavedPaths.isNotEmpty;
+  bool get _allSaved =>
+      _photoPaths.isNotEmpty && _hasAnyLogo && _unsavedPaths.isEmpty;
 
   @override
   void initState() {
@@ -114,6 +140,8 @@ class _HomePageState extends State<HomePage> {
     await p.setDouble('p_cornerHeight', _cornerHeight);
     await p.setDouble('p_cornerMargin', _cornerMargin);
     await p.setBool('p_centered', _centered);
+    await p.setStringList('p_saved', _savedPaths.toList());
+    await p.setString('p_album', _currentAlbum ?? '');
   }
 
   Future<void> _loadProject() async {
@@ -169,18 +197,26 @@ class _HomePageState extends State<HomePage> {
       _cornerHeight = p.getDouble('p_cornerHeight') ?? 22;
       _cornerMargin = p.getDouble('p_cornerMargin') ?? 2;
       _centered = p.getBool('p_centered') ?? false;
+      _savedPaths
+        ..clear()
+        ..addAll((p.getStringList('p_saved') ?? []).where(photos.contains));
+      final alb = p.getString('p_album') ?? '';
+      _currentAlbum = alb.isEmpty ? null : alb;
     });
 
     // First launch: pre-fill the default main (top-right) logo.
-    if (firstRun) {
-      final data = await rootBundle.load('assets/default_corner_logo.png');
-      final bytes = data.buffer.asUint8List();
-      final path = await _copyBytesToApp(bytes, 'logos');
-      if (!mounted) return;
-      setState(() => _cornerLogo =
-          LogoItem(_nextLogoId++, path, 'asset:default_corner', bytes));
-    }
+    if (firstRun) await _installDefaultCorner();
     _schedulePreview();
+  }
+
+  /// Installs the bundled default main (top-right) logo.
+  Future<void> _installDefaultCorner() async {
+    final data = await rootBundle.load('assets/default_corner_logo.png');
+    final bytes = data.buffer.asUint8List();
+    final path = await _copyBytesToApp(bytes, 'logos');
+    if (!mounted) return;
+    setState(() => _cornerLogo =
+        LogoItem(_nextLogoId++, path, 'asset:default_corner', bytes));
   }
 
   // ---- Picking ----
@@ -222,6 +258,9 @@ class _HomePageState extends State<HomePage> {
       _importing = false;
     });
     _schedulePreview();
+    // If this project was already saved, the new photos go straight into the
+    // same album (only the unsaved ones get processed).
+    if (_currentAlbum != null && !_processing) _saveAll();
   }
 
   Future<void> _pickLogos(List<LogoItem> target) async {
@@ -339,7 +378,8 @@ class _HomePageState extends State<HomePage> {
   // ---- Saving ----
 
   Future<void> _saveAll() async {
-    if (_processing || _photoPaths.isEmpty || !_hasAnyLogo) return;
+    if (_processing || !_hasAnyLogo) return;
+    if (_unsavedPaths.isEmpty) return; // everything is already saved
     final granted = await Gal.requestAccess(toAlbum: true);
     if (!granted) {
       _snack('Permissão da galeria negada.');
@@ -347,20 +387,22 @@ class _HomePageState extends State<HomePage> {
     }
     // Keep the device awake so a long save isn't interrupted by auto-lock.
     await WakelockPlus.enable();
-    final album = _nextAlbum();
+    // Reuse the project's album; create one (named by date/time) on first save.
+    final album = _currentAlbum ?? _nextAlbum();
     setState(() {
       _processing = true;
+      _currentAlbum = album;
+      _lastResult = null;
       _done = 0;
-      _total = _photoPaths.length;
+      _total = _unsavedPaths.length;
     });
 
-    // Process by path so photos ADDED during the save are still picked up; each
-    // photo is processed exactly once.
+    // Process only photos not yet saved; photos ADDED mid-save are picked up too.
     final processed = <String>{};
     var saved = 0, failed = 0;
     while (mounted) {
       String? next;
-      for (final path in _photoPaths) {
+      for (final path in _unsavedPaths) {
         if (!processed.contains(path)) {
           next = path;
           break;
@@ -373,22 +415,25 @@ class _HomePageState extends State<HomePage> {
         final out = await compute(renderWatermark, _request(bytes, png: true));
         final ts = DateTime.now().microsecondsSinceEpoch;
         await Gal.putImageBytes(out, album: album, name: 'watermarked_$ts.png');
+        _savedPaths.add(next);
         saved++;
       } catch (_) {
         failed++;
       }
       setState(() {
         _done = processed.length;
-        _total = _photoPaths.length;
+        _total = processed.length + _unsavedPaths.length;
       });
     }
 
     await WakelockPlus.disable();
     await _addHistory(album, saved, failed);
-    setState(() => _processing = false);
-    _snack(failed == 0
-        ? 'Pronto! $saved foto(s) salva(s) no álbum "$album".'
-        : '$saved salva(s), $failed falharam.');
+    await _saveProject();
+    if (!mounted) return;
+    setState(() {
+      _processing = false;
+      _lastResult = _ProcessResult(saved: saved, failed: failed, album: album);
+    });
   }
 
   // ---- Album numbering + history (shared_preferences) ----
@@ -494,6 +539,11 @@ class _HomePageState extends State<HomePage> {
           ],
         ),
         actions: [
+          TextButton(
+            // Greyed out until the project has been saved at least once.
+            onPressed: _savedPaths.isEmpty ? null : _confirmNewProject,
+            child: const Text('Novo projeto'),
+          ),
           IconButton(
             icon: const Icon(Icons.history),
             tooltip: 'Histórico',
@@ -508,6 +558,10 @@ class _HomePageState extends State<HomePage> {
             child: ListView(
               padding: const EdgeInsets.all(16),
               children: [
+                if (_lastResult != null) ...[
+                  _resultBanner(),
+                  const SizedBox(height: 16),
+                ],
                 _photosCard(),
                 const SizedBox(height: 16),
                 _logoCard(
@@ -670,6 +724,18 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  /// Opens any list of image bytes (e.g. logos) in the zoomable fullscreen
+  /// viewer, starting at [index].
+  void _openImagesFullscreen(List<Uint8List> images, int index) {
+    if (images.isEmpty) return;
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        fullscreenDialog: true,
+        builder: (_) => _FullscreenViewer(initialPage: index, images: images),
+      ),
+    );
+  }
+
   Widget _photosCard() {
     return _StepCard(
       number: 1,
@@ -708,7 +774,7 @@ class _HomePageState extends State<HomePage> {
                 itemCount: _photoPaths.length,
                 separatorBuilder: (_, __) => const SizedBox(width: 8),
                 itemBuilder: (context, i) => _thumb(
-                  enabled: !_processing,
+                  enabled: _controlsEnabled,
                   child: Image.file(File(_photoPaths[i]), fit: BoxFit.cover),
                   onRemove: () {
                     final path = _photoPaths[i];
@@ -743,7 +809,8 @@ class _HomePageState extends State<HomePage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           OutlinedButton.icon(
-            onPressed: (_photoPaths.isEmpty || _processing) ? null : onAdd,
+            onPressed:
+                (_photoPaths.isEmpty || !_controlsEnabled) ? null : onAdd,
             icon: const Icon(Icons.image_outlined),
             label: const Text('Adicionar logos'),
           ),
@@ -765,10 +832,10 @@ class _HomePageState extends State<HomePage> {
             ReorderableListView.builder(
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
-              buildDefaultDragHandles: !_processing,
+              buildDefaultDragHandles: _controlsEnabled,
               itemCount: items.length,
               onReorder: (oldIndex, newIndex) {
-                if (_processing) return;
+                if (!_controlsEnabled) return;
                 setState(() {
                   if (newIndex > oldIndex) newIndex -= 1;
                   items.insert(newIndex, items.removeAt(oldIndex));
@@ -780,19 +847,24 @@ class _HomePageState extends State<HomePage> {
                 return ListTile(
                   key: ValueKey(item.id),
                   contentPadding: EdgeInsets.zero,
-                  leading: ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: Container(
-                      width: 48,
-                      height: 48,
-                      color: Theme.of(context).colorScheme.surfaceVariant,
-                      child: Image.memory(item.bytes, fit: BoxFit.contain),
+                  leading: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () => _openImagesFullscreen(
+                        items.map((e) => e.bytes).toList(), i),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: Container(
+                        width: 48,
+                        height: 48,
+                        color: Theme.of(context).colorScheme.surfaceVariant,
+                        child: Image.memory(item.bytes, fit: BoxFit.contain),
+                      ),
                     ),
                   ),
                   title: Text('Logo ${i + 1}'),
                   trailing: IconButton(
                     icon: const Icon(Icons.close),
-                    onPressed: _processing
+                    onPressed: !_controlsEnabled
                         ? null
                         : () {
                             setState(() => items.removeAt(i));
@@ -818,8 +890,9 @@ class _HomePageState extends State<HomePage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           OutlinedButton.icon(
-            onPressed:
-                (_photoPaths.isEmpty || _processing) ? null : _pickCornerLogo,
+            onPressed: (_photoPaths.isEmpty || !_controlsEnabled)
+                ? null
+                : _pickCornerLogo,
             icon: const Icon(Icons.image_outlined),
             label: Text(_cornerLogo == null
                 ? 'Adicionar logo principal'
@@ -831,7 +904,8 @@ class _HomePageState extends State<HomePage> {
           if (_cornerLogo != null) ...[
             const SizedBox(height: 12),
             _thumb(
-              enabled: !_processing,
+              enabled: _controlsEnabled,
+              onTap: () => _openImagesFullscreen([_cornerLogo!.bytes], 0),
               child: Image.memory(_cornerLogo!.bytes, fit: BoxFit.contain),
               onRemove: () {
                 setState(() => _cornerLogo = null);
@@ -865,22 +939,115 @@ class _HomePageState extends State<HomePage> {
         ],
       );
     }
-    final canProcess = _photoPaths.isNotEmpty && _hasAnyLogo;
+    // Everything currently selected has already been saved.
+    if (_allSaved && _currentAlbum != null) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          OutlinedButton.icon(
+            onPressed: _pickPhotos,
+            icon: const Icon(Icons.add_photo_alternate_outlined),
+            label: const Text('Adicionar mais fotos'),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Tudo salvo no álbum “$_currentAlbum”. Fotos novas vão para o mesmo '
+            'álbum. Use “Novo projeto” para começar do zero.',
+            style: Theme.of(context).textTheme.bodySmall,
+            textAlign: TextAlign.center,
+          ),
+        ],
+      );
+    }
+    final firstSave = _currentAlbum == null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         FilledButton.icon(
-          onPressed: canProcess ? _saveAll : null,
+          onPressed: _canProcess ? _saveAll : null,
           style: FilledButton.styleFrom(
               minimumSize: const Size.fromHeight(52)),
           icon: const Icon(Icons.check_circle_outline),
-          label: const Text('Aplicar e salvar tudo'),
+          label: Text(
+              firstSave ? 'Aplicar e salvar tudo' : 'Salvar novas fotos'),
         ),
         const SizedBox(height: 6),
-        Text('As imagens são salvas no álbum “Watermarked”.',
-            style: Theme.of(context).textTheme.bodySmall),
+        Text(
+          firstSave
+              ? 'As imagens são salvas num álbum nomeado pela data/hora.'
+              : 'As novas fotos vão para o mesmo álbum “$_currentAlbum”.',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
       ],
     );
+  }
+
+  Widget _resultBanner() {
+    final r = _lastResult!;
+    final ok = r.failed == 0;
+    final scheme = Theme.of(context).colorScheme;
+    return Card(
+      color: ok ? scheme.secondaryContainer : scheme.errorContainer,
+      child: ListTile(
+        leading: Icon(ok ? Icons.check_circle : Icons.error_outline),
+        title: Text(ok
+            ? '${r.saved} foto(s) salva(s)'
+            : '${r.saved} salva(s), ${r.failed} falharam'),
+        subtitle: Text('Álbum “${r.album}”'),
+        trailing: IconButton(
+          icon: const Icon(Icons.close),
+          tooltip: 'Dispensar',
+          onPressed: () => setState(() => _lastResult = null),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _confirmNewProject() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Começar novo projeto?'),
+        content: const Text(
+            'Isso limpa as fotos e logos atuais. As imagens já salvas na '
+            'galeria são mantidas.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancelar')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Novo projeto')),
+        ],
+      ),
+    );
+    if (ok == true) _newProject();
+  }
+
+  Future<void> _newProject() async {
+    _previewToken++; // invalidate any in-flight preview render
+    setState(() {
+      _photoPaths.clear();
+      _bottomLogos.clear();
+      _topLeftLogos.clear();
+      _cornerLogo = null;
+      _savedPaths.clear();
+      _currentAlbum = null;
+      _lastResult = null;
+      _previews = [];
+      _hiResPreviews = [];
+      _photoCache.clear();
+      _logoSize = 22;
+      _leftMargin = 1;
+      _logoOpacity = 90;
+      _bottomMargin = 2;
+      _topMargin = 2;
+      _cornerHeight = 22;
+      _cornerMargin = 2;
+      _centered = false;
+    });
+    await _installDefaultCorner();
+    await _saveProject();
   }
 
   Widget _alignmentChooser() {
@@ -896,7 +1063,7 @@ class _HomePageState extends State<HomePage> {
             ChoiceChip(
               label: const Text('Esquerda → direita'),
               selected: !_centered,
-              onSelected: _processing
+              onSelected: !_controlsEnabled
                   ? null
                   : (s) {
                       setState(() => _centered = false);
@@ -906,7 +1073,7 @@ class _HomePageState extends State<HomePage> {
             ChoiceChip(
               label: const Text('Centralizado'),
               selected: _centered,
-              onSelected: _processing
+              onSelected: !_controlsEnabled
                   ? null
                   : (s) {
                       setState(() => _centered = true);
@@ -930,7 +1097,7 @@ class _HomePageState extends State<HomePage> {
           value: value,
           min: min,
           max: max,
-          onChanged: _processing
+          onChanged: !_controlsEnabled
               ? null
               : (v) {
                   onChanged(v);
@@ -944,6 +1111,7 @@ class _HomePageState extends State<HomePage> {
   Widget _thumb({
     required Widget child,
     required VoidCallback onRemove,
+    VoidCallback? onTap,
     bool enabled = true,
   }) {
     return SizedBox(
@@ -951,13 +1119,17 @@ class _HomePageState extends State<HomePage> {
       height: 76,
       child: Stack(
         children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: Container(
-              width: 76,
-              height: 76,
-              color: Theme.of(context).colorScheme.surfaceVariant,
-              child: child,
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: onTap,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: Container(
+                width: 76,
+                height: 76,
+                color: Theme.of(context).colorScheme.surfaceVariant,
+                child: child,
+              ),
             ),
           ),
           if (enabled)
