@@ -59,8 +59,11 @@ jobs:
         run: |
           # Builds the app bundle. The final code-sign/export step may complain
           # about a Development Team; we ignore that and package the .app it
-          # already produced (it gets signed later by Sideloadly).
-          flutter build ios --release --no-codesign || true
+          # already produced (it gets signed later by Sideloadly/AltStore).
+          # Version grows with the CI run number so AltStore detects updates.
+          flutter build ios --release --no-codesign \
+            --build-name=1.0.${{ github.run_number }} \
+            --build-number=${{ github.run_number }} || true
           APP=build/ios/iphoneos/Runner.app
           if [ ! -d "$APP" ]; then
             echo "Runner.app was not produced"; ls -R build/ios || true; exit 1
@@ -78,7 +81,9 @@ jobs:
         run: |
           IPA=build/PhotoWatermark-unsigned.ipa
           SIZE=$(stat -f%z "$IPA")
-          VERSION=$(grep '^version:' pubspec.yaml | sed 's/version:[[:space:]]*//; s/+.*//')
+          # Must match the app's build-name so AltStore offers updates and then
+          # stops once the new build is installed.
+          VERSION="1.0.${{ github.run_number }}"
           DATE=$(date +%F)
           BID=$(/usr/libexec/PlistBuddy -c "Print CFBundleIdentifier" build/ios/iphoneos/Runner.app/Info.plist)
           BASE="https://github.com/${{ github.repository }}/releases/download/ios-latest"
