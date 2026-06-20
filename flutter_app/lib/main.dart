@@ -12,8 +12,15 @@ class PhotoWatermarkApp extends StatelessWidget {
     return MaterialApp(
       title: 'JCV Watermarker',
       debugShowCheckedModeBanner: false,
+      // Forced dark mode.
+      themeMode: ThemeMode.dark,
       theme: ThemeData(
         colorSchemeSeed: const Color(0xFF05B2AE),
+        useMaterial3: true,
+      ),
+      darkTheme: ThemeData(
+        colorSchemeSeed: const Color(0xFF05B2AE),
+        brightness: Brightness.dark,
         useMaterial3: true,
       ),
       home: const HomePage(),

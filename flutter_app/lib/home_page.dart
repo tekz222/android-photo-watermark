@@ -88,9 +88,11 @@ class _HomePageState extends State<HomePage> {
   List<String> get _unsavedPaths =>
       _photoPaths.where((p) => !_savedPaths.contains(p)).toList();
 
-  /// Once the project has been saved (an album exists) its configuration is
-  /// locked; only adding more photos stays available.
-  bool get _controlsEnabled => !_processing && _currentAlbum == null;
+  /// Controls (including the main-logo options) stay disabled until at least
+  /// one photo is added, and lock again once the project has been saved (an
+  /// album exists) — only adding more photos stays available after that.
+  bool get _controlsEnabled =>
+      !_processing && _currentAlbum == null && _photoPaths.isNotEmpty;
   bool get _canProcess =>
       !_processing && _hasAnyLogo && _unsavedPaths.isNotEmpty;
   bool get _allSaved =>

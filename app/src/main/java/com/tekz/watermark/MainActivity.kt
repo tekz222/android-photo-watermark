@@ -185,7 +185,10 @@ fun WatermarkScreen(viewModel: WatermarkViewModel = viewModel()) {
     // Once the project has been saved (an album exists), its configuration is
     // frozen: every control is disabled except "add more photos". The photos you
     // add then inherit the same settings and save into the same album.
-    val controlsEnabled = !state.isProcessing && state.currentAlbum == null
+    // Controls (including the main-logo options) stay greyed out until at least
+    // one photo is selected, then unlock — until the project is saved/locked.
+    val controlsEnabled =
+        !state.isProcessing && state.currentAlbum == null && state.photoUris.isNotEmpty()
     val snackbarHostState = remember { SnackbarHostState() }
     var confirmAddDuringSave by remember { mutableStateOf(false) }
     var confirmNewProject by remember { mutableStateOf(false) }

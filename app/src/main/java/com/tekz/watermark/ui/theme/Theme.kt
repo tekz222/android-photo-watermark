@@ -26,8 +26,10 @@ private val DarkColors = darkColorScheme(
 
 @Composable
 fun PhotoWatermarkTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
-    dynamicColor: Boolean = true,
+    // Forced dark mode: always use the dark color scheme, regardless of the
+    // system setting, and skip dynamic (wallpaper) colors so it stays dark.
+    darkTheme: Boolean = true,
+    dynamicColor: Boolean = false,
     content: @Composable () -> Unit
 ) {
     val context = LocalContext.current
