@@ -13,7 +13,7 @@ Versão multiplataforma do app, escrita em **Flutter/Dart**, para rodar no
   cima e de baixo; cada fileira tem sua própria distância da borda (superior/
   inferior).
 - Pré-visualização ao vivo das **primeiras 5 fotos** (fixa no topo).
-- Salva no álbum **Watermarked** da galeria/Fotos.
+- Salva num álbum nomeado pela **data/hora** do salvamento (ex.: `2026-06-20 10-40-30`) na galeria/Fotos.
 
 ## Estrutura
 

@@ -25,8 +25,10 @@ Depois é só salvar todas na galeria.
    trocar ou remover quando quiser, e ajustar o tamanho e a distância do canto.
 5. **Pré-visualização** — veja a 1ª foto já com as logos, atualizando ao vivo
    conforme você muda os ajustes.
-6. **Aplicar e salvar tudo** — cada foto recebe as logos e é salva em
-   `Imagens/Watermarked` na galeria do aparelho.
+6. **Aplicar e salvar tudo** — cada foto recebe as logos e é salva, na galeria
+   do aparelho, num álbum em `Imagens/` nomeado pela **data/hora** do salvamento
+   (ex.: `Imagens/2026-06-20 10-40-30`). Fotos adicionadas depois do primeiro
+   salvamento vão para o **mesmo álbum**.
 
 ## Detalhes técnicos
 
