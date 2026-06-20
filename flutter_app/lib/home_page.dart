@@ -7,7 +7,6 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
-import 'package:file_picker/file_picker.dart';
 import 'package:gal/gal.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
@@ -225,23 +224,14 @@ class _HomePageState extends State<HomePage> {
       b.isNotEmpty &&
       (a == b || a.contains(b) || b.contains(a));
 
-  // Image extensions accepted for logos. Using FileType.custom (instead of
-  // FileType.image) forces the iOS *Files* document picker, which preserves the
-  // real file name — FileType.image would open Photos and lose the name.
-  static const _imageExts = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'heic'];
-
   Future<void> _pickLogos(List<LogoItem> target) async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: _imageExts,
-      allowMultiple: true,
-      withData: true,
-    );
-    if (result == null || result.files.isEmpty) return;
+    // Logos come from the photo gallery (same as the photos).
+    final picked = await _picker.pickMultiImage();
+    if (picked.isEmpty) return;
     setState(() => _importing = true);
     // De-dup against logos already in the rows (and the main logo) by BOTH the
-    // file name (catches near-duplicates like gatti / gatti2) AND the image
-    // content (catches the exact same image even if the name is missing/odd).
+    // file name (catches near-duplicates like gatti / gatti_pouco_texto) AND the
+    // image content (catches the exact same image even if the name is missing).
     final existing = [
       ..._bottomLogos,
       ..._topLeftLogos,
@@ -250,10 +240,9 @@ class _HomePageState extends State<HomePage> {
     final usedNames = existing.map((e) => _logoName(e.sourceKey)).toList();
     final usedHashes = existing.map((e) => _logoHash(e.bytes)).toList();
     var skipped = 0;
-    for (final f in result.files) {
-      final bytes = await _platformFileBytes(f);
-      if (bytes == null) continue;
-      final name = _logoName(f.name);
+    for (final x in picked) {
+      final bytes = await x.readAsBytes();
+      final name = _logoName(x.name);
       final hash = _logoHash(bytes);
       final dupName =
           name.isNotEmpty && usedNames.any((u) => _namesRelated(u, name));
@@ -263,7 +252,7 @@ class _HomePageState extends State<HomePage> {
         continue;
       }
       final path = await _copyBytesToApp(bytes, 'logos');
-      target.add(LogoItem(_nextLogoId++, path, f.name, bytes));
+      target.add(LogoItem(_nextLogoId++, path, x.name, bytes));
       usedNames.add(name);
       usedHashes.add(hash);
     }
@@ -286,26 +275,14 @@ class _HomePageState extends State<HomePage> {
     return h ^ b.length;
   }
 
-  Future<Uint8List?> _platformFileBytes(PlatformFile f) async {
-    if (f.bytes != null) return f.bytes;
-    if (f.path != null) return File(f.path!).readAsBytes();
-    return null;
-  }
-
   Future<void> _pickCornerLogo() async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: _imageExts,
-      withData: true,
-    );
-    if (result == null || result.files.isEmpty) return;
-    final f = result.files.first;
-    final bytes = await _platformFileBytes(f);
-    if (bytes == null) return;
+    final x = await _picker.pickImage(source: ImageSource.gallery);
+    if (x == null) return;
+    final bytes = await x.readAsBytes();
     setState(() => _importing = true);
     final path = await _copyBytesToApp(bytes, 'logos');
     setState(() {
-      _cornerLogo = LogoItem(_nextLogoId++, path, f.name, bytes);
+      _cornerLogo = LogoItem(_nextLogoId++, path, x.name, bytes);
       _importing = false;
     });
     _schedulePreview();
@@ -664,18 +641,9 @@ class _HomePageState extends State<HomePage> {
               height: 208,
               child: _previews.isEmpty
                   ? Center(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const CircularProgressIndicator(),
-                          const SizedBox(height: 10),
-                          Text(
-                            _previewTotal > 0
-                                ? 'Gerando pré-visualização… 0 de $_previewTotal'
-                                : 'Carregando…',
-                            style: Theme.of(context).textTheme.bodySmall,
-                          ),
-                        ],
+                      child: Text(
+                        'Gerando pré-visualização…',
+                        style: Theme.of(context).textTheme.bodySmall,
                       ),
                     )
                   : ListView.separated(
@@ -773,29 +741,17 @@ class _HomePageState extends State<HomePage> {
             icon: const Icon(Icons.add_photo_alternate_outlined),
             label: const Text('Adicionar fotos'),
           ),
+          // Text-only status; the single progress bar lives at the top of the
+          // screen (under the app bar).
           if (_importing || _renderingPreview) ...[
             const SizedBox(height: 12),
-            Row(
-              children: [
-                const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2)),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(_importing
-                      ? (_importTotal > 0
-                          ? 'Carregando fotos… $_importDone de $_importTotal'
-                          : 'Carregando…')
-                      : 'Gerando pré-visualização…'),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            LinearProgressIndicator(
-              value: (_importing && _importTotal > 0)
-                  ? _importDone / _importTotal
-                  : null,
+            Text(
+              _importing
+                  ? (_importTotal > 0
+                      ? 'Carregando fotos… $_importDone de $_importTotal'
+                      : 'Carregando…')
+                  : 'Gerando pré-visualização…',
+              style: Theme.of(context).textTheme.bodySmall,
             ),
           ],
           if (_photoPaths.isNotEmpty) ...[
