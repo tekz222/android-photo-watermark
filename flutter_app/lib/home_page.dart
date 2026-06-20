@@ -891,7 +891,8 @@ class _HomePageState extends State<HomePage> {
                       ),
                     ),
                   ),
-                  title: Text('Logo ${i + 1}'),
+                  title: Text('${i + 1}. ${item.sourceKey}',
+                      maxLines: 1, overflow: TextOverflow.ellipsis),
                   trailing: IconButton(
                     icon: const Icon(Icons.close),
                     onPressed: !_controlsEnabled
