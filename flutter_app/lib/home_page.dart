@@ -7,6 +7,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
+import 'package:file_picker/file_picker.dart';
 import 'package:gal/gal.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
@@ -281,8 +282,14 @@ class _HomePageState extends State<HomePage> {
       (a == b || a.contains(b) || b.contains(a));
 
   Future<void> _pickLogos(List<LogoItem> target) async {
-    final picked = await _picker.pickMultiImage();
-    if (picked.isEmpty) return;
+    // Pick logos from Files (not the photo library) so the REAL file name is
+    // preserved — that's what the same-name de-duplication relies on.
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.image,
+      allowMultiple: true,
+      withData: true,
+    );
+    if (result == null || result.files.isEmpty) return;
     setState(() => _importing = true);
     // Names already used in either row (so a logo can't be added twice, and a
     // near-duplicate filename is rejected). Grows as we accept this batch.
@@ -291,15 +298,16 @@ class _HomePageState extends State<HomePage> {
       ..._topLeftLogos.map((e) => _logoName(e.sourceKey)),
     ];
     var skipped = 0;
-    for (final x in picked) {
-      final name = _logoName(x.name);
+    for (final f in result.files) {
+      final name = _logoName(f.name);
       if (used.any((u) => _namesRelated(u, name))) {
         skipped++;
         continue;
       }
-      final bytes = await x.readAsBytes();
+      final bytes = await _platformFileBytes(f);
+      if (bytes == null) continue;
       final path = await _copyBytesToApp(bytes, 'logos');
-      target.add(LogoItem(_nextLogoId++, path, x.name, bytes));
+      target.add(LogoItem(_nextLogoId++, path, f.name, bytes));
       used.add(name);
     }
     setState(() => _importing = false);
@@ -310,14 +318,25 @@ class _HomePageState extends State<HomePage> {
     _schedulePreview();
   }
 
+  Future<Uint8List?> _platformFileBytes(PlatformFile f) async {
+    if (f.bytes != null) return f.bytes;
+    if (f.path != null) return File(f.path!).readAsBytes();
+    return null;
+  }
+
   Future<void> _pickCornerLogo() async {
-    final x = await _picker.pickImage(source: ImageSource.gallery);
-    if (x == null) return;
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.image,
+      withData: true,
+    );
+    if (result == null || result.files.isEmpty) return;
+    final f = result.files.first;
+    final bytes = await _platformFileBytes(f);
+    if (bytes == null) return;
     setState(() => _importing = true);
-    final bytes = await x.readAsBytes();
     final path = await _copyBytesToApp(bytes, 'logos');
     setState(() {
-      _cornerLogo = LogoItem(_nextLogoId++, path, x.name, bytes);
+      _cornerLogo = LogoItem(_nextLogoId++, path, f.name, bytes);
       _importing = false;
     });
     _schedulePreview();
