@@ -2,6 +2,7 @@ package com.tekz.watermark
 
 import android.app.Application
 import android.net.Uri
+import android.provider.OpenableColumns
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
@@ -260,38 +261,61 @@ class WatermarkViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             _uiState.update { it.copy(isImporting = true, lastResult = null) }
             val state = _uiState.value
-            val otherKeys = (if (bottom) state.topLeftLogos else state.logos)
-                .mapTo(HashSet()) { it.sourceKey }
+            // Names already used in either row. A logo is rejected when its file
+            // name contains (or is contained by) one already added — so the same
+            // logo can't be used twice, including near-duplicates like
+            // "casa_lutaif" vs "casa_lutaif2".
+            val usedNames = (state.logos + state.topLeftLogos)
+                .mapTo(mutableListOf()) { normName(it.sourceKey) }
             var skipped = 0
             val items = withContext(Dispatchers.IO) {
                 uris.mapNotNull { src ->
-                    val key = src.toString()
-                    if (key in otherKeys) {
+                    val name = displayName(src)
+                    val norm = normName(name)
+                    if (usedNames.any { namesRelated(it, norm) }) {
                         skipped++
                         return@mapNotNull null
                     }
                     val internal = copyToInternal(src, "logos") ?: return@mapNotNull null
-                    LogoItem(id = nextLogoId++, uri = internal, sourceKey = key)
+                    usedNames.add(norm)
+                    LogoItem(id = nextLogoId++, uri = internal, sourceKey = name)
                 }
             }
             _uiState.update {
+                val msg = if (skipped > 0) R.string.dup_logo else null
                 if (bottom) {
-                    it.copy(
-                        logos = it.logos + items,
-                        isImporting = false,
-                        messageRes = if (skipped > 0) R.string.dup_in_top else null
-                    )
+                    it.copy(logos = it.logos + items, isImporting = false, messageRes = msg)
                 } else {
                     it.copy(
                         topLeftLogos = it.topLeftLogos + items,
                         isImporting = false,
-                        messageRes = if (skipped > 0) R.string.dup_in_bottom else null
+                        messageRes = msg
                     )
                 }
             }
             persist()
         }
     }
+
+    /** Best-effort original file name of a picked image (for de-duplication). */
+    private fun displayName(uri: Uri): String = try {
+        appCtx.contentResolver
+            .query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+            ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+            ?: uri.lastPathSegment ?: uri.toString()
+    } catch (_: Exception) {
+        uri.lastPathSegment ?: uri.toString()
+    }
+
+    /** Normalized logo name: base file name, no extension, lowercased. */
+    private fun normName(raw: String): String {
+        val base = raw.substringAfterLast('/').substringAfterLast('\\')
+        return base.substringBeforeLast('.', base).lowercase().trim()
+    }
+
+    /** Same logo when one name contains the other. */
+    private fun namesRelated(a: String, b: String): Boolean =
+        a.isNotEmpty() && b.isNotEmpty() && (a == b || a.contains(b) || b.contains(a))
 
     fun removeLogo(id: Long) {
         _uiState.value.logos.firstOrNull { it.id == id }?.let { deleteInternal(it.uri) }

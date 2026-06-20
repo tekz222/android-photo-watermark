@@ -1,8 +1,8 @@
 import 'dart:typed_data';
 
 /// A single logo in a row. [path] is an internal copy of the image (survives
-/// app restarts); [sourceKey] is the original picked path, used to keep the same
-/// logo out of both rows. [bytes] is the in-memory image for rendering.
+/// app restarts); [sourceKey] is the original file name, used to de-duplicate
+/// logos by name. [bytes] is the in-memory image for rendering.
 class LogoItem {
   LogoItem(this.id, this.path, this.sourceKey, this.bytes);
 

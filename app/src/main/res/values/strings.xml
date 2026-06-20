@@ -27,6 +27,7 @@
     <string name="logo_position">Logo %1$d</string>
     <string name="dup_in_top">Logo(s) já usada(s) no topo — ignorada(s).</string>
     <string name="dup_in_bottom">Logo(s) já usada(s) na base — ignorada(s).</string>
+    <string name="dup_logo">Logo(s) ignorada(s): nome igual ou contido em outra já adicionada.</string>
     <string name="align_label">Alinhamento das logos:</string>
     <string name="align_left">Esquerda → direita</string>
     <string name="align_center">Centralizado</string>

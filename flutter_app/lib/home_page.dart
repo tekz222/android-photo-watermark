@@ -265,28 +265,48 @@ class _HomePageState extends State<HomePage> {
     if (_currentAlbum != null && !_processing) _saveAll();
   }
 
+  /// Normalized logo name for de-duplication: base filename, no extension,
+  /// lowercased.
+  String _logoName(String raw) {
+    var n = raw.split('/').last.split('\\').last;
+    final dot = n.lastIndexOf('.');
+    if (dot > 0) n = n.substring(0, dot);
+    return n.toLowerCase().trim();
+  }
+
+  /// Two logos are considered the same when one name contains the other
+  /// (e.g. "casa_lutaif" vs "casa_lutaif2" / "casa_lutaif_pouco_texto").
+  bool _namesRelated(String a, String b) =>
+      a.isNotEmpty &&
+      b.isNotEmpty &&
+      (a == b || a.contains(b) || b.contains(a));
+
   Future<void> _pickLogos(List<LogoItem> target) async {
     final picked = await _picker.pickMultiImage();
     if (picked.isEmpty) return;
-    // The same logo can't be in both rows (compared by original picked path).
-    final other = identical(target, _bottomLogos) ? _topLeftLogos : _bottomLogos;
-    final blocked = other.map((e) => e.sourceKey).toSet();
     setState(() => _importing = true);
+    // Names already used in either row (so a logo can't be added twice, and a
+    // near-duplicate filename is rejected). Grows as we accept this batch.
+    final used = <String>[
+      ..._bottomLogos.map((e) => _logoName(e.sourceKey)),
+      ..._topLeftLogos.map((e) => _logoName(e.sourceKey)),
+    ];
     var skipped = 0;
     for (final x in picked) {
-      if (blocked.contains(x.path)) {
+      final name = _logoName(x.name);
+      if (used.any((u) => _namesRelated(u, name))) {
         skipped++;
         continue;
       }
       final bytes = await x.readAsBytes();
       final path = await _copyBytesToApp(bytes, 'logos');
-      target.add(LogoItem(_nextLogoId++, path, x.path, bytes));
+      target.add(LogoItem(_nextLogoId++, path, x.name, bytes));
+      used.add(name);
     }
     setState(() => _importing = false);
     if (skipped > 0) {
-      _snack(identical(target, _bottomLogos)
-          ? 'Logo(s) já usada(s) no topo — ignorada(s).'
-          : 'Logo(s) já usada(s) na base — ignorada(s).');
+      _snack('$skipped logo(s) ignorada(s): nome igual ou contido em outra já '
+          'adicionada.');
     }
     _schedulePreview();
   }
@@ -298,7 +318,7 @@ class _HomePageState extends State<HomePage> {
     final bytes = await x.readAsBytes();
     final path = await _copyBytesToApp(bytes, 'logos');
     setState(() {
-      _cornerLogo = LogoItem(_nextLogoId++, path, x.path, bytes);
+      _cornerLogo = LogoItem(_nextLogoId++, path, x.name, bytes);
       _importing = false;
     });
     _schedulePreview();
