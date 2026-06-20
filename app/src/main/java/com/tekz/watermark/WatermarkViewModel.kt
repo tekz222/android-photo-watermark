@@ -313,7 +313,8 @@ class WatermarkViewModel(app: Application) : AndroidViewModel(app) {
         return base.substringBeforeLast('.', base).lowercase().trim()
     }
 
-    /** Same logo when one name contains the other. */
+    /** The same logo can never be used twice: block exactly-equal names AND
+     * near-duplicates where one name contains the other. */
     private fun namesRelated(a: String, b: String): Boolean =
         a.isNotEmpty() && b.isNotEmpty() && (a == b || a.contains(b) || b.contains(a))
 

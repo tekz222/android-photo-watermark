@@ -216,8 +216,9 @@ class _HomePageState extends State<HomePage> {
     return n.toLowerCase().trim();
   }
 
-  /// Two logos are considered the same when one name contains the other
-  /// (e.g. "casa_lutaif" vs "casa_lutaif2" / "casa_lutaif_pouco_texto").
+  /// The same logo can never be used twice: block exactly-equal names AND
+  /// near-duplicates where one name contains the other (e.g. "casa_lutaif" vs
+  /// "casa_lutaif2" / "casa_lutaif_pouco_texto").
   bool _namesRelated(String a, String b) =>
       a.isNotEmpty &&
       b.isNotEmpty &&
@@ -1349,9 +1350,19 @@ class _FullscreenViewerState extends State<_FullscreenViewer> {
           SafeArea(
             child: Align(
               alignment: Alignment.topRight,
-              child: IconButton(
-                icon: const Icon(Icons.close, color: Colors.white, size: 30),
-                onPressed: () => Navigator.of(context).pop(),
+              child: Padding(
+                padding: const EdgeInsets.all(10),
+                child: Material(
+                  color: Colors.black54,
+                  shape: const CircleBorder(),
+                  child: IconButton(
+                    iconSize: 36,
+                    padding: const EdgeInsets.all(12),
+                    tooltip: 'Fechar',
+                    icon: const Icon(Icons.close, color: Colors.white),
+                    onPressed: () => Navigator.of(context).pop(),
+                  ),
+                ),
               ),
             ),
           ),
