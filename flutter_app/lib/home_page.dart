@@ -235,31 +235,51 @@ class _HomePageState extends State<HomePage> {
     );
     if (result == null || result.files.isEmpty) return;
     setState(() => _importing = true);
-    // Names already used in either row (so a logo can't be added twice, and a
-    // near-duplicate filename is rejected). Grows as we accept this batch.
-    final used = <String>[
-      ..._bottomLogos.map((e) => _logoName(e.sourceKey)),
-      ..._topLeftLogos.map((e) => _logoName(e.sourceKey)),
+    // De-dup against logos already in the rows (and the main logo) by BOTH the
+    // file name (catches near-duplicates like gatti / gatti2) AND the image
+    // content (catches the exact same image even if the name is missing/odd).
+    final existing = [
+      ..._bottomLogos,
+      ..._topLeftLogos,
+      if (_cornerLogo != null) _cornerLogo!,
     ];
+    final usedNames = existing.map((e) => _logoName(e.sourceKey)).toList();
+    final usedHashes = existing.map((e) => _logoHash(e.bytes)).toList();
     var skipped = 0;
     for (final f in result.files) {
+      final bytes = await _platformFileBytes(f);
+      if (bytes == null) continue;
       final name = _logoName(f.name);
-      if (used.any((u) => _namesRelated(u, name))) {
+      final hash = _logoHash(bytes);
+      final dupName =
+          name.isNotEmpty && usedNames.any((u) => _namesRelated(u, name));
+      final dupContent = usedHashes.contains(hash);
+      if (dupName || dupContent) {
         skipped++;
         continue;
       }
-      final bytes = await _platformFileBytes(f);
-      if (bytes == null) continue;
       final path = await _copyBytesToApp(bytes, 'logos');
       target.add(LogoItem(_nextLogoId++, path, f.name, bytes));
-      used.add(name);
+      usedNames.add(name);
+      usedHashes.add(hash);
     }
     setState(() => _importing = false);
     if (skipped > 0) {
-      _snack('$skipped logo(s) ignorada(s): nome igual ou contido em outra já '
-          'adicionada.');
+      _snack('$skipped logo(s) ignorada(s): a mesma logo (ou nome parecido) já '
+          'está no projeto.');
     }
     _schedulePreview();
+  }
+
+  /// Fast content fingerprint (FNV-1a) used to reject the exact same image even
+  /// when the file name is unreliable.
+  int _logoHash(Uint8List b) {
+    var h = 0x811c9dc5;
+    for (var i = 0; i < b.length; i++) {
+      h ^= b[i];
+      h = (h * 0x01000193) & 0xFFFFFFFF;
+    }
+    return h ^ b.length;
   }
 
   Future<Uint8List?> _platformFileBytes(PlatformFile f) async {
