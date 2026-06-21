@@ -597,8 +597,7 @@ class _HomePageState extends State<HomePage> {
       ),
       body: Column(
         children: [
-          if (_importing || _renderingPreview)
-            const LinearProgressIndicator(minHeight: 4),
+          if (_importing) const LinearProgressIndicator(minHeight: 4),
           if (_photoPaths.isNotEmpty && _hasAnyLogo) _previewBar(),
           Expanded(
             child: ListView(
@@ -801,16 +800,13 @@ class _HomePageState extends State<HomePage> {
             icon: const Icon(Icons.add_photo_alternate_outlined),
             label: const Text('Adicionar fotos'),
           ),
-          // Text-only status; the single progress bar lives at the top of the
-          // screen (under the app bar).
-          if (_importing || _renderingPreview) ...[
+          // Status only while importing photos (no indicator during preview).
+          if (_importing) ...[
             const SizedBox(height: 12),
             Text(
-              _importing
-                  ? (_importTotal > 0
-                      ? 'Carregando fotos… $_importDone de $_importTotal'
-                      : 'Carregando…')
-                  : 'Gerando pré-visualização…',
+              _importTotal > 0
+                  ? 'Carregando fotos… $_importDone de $_importTotal'
+                  : 'Carregando…',
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ],
