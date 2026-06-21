@@ -260,41 +260,74 @@ class _HomePageState extends State<HomePage> {
     final usedPhones = existing.expand((e) => e.phones).toSet();
     final usedTexts = existing.expand((e) => e.texts).toSet();
     var skipped = 0;
-    for (var i = 0; i < picked.length; i++) {
-      setState(() => _checkDone = i + 1);
-      await Future<void>.delayed(const Duration(milliseconds: 16)); // paint
-      final x = picked[i];
-      final bytes = await x.readAsBytes();
-      final name = _logoName(x.name);
-      final phash = await compute(perceptualHash, bytes); // isolate
-      final path = await _copyBytesToApp(bytes, 'logos');
-      final ocr = await _ocrLogo(path); // ML Kit (native, async)
-      final dupName =
-          name.isNotEmpty && usedNames.any((u) => _namesRelated(u, name));
-      final dupSimilar = usedPhashes
-          .any((p) => perceptualDistance(p, phash) <= _kSimilarThreshold);
-      final dupPhone = ocr.phones.any(usedPhones.contains);
-      final dupText = ocr.texts.any(usedTexts.contains);
-      if (dupName || dupSimilar || dupPhone || dupText) {
+    try {
+      for (var i = 0; i < picked.length; i++) {
+        setState(() => _checkDone = i + 1);
+        await Future<void>.delayed(const Duration(milliseconds: 16)); // paint
         try {
-          await File(path).delete();
-        } catch (_) {}
-        skipped++;
-        continue;
+          final x = picked[i];
+          final bytes = await x.readAsBytes();
+          final name = _logoName(x.name);
+          // Decode/downscale/hash off the main thread, with a safety timeout so
+          // a huge or odd image can never hang the whole flow.
+          final analysis = await compute(analyzeLogo, bytes).timeout(
+              const Duration(seconds: 20),
+              onTimeout: () => LogoAnalysis(Uint8List(0), 0));
+          final phash = analysis.phash;
+          final path = await _copyBytesToApp(bytes, 'logos');
+          // OCR the small flattened JPEG (fast); skip if it failed to produce.
+          var phones = <String>{};
+          var texts = <String>{};
+          if (analysis.ocrJpeg.isNotEmpty) {
+            final ocrPath = await _writeTemp(analysis.ocrJpeg);
+            final ocr = await _ocrLogo(ocrPath);
+            phones = ocr.phones;
+            texts = ocr.texts;
+            try {
+              await File(ocrPath).delete();
+            } catch (_) {}
+          }
+          final dupName =
+              name.isNotEmpty && usedNames.any((u) => _namesRelated(u, name));
+          final dupSimilar = phash != 0 &&
+              usedPhashes
+                  .any((p) => perceptualDistance(p, phash) <= _kSimilarThreshold);
+          final dupPhone = phones.any(usedPhones.contains);
+          final dupText = texts.any(usedTexts.contains);
+          if (dupName || dupSimilar || dupPhone || dupText) {
+            try {
+              await File(path).delete();
+            } catch (_) {}
+            skipped++;
+            continue;
+          }
+          target.add(
+              LogoItem(_nextLogoId++, path, x.name, bytes, phash, phones, texts));
+          usedNames.add(name);
+          if (phash != 0) usedPhashes.add(phash);
+          usedPhones.addAll(phones);
+          usedTexts.addAll(texts);
+        } catch (_) {
+          // One bad logo shouldn't abort the rest.
+        }
       }
-      target.add(LogoItem(
-          _nextLogoId++, path, x.name, bytes, phash, ocr.phones, ocr.texts));
-      usedNames.add(name);
-      usedPhashes.add(phash);
-      usedPhones.addAll(ocr.phones);
-      usedTexts.addAll(ocr.texts);
+    } finally {
+      if (mounted) setState(() => _checkingLogos = false);
     }
-    setState(() => _checkingLogos = false);
     if (skipped > 0) {
       _snack('$skipped logo(s) ignorada(s): parecida(s), ou mesmo telefone/nome '
           'de uma já no projeto.');
     }
     _schedulePreview();
+  }
+
+  /// Writes [bytes] to a temporary file (for ML Kit OCR which needs a path).
+  Future<String> _writeTemp(Uint8List bytes) async {
+    final dir = await getTemporaryDirectory();
+    final f = File(
+        '${dir.path}/ocr_${DateTime.now().microsecondsSinceEpoch}_${_fileSeq++}.jpg');
+    await f.writeAsBytes(bytes);
+    return f.path;
   }
 
   /// OCRs a logo and extracts phone numbers and normalized text lines (e.g. the
@@ -304,8 +337,9 @@ class _HomePageState extends State<HomePage> {
     final phones = <String>{};
     final texts = <String>{};
     try {
-      final recognized =
-          await _textRecognizer.processImage(InputImage.fromFilePath(path));
+      final recognized = await _textRecognizer
+          .processImage(InputImage.fromFilePath(path))
+          .timeout(const Duration(seconds: 12));
       for (final block in recognized.blocks) {
         for (final line in block.lines) {
           final raw = line.text;

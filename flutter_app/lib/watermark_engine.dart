@@ -216,3 +216,41 @@ int perceptualDistance(int a, int b) {
   }
   return count;
 }
+
+/// Result of analyzing a logo off the main thread: a downscaled JPEG (flattened
+/// on white) suitable for fast OCR, plus the perceptual hash.
+class LogoAnalysis {
+  LogoAnalysis(this.ocrJpeg, this.phash);
+  final Uint8List ocrJpeg;
+  final int phash;
+}
+
+/// Decodes [bytes] once, downscales (cap longest side at 1024) and flattens
+/// transparency onto white, then returns a small JPEG for OCR plus the dHash.
+/// Top-level so it can run in an isolate via [compute] (keeps the UI smooth).
+LogoAnalysis analyzeLogo(Uint8List bytes) {
+  final decoded = img.decodeImage(bytes);
+  if (decoded == null) return LogoAnalysis(Uint8List(0), 0);
+  var work = decoded;
+  final longest = decoded.width > decoded.height ? decoded.width : decoded.height;
+  if (longest > 1024) {
+    work = decoded.width >= decoded.height
+        ? img.copyResize(decoded, width: 1024)
+        : img.copyResize(decoded, height: 1024);
+  }
+  final flat = img.Image(width: work.width, height: work.height);
+  img.fill(flat, color: img.ColorRgb8(255, 255, 255));
+  img.compositeImage(flat, work);
+
+  final gray = img.copyResize(img.grayscale(flat), width: 9, height: 8);
+  var hash = 0;
+  var bit = 0;
+  for (var y = 0; y < 8; y++) {
+    for (var x = 0; x < 8; x++) {
+      if (gray.getPixel(x, y).r > gray.getPixel(x + 1, y).r) hash |= (1 << bit);
+      bit++;
+    }
+  }
+  final jpeg = Uint8List.fromList(img.encodeJpg(flat, quality: 85));
+  return LogoAnalysis(jpeg, hash);
+}
