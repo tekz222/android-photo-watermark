@@ -254,3 +254,23 @@ LogoAnalysis analyzeLogo(Uint8List bytes) {
   final jpeg = Uint8List.fromList(img.encodeJpg(flat, quality: 85));
   return LogoAnalysis(jpeg, hash);
 }
+
+/// Downscales an image for the live preview so re-rendering on every slider
+/// change is fast. [keepAlpha] true -> PNG (logos, preserves transparency);
+/// false -> JPEG (photos). Bakes EXIF orientation so the small copy is upright.
+/// Top-level so it runs in an isolate via [compute]. Args: (bytes, maxSide, keepAlpha).
+Uint8List downscaleImage((Uint8List, int, bool) args) {
+  final (bytes, maxSide, keepAlpha) = args;
+  var decoded = img.decodeImage(bytes);
+  if (decoded == null) return bytes;
+  decoded = img.bakeOrientation(decoded);
+  final longest =
+      decoded.width > decoded.height ? decoded.width : decoded.height;
+  final out = longest <= maxSide
+      ? decoded
+      : (decoded.width >= decoded.height
+          ? img.copyResize(decoded, width: maxSide)
+          : img.copyResize(decoded, height: maxSide));
+  return Uint8List.fromList(
+      keepAlpha ? img.encodePng(out) : img.encodeJpg(out, quality: 85));
+}

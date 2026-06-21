@@ -78,6 +78,9 @@ class _HomePageState extends State<HomePage> {
 
   // Preview state.
   final Map<String, Uint8List> _photoCache = {};
+  // Small downscaled copies used ONLY for the live preview (fast re-renders).
+  final Map<String, Uint8List> _previewPhoto = {}; // by photo path
+  final Map<int, Uint8List> _previewLogo = {}; // by logo id
   List<_Preview> _previews = [];
   int _previewToken = 0;
   Timer? _debounce;
@@ -337,13 +340,26 @@ class _HomePageState extends State<HomePage> {
       _previewTotal = photos.length;
       _renderingPreview = true;
     });
-    // Render every preview, then show them ALL AT ONCE (not one by one).
+    // Prepare small copies of the logos once (cached) so re-renders are cheap.
+    final allLogos = [
+      ..._bottomLogos,
+      ..._topLeftLogos,
+      if (_cornerLogo != null) _cornerLogo!,
+    ];
+    for (final e in allLogos) {
+      _previewLogo[e.id] ??=
+          await compute(downscaleImage, (e.bytes, 512, true));
+      if (token != _previewToken) return;
+    }
+    // Render every preview from the SMALL sources, then show all at once.
     final results = <_Preview>[];
     for (final path in photos) {
-      final bytes = _photoCache[path] ??= await File(path).readAsBytes();
+      final full = _photoCache[path] ??= await File(path).readAsBytes();
       if (token != _previewToken) return;
-      final out = await compute(
-          renderWatermark, _request(bytes, maxDim: 1280, quality: 88));
+      final small =
+          _previewPhoto[path] ??= await compute(downscaleImage, (full, 1280, false));
+      if (token != _previewToken) return;
+      final out = await compute(renderWatermark, _previewRequest(small));
       if (token != _previewToken) return;
       final codec = await ui.instantiateImageCodec(out);
       final frame = await codec.getNextFrame();
@@ -360,6 +376,29 @@ class _HomePageState extends State<HomePage> {
         _renderingPreview = false;
       });
     }
+  }
+
+  /// Watermark request for the live preview, using the small cached photo and
+  /// logo copies (the saved image still uses the full-resolution originals).
+  WatermarkRequest _previewRequest(Uint8List photoSmall) {
+    Uint8List logo(LogoItem e) => _previewLogo[e.id] ?? e.bytes;
+    return WatermarkRequest(
+      photoBytes: photoSmall,
+      bottomLogos: _bottomLogos.map(logo).toList(),
+      topLeftLogos: _topLeftLogos.map(logo).toList(),
+      cornerLogo: _cornerLogo == null ? null : logo(_cornerLogo!),
+      bottomHeight: _logoSize / 100,
+      bottomMargin: _bottomMargin / 100,
+      bottomLeft: _leftMargin / 100,
+      topLeftHeight: _logoSize / 100,
+      topLeftTop: _topMargin / 100,
+      topLeftLeft: _leftMargin / 100,
+      cornerHeight: _cornerHeight / 100,
+      cornerMargin: _cornerMargin / 100,
+      rowOpacity: _logoOpacity / 100,
+      centered: _centered,
+      quality: 85,
+    );
   }
 
   WatermarkRequest _request(Uint8List photoBytes,
@@ -1175,6 +1214,8 @@ class _HomePageState extends State<HomePage> {
       _checkingLogos = false;
       _cancelRequested = false;
       _photoCache.clear();
+      _previewPhoto.clear();
+      _previewLogo.clear();
       _logoSize = 22;
       _leftMargin = 1;
       _logoOpacity = 90;
