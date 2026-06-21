@@ -22,12 +22,18 @@ dependencies:
 dev_dependencies:
   flutter_lints: ^4.0.0
   flutter_launcher_icons: ^0.14.1
+  flutter_native_splash: ^2.4.1
 
 flutter:
   uses-material-design: true
   assets:
     - assets/default_corner_logo.png
     - assets/appbar_logo.png
+
+# Dark launch screen (no white flash before the app opens).
+flutter_native_splash:
+  color: "#121212"
+  color_dark: "#121212"
 
 flutter_launcher_icons:
   android: true

@@ -63,6 +63,9 @@ jobs:
       - name: Generate launcher icons
         run: dart run flutter_launcher_icons
 
+      - name: Generate dark launch screen
+        run: dart run flutter_native_splash:create
+
       - name: Build unsigned iOS app
         run: |
           # Builds the app bundle. The final code-sign/export step may complain
