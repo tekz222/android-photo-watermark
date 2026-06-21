@@ -799,12 +799,13 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  /// Renders one watermarked photo at high resolution (for the zoom viewer).
+  /// Renders one watermarked photo at FULL resolution (same as the saved file)
+  /// so logos stay sharp when zoomed in the viewer.
   Future<Uint8List?> _renderFull(String path) async {
     try {
       final bytes = _photoCache[path] ??= await File(path).readAsBytes();
       return await compute(
-          renderWatermark, _request(bytes, maxDim: 2048, quality: 95));
+          renderWatermark, _request(bytes, quality: 95));
     } catch (_) {
       return null;
     }
