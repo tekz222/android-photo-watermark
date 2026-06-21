@@ -237,59 +237,29 @@ class _HomePageState extends State<HomePage> {
     // Logos come from the photo gallery (same as the photos).
     final picked = await _picker.pickMultiImage();
     if (picked.isEmpty) return;
+    // DIAGNOSTIC: no checks at all — just read + copy + add, to confirm whether
+    // the freeze comes from the per-logo verification (compute/decoding).
     setState(() {
       _checkingLogos = true;
       _checkDone = 0;
       _checkTotal = picked.length;
     });
-    // De-dup against logos already in the rows (and the main logo) by visual
-    // SIMILARITY (perceptual hash) and by file name. Heavy work runs off the
-    // main thread (compute), so the UI stays responsive and shows progress.
-    final existing = [
-      ..._bottomLogos,
-      ..._topLeftLogos,
-      if (_cornerLogo != null) _cornerLogo!,
-    ];
-    final usedNames = existing.map((e) => _logoName(e.sourceKey)).toList();
-    final usedPhashes = existing.map((e) => e.phash).toList();
-    var skipped = 0;
     try {
       for (var i = 0; i < picked.length; i++) {
         setState(() => _checkDone = i + 1);
-        await Future<void>.delayed(const Duration(milliseconds: 16)); // paint
+        await Future<void>.delayed(const Duration(milliseconds: 16));
         try {
           final x = picked[i];
           final bytes = await x.readAsBytes();
-          final name = _logoName(x.name);
-          // Decode/downscale/hash off the main thread, with a safety timeout so
-          // a huge or odd image can never hang the whole flow.
-          final analysis = await compute(analyzeLogo, bytes).timeout(
-              const Duration(seconds: 20),
-              onTimeout: () => LogoAnalysis(Uint8List(0), 0));
-          final phash = analysis.phash;
-          final dupName =
-              name.isNotEmpty && usedNames.any((u) => _namesRelated(u, name));
-          final dupSimilar = phash != 0 &&
-              usedPhashes
-                  .any((p) => perceptualDistance(p, phash) <= _kSimilarThreshold);
-          if (dupName || dupSimilar) {
-            skipped++;
-            continue;
-          }
           final path = await _copyBytesToApp(bytes, 'logos');
-          target.add(LogoItem(_nextLogoId++, path, x.name, bytes, phash,
+          target.add(LogoItem(_nextLogoId++, path, x.name, bytes, 0,
               const <String>{}, const <String>{}));
-          usedNames.add(name);
-          if (phash != 0) usedPhashes.add(phash);
         } catch (_) {
           // One bad logo shouldn't abort the rest.
         }
       }
     } finally {
       if (mounted) setState(() => _checkingLogos = false);
-    }
-    if (skipped > 0) {
-      _snack('$skipped logo(s) ignorada(s): parecida(s) com uma já no projeto.');
     }
     _schedulePreview();
   }
