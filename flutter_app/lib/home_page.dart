@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:gal/gal.dart';
+import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -44,6 +45,8 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   final ImagePicker _picker = ImagePicker();
+  final TextRecognizer _textRecognizer =
+      TextRecognizer(script: TextRecognitionScript.latin);
 
   final List<String> _photoPaths = []; // internal copies (survive restarts)
   final List<LogoItem> _bottomLogos = [];
@@ -110,6 +113,7 @@ class _HomePageState extends State<HomePage> {
   @override
   void dispose() {
     _debounce?.cancel();
+    _textRecognizer.close();
     super.dispose();
   }
 
@@ -152,9 +156,10 @@ class _HomePageState extends State<HomePage> {
     final bytes = data.buffer.asUint8List();
     final path = await _copyBytesToApp(bytes, 'logos');
     final phash = await compute(perceptualHash, bytes);
+    final ocr = await _ocrLogo(path);
     if (!mounted) return;
-    setState(() => _cornerLogo =
-        LogoItem(_nextLogoId++, path, 'asset:default_corner', bytes, phash));
+    setState(() => _cornerLogo = LogoItem(_nextLogoId++, path,
+        'asset:default_corner', bytes, phash, ocr.phones, ocr.texts));
   }
 
   // ---- Picking ----
@@ -245,32 +250,75 @@ class _HomePageState extends State<HomePage> {
     final usedNames = existing.map((e) => _logoName(e.sourceKey)).toList();
     final usedHashes = existing.map((e) => _logoHash(e.bytes)).toList();
     final usedPhashes = existing.map((e) => e.phash).toList();
+    final usedPhones = existing.expand((e) => e.phones).toSet();
+    final usedTexts = existing.expand((e) => e.texts).toSet();
     var skipped = 0;
     for (final x in picked) {
       final bytes = await x.readAsBytes();
       final name = _logoName(x.name);
       final hash = _logoHash(bytes);
       final phash = await compute(perceptualHash, bytes);
+      final path = await _copyBytesToApp(bytes, 'logos');
+      final ocr = await _ocrLogo(path); // OCR needs a file path
       final dupName =
           name.isNotEmpty && usedNames.any((u) => _namesRelated(u, name));
       final dupContent = usedHashes.contains(hash);
       final dupSimilar = usedPhashes
           .any((p) => perceptualDistance(p, phash) <= _kSimilarThreshold);
-      if (dupName || dupContent || dupSimilar) {
+      final dupPhone = ocr.phones.any(usedPhones.contains);
+      final dupText = ocr.texts.any(usedTexts.contains);
+      if (dupName || dupContent || dupSimilar || dupPhone || dupText) {
+        try {
+          await File(path).delete();
+        } catch (_) {}
         skipped++;
         continue;
       }
-      final path = await _copyBytesToApp(bytes, 'logos');
-      target.add(LogoItem(_nextLogoId++, path, x.name, bytes, phash));
+      target.add(LogoItem(
+          _nextLogoId++, path, x.name, bytes, phash, ocr.phones, ocr.texts));
       usedNames.add(name);
       usedHashes.add(hash);
       usedPhashes.add(phash);
+      usedPhones.addAll(ocr.phones);
+      usedTexts.addAll(ocr.texts);
     }
     setState(() => _importing = false);
     if (skipped > 0) {
-      _snack('$skipped logo(s) ignorada(s): parecida(s) com uma já no projeto.');
+      _snack('$skipped logo(s) ignorada(s): parecida(s), ou mesmo telefone/nome '
+          'de uma já no projeto.');
     }
     _schedulePreview();
+  }
+
+  /// OCRs a logo and extracts phone numbers and normalized text lines (e.g. the
+  /// company name), used to block logos of the same business.
+  Future<({Set<String> phones, Set<String> texts})> _ocrLogo(
+      String path) async {
+    final phones = <String>{};
+    final texts = <String>{};
+    try {
+      final recognized =
+          await _textRecognizer.processImage(InputImage.fromFilePath(path));
+      for (final block in recognized.blocks) {
+        for (final line in block.lines) {
+          final raw = line.text;
+          for (final m in RegExp(r'\d[\d\s().+\-]{6,}\d').allMatches(raw)) {
+            final d = m.group(0)!.replaceAll(RegExp(r'\D'), '');
+            if (d.length >= 8 && d.length <= 13) phones.add(d);
+          }
+          final norm = raw
+              .toUpperCase()
+              .replaceAll(RegExp(r'[^A-Z0-9 ]'), ' ')
+              .replaceAll(RegExp(r'\s+'), ' ')
+              .trim();
+          if (norm.replaceAll(' ', '').length >= 6 &&
+              RegExp(r'[A-Z]').hasMatch(norm)) {
+            texts.add(norm);
+          }
+        }
+      }
+    } catch (_) {}
+    return (phones: phones, texts: texts);
   }
 
   /// Fast content fingerprint (FNV-1a) used to reject the exact same image even
@@ -291,8 +339,10 @@ class _HomePageState extends State<HomePage> {
     setState(() => _importing = true);
     final path = await _copyBytesToApp(bytes, 'logos');
     final phash = await compute(perceptualHash, bytes);
+    final ocr = await _ocrLogo(path);
     setState(() {
-      _cornerLogo = LogoItem(_nextLogoId++, path, x.name, bytes, phash);
+      _cornerLogo = LogoItem(
+          _nextLogoId++, path, x.name, bytes, phash, ocr.phones, ocr.texts);
       _importing = false;
     });
     _schedulePreview();

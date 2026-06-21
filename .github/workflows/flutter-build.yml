@@ -44,6 +44,20 @@ jobs:
           /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string 'JCV Watermarker'" "$PLIST" 2>/dev/null \
             || /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName 'JCV Watermarker'" "$PLIST"
 
+      - name: Set iOS deployment target to 15.5 (required by ML Kit)
+        run: |
+          # Podfile: uncomment/replace the platform line.
+          if grep -q "platform :ios" ios/Podfile; then
+            sed -i '' "s/^# *platform :ios.*/platform :ios, '15.5'/" ios/Podfile
+            sed -i '' "s/^platform :ios.*/platform :ios, '15.5'/" ios/Podfile
+          else
+            printf "platform :ios, '15.5'\n%s" "$(cat ios/Podfile)" > ios/Podfile
+          fi
+          # Runner project: bump deployment target everywhere.
+          sed -i '' "s/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 15.5;/g" \
+            ios/Runner.xcodeproj/project.pbxproj
+          echo "----- Podfile head -----"; head -5 ios/Podfile
+
       - run: flutter pub get
 
       - name: Generate launcher icons
