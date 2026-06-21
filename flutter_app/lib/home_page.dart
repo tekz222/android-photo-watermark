@@ -231,7 +231,7 @@ class _HomePageState extends State<HomePage> {
 
   // Max perceptual-hash (dHash) distance for two logos to count as "similar".
   // 0 = identical; higher = more tolerant (blocks more). 64 bits total.
-  static const _kSimilarThreshold = 12;
+  static const _kSimilarThreshold = 14;
 
   Future<void> _pickLogos(List<LogoItem> target) async {
     // Logos come from the photo gallery (same as the photos).
@@ -290,28 +290,34 @@ class _HomePageState extends State<HomePage> {
     _schedulePreview();
   }
 
-  /// Light visual fingerprint (dHash) using the OS image decoder to make a tiny
-  /// 9x8 thumbnail off the main thread — no heavy pure-Dart decode, low memory.
+  /// Light visual fingerprint (dHash) using the OS image decoder. Decodes a tiny
+  /// thumbnail (≤32px, aspect-preserved) off the main thread, then samples an
+  /// 8x9 grid proportionally — works for any aspect ratio, low memory.
   Future<int> _logoFingerprint(Uint8List bytes) async {
     try {
       final codec = await ui.instantiateImageCodec(bytes,
-          targetWidth: 9, targetHeight: 8);
+          targetWidth: 32, targetHeight: 32);
       final frame = await codec.getNextFrame();
-      final data =
-          await frame.image.toByteData(format: ui.ImageByteFormat.rawRgba);
-      frame.image.dispose();
+      final image = frame.image;
+      final w = image.width;
+      final h = image.height;
+      final data = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+      image.dispose();
       codec.dispose();
-      if (data == null) return 0;
-      final px = data.buffer.asUint8List(); // 9*8*4 RGBA
-      int lum(int x, int y) {
-        final i = (y * 9 + x) * 4;
-        return px[i] * 30 + px[i + 1] * 59 + px[i + 2] * 11;
+      if (data == null || w < 2 || h < 2) return 0;
+      final px = data.buffer.asUint8List();
+      double lum(int gx, int gy) {
+        final x = (gx * (w - 1) / 8).round();
+        final y = (gy * (h - 1) / 7).round();
+        final i = (y * w + x) * 4;
+        return px[i] * 0.30 + px[i + 1] * 0.59 + px[i + 2] * 0.11;
       }
+
       var hash = 0;
       var bit = 0;
-      for (var y = 0; y < 8; y++) {
-        for (var x = 0; x < 8; x++) {
-          if (lum(x, y) > lum(x + 1, y)) hash |= (1 << bit);
+      for (var gy = 0; gy < 8; gy++) {
+        for (var gx = 0; gx < 8; gx++) {
+          if (lum(gx, gy) > lum(gx + 1, gy)) hash |= (1 << bit);
           bit++;
         }
       }
@@ -778,7 +784,31 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _openFullscreen(int index) {
-    _openImagesFullscreen(_previews.map((e) => e.bytes).toList(), index);
+    // Show ALL preview photos (so you can swipe to ones not rendered yet) and
+    // render each at high resolution on demand, so zoom stays sharp.
+    final paths = _photoPaths.take(kMaxPreview).toList();
+    if (paths.isEmpty) return;
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        fullscreenDialog: true,
+        builder: (_) => _FullscreenViewer(
+          initialPage: index,
+          itemCount: paths.length,
+          loader: (i) => _renderFull(paths[i]),
+        ),
+      ),
+    );
+  }
+
+  /// Renders one watermarked photo at high resolution (for the zoom viewer).
+  Future<Uint8List?> _renderFull(String path) async {
+    try {
+      final bytes = _photoCache[path] ??= await File(path).readAsBytes();
+      return await compute(
+          renderWatermark, _request(bytes, maxDim: 2048, quality: 95));
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Opens any list of image bytes (e.g. logos) in the zoomable fullscreen
@@ -788,7 +818,11 @@ class _HomePageState extends State<HomePage> {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         fullscreenDialog: true,
-        builder: (_) => _FullscreenViewer(initialPage: index, images: images),
+        builder: (_) => _FullscreenViewer(
+          initialPage: index,
+          itemCount: images.length,
+          loader: (i) async => images[i],
+        ),
       ),
     );
   }
@@ -1377,14 +1411,19 @@ class _PlacementPainter extends CustomPainter {
       old.placement != placement || old.color != color;
 }
 
-/// Full-screen, swipeable image viewer over the (pre-rendered) images. No
-/// spinner — the images are already prepared. InteractiveViewer keeps panning
-/// within the image bounds.
+/// Full-screen, swipeable image viewer. Each page is produced on demand by
+/// [loader] (e.g. a high-res render), so you can swipe across all items even
+/// before they're ready, and zoom stays sharp. Cached once loaded.
 class _FullscreenViewer extends StatefulWidget {
-  const _FullscreenViewer({required this.initialPage, required this.images});
+  const _FullscreenViewer({
+    required this.initialPage,
+    required this.itemCount,
+    required this.loader,
+  });
 
   final int initialPage;
-  final List<Uint8List> images;
+  final int itemCount;
+  final Future<Uint8List?> Function(int) loader;
 
   @override
   State<_FullscreenViewer> createState() => _FullscreenViewerState();
@@ -1392,17 +1431,34 @@ class _FullscreenViewer extends StatefulWidget {
 
 class _FullscreenViewerState extends State<_FullscreenViewer> {
   late final PageController _controller;
+  final Map<int, Uint8List> _cache = {};
+  final Set<int> _loading = {};
 
   @override
   void initState() {
     super.initState();
     _controller = PageController(initialPage: widget.initialPage);
+    _load(widget.initialPage);
+    _load(widget.initialPage + 1);
   }
 
   @override
   void dispose() {
     _controller.dispose();
     super.dispose();
+  }
+
+  Future<void> _load(int i) async {
+    if (i < 0 || i >= widget.itemCount) return;
+    if (_cache.containsKey(i) || _loading.contains(i)) return;
+    _loading.add(i);
+    try {
+      final bytes = await widget.loader(i);
+      if (mounted && bytes != null) setState(() => _cache[i] = bytes);
+    } catch (_) {
+    } finally {
+      _loading.remove(i);
+    }
   }
 
   @override
@@ -1413,13 +1469,25 @@ class _FullscreenViewerState extends State<_FullscreenViewer> {
         children: [
           PageView.builder(
             controller: _controller,
-            itemCount: widget.images.length,
-            itemBuilder: (c, i) => InteractiveViewer(
-              maxScale: 6,
-              child: Center(
-                child: Image.memory(widget.images[i], fit: BoxFit.contain),
-              ),
-            ),
+            itemCount: widget.itemCount,
+            onPageChanged: (i) {
+              _load(i);
+              _load(i + 1);
+              _load(i - 1);
+            },
+            itemBuilder: (c, i) {
+              final bytes = _cache[i];
+              if (bytes == null) {
+                _load(i);
+                return const Center(child: CircularProgressIndicator());
+              }
+              return InteractiveViewer(
+                maxScale: 6,
+                child: Center(
+                  child: Image.memory(bytes, fit: BoxFit.contain),
+                ),
+              );
+            },
           ),
           SafeArea(
             child: Align(
