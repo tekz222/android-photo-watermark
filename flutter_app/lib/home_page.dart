@@ -60,6 +60,9 @@ class _HomePageState extends State<HomePage> {
   int _importTotal = 0; // photos being copied in the current import
   int _previewTotal = 0; // photos expected in the preview being rendered
   bool _renderingPreview = false; // a preview render is in progress
+  bool _checkingLogos = false; // logos being checked/added (OCR + similarity)
+  int _checkDone = 0;
+  int _checkTotal = 0;
 
   // Adjustments (percent of the photo's shortest side).
   // Size and left margin are SHARED by the bottom and top rows.
@@ -238,36 +241,41 @@ class _HomePageState extends State<HomePage> {
     // Logos come from the photo gallery (same as the photos).
     final picked = await _picker.pickMultiImage();
     if (picked.isEmpty) return;
-    setState(() => _importing = true);
+    setState(() {
+      _checkingLogos = true;
+      _checkDone = 0;
+      _checkTotal = picked.length;
+    });
     // De-dup against logos already in the rows (and the main logo): by visual
-    // SIMILARITY (perceptual hash — blocks look-alike variants), by exact image
-    // content, and by file name when available.
+    // SIMILARITY (perceptual hash), by file name, and by OCR'd phone/company
+    // name. All heavy work runs off the main thread (compute / ML Kit), so the
+    // UI stays responsive and shows "Verificando logo X de N".
     final existing = [
       ..._bottomLogos,
       ..._topLeftLogos,
       if (_cornerLogo != null) _cornerLogo!,
     ];
     final usedNames = existing.map((e) => _logoName(e.sourceKey)).toList();
-    final usedHashes = existing.map((e) => _logoHash(e.bytes)).toList();
     final usedPhashes = existing.map((e) => e.phash).toList();
     final usedPhones = existing.expand((e) => e.phones).toSet();
     final usedTexts = existing.expand((e) => e.texts).toSet();
     var skipped = 0;
-    for (final x in picked) {
+    for (var i = 0; i < picked.length; i++) {
+      setState(() => _checkDone = i + 1);
+      await Future<void>.delayed(const Duration(milliseconds: 16)); // paint
+      final x = picked[i];
       final bytes = await x.readAsBytes();
       final name = _logoName(x.name);
-      final hash = _logoHash(bytes);
-      final phash = await compute(perceptualHash, bytes);
+      final phash = await compute(perceptualHash, bytes); // isolate
       final path = await _copyBytesToApp(bytes, 'logos');
-      final ocr = await _ocrLogo(path); // OCR needs a file path
+      final ocr = await _ocrLogo(path); // ML Kit (native, async)
       final dupName =
           name.isNotEmpty && usedNames.any((u) => _namesRelated(u, name));
-      final dupContent = usedHashes.contains(hash);
       final dupSimilar = usedPhashes
           .any((p) => perceptualDistance(p, phash) <= _kSimilarThreshold);
       final dupPhone = ocr.phones.any(usedPhones.contains);
       final dupText = ocr.texts.any(usedTexts.contains);
-      if (dupName || dupContent || dupSimilar || dupPhone || dupText) {
+      if (dupName || dupSimilar || dupPhone || dupText) {
         try {
           await File(path).delete();
         } catch (_) {}
@@ -277,12 +285,11 @@ class _HomePageState extends State<HomePage> {
       target.add(LogoItem(
           _nextLogoId++, path, x.name, bytes, phash, ocr.phones, ocr.texts));
       usedNames.add(name);
-      usedHashes.add(hash);
       usedPhashes.add(phash);
       usedPhones.addAll(ocr.phones);
       usedTexts.addAll(ocr.texts);
     }
-    setState(() => _importing = false);
+    setState(() => _checkingLogos = false);
     if (skipped > 0) {
       _snack('$skipped logo(s) ignorada(s): parecida(s), ou mesmo telefone/nome '
           'de uma já no projeto.');
@@ -319,17 +326,6 @@ class _HomePageState extends State<HomePage> {
       }
     } catch (_) {}
     return (phones: phones, texts: texts);
-  }
-
-  /// Fast content fingerprint (FNV-1a) used to reject the exact same image even
-  /// when the file name is unreliable.
-  int _logoHash(Uint8List b) {
-    var h = 0x811c9dc5;
-    for (var i = 0; i < b.length; i++) {
-      h ^= b[i];
-      h = (h * 0x01000193) & 0xFFFFFFFF;
-    }
-    return h ^ b.length;
   }
 
   Future<void> _pickCornerLogo() async {
@@ -598,6 +594,22 @@ class _HomePageState extends State<HomePage> {
       body: Column(
         children: [
           if (_importing) const LinearProgressIndicator(minHeight: 4),
+          if (_checkingLogos) ...[
+            LinearProgressIndicator(
+              minHeight: 4,
+              value: _checkTotal > 0 ? _checkDone / _checkTotal : null,
+            ),
+            Container(
+              width: double.infinity,
+              color: Theme.of(context).colorScheme.secondaryContainer,
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Text(
+                'Verificando logo $_checkDone de $_checkTotal…',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ),
+          ],
           if (_photoPaths.isNotEmpty && _hasAnyLogo) _previewBar(),
           Expanded(
             child: ListView(
@@ -1120,6 +1132,7 @@ class _HomePageState extends State<HomePage> {
       _previewTotal = 0;
       _renderingPreview = false;
       _importing = false;
+      _checkingLogos = false;
       _photoCache.clear();
       _logoSize = 22;
       _leftMargin = 1;
