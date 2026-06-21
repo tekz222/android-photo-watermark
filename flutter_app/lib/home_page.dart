@@ -154,10 +154,10 @@ class _HomePageState extends State<HomePage> {
     final data = await rootBundle.load('assets/default_corner_logo.png');
     final bytes = data.buffer.asUint8List();
     final path = await _copyBytesToApp(bytes, 'logos');
-    final analysis = await compute(analyzeLogo, bytes);
+    final fp = await _logoFingerprint(bytes);
     if (!mounted) return;
     setState(() => _cornerLogo = LogoItem(_nextLogoId++, path,
-        'asset:default_corner', bytes, analysis.phash,
+        'asset:default_corner', bytes, fp,
         const <String>{}, const <String>{}));
   }
 
@@ -237,13 +237,23 @@ class _HomePageState extends State<HomePage> {
     // Logos come from the photo gallery (same as the photos).
     final picked = await _picker.pickMultiImage();
     if (picked.isEmpty) return;
-    // DIAGNOSTIC: no checks at all — just read + copy + add, to confirm whether
-    // the freeze comes from the per-logo verification (compute/decoding).
     setState(() {
       _checkingLogos = true;
       _checkDone = 0;
       _checkTotal = picked.length;
     });
+    // De-dup against logos already in the rows AND the main logo, by visual
+    // fingerprint (so the same logo can't be in both rows) and by file name.
+    // The fingerprint decodes a tiny 9x8 thumbnail via the OS decoder (off the
+    // main thread, low memory) — no heavy pure-Dart decode, so it won't freeze.
+    final existing = [
+      ..._bottomLogos,
+      ..._topLeftLogos,
+      if (_cornerLogo != null) _cornerLogo!,
+    ];
+    final usedNames = existing.map((e) => _logoName(e.sourceKey)).toList();
+    final usedFps = existing.map((e) => e.phash).where((h) => h != 0).toList();
+    var skipped = 0;
     try {
       for (var i = 0; i < picked.length; i++) {
         setState(() => _checkDone = i + 1);
@@ -251,9 +261,21 @@ class _HomePageState extends State<HomePage> {
         try {
           final x = picked[i];
           final bytes = await x.readAsBytes();
+          final name = _logoName(x.name);
+          final fp = await _logoFingerprint(bytes);
+          final dupName =
+              name.isNotEmpty && usedNames.any((u) => _namesRelated(u, name));
+          final dupVisual = fp != 0 &&
+              usedFps.any((p) => perceptualDistance(p, fp) <= _kSimilarThreshold);
+          if (dupName || dupVisual) {
+            skipped++;
+            continue;
+          }
           final path = await _copyBytesToApp(bytes, 'logos');
-          target.add(LogoItem(_nextLogoId++, path, x.name, bytes, 0,
+          target.add(LogoItem(_nextLogoId++, path, x.name, bytes, fp,
               const <String>{}, const <String>{}));
+          usedNames.add(name);
+          if (fp != 0) usedFps.add(fp);
         } catch (_) {
           // One bad logo shouldn't abort the rest.
         }
@@ -261,7 +283,42 @@ class _HomePageState extends State<HomePage> {
     } finally {
       if (mounted) setState(() => _checkingLogos = false);
     }
+    if (skipped > 0) {
+      _snack('$skipped logo(s) ignorada(s): igual ou parecida com uma já no '
+          'projeto.');
+    }
     _schedulePreview();
+  }
+
+  /// Light visual fingerprint (dHash) using the OS image decoder to make a tiny
+  /// 9x8 thumbnail off the main thread — no heavy pure-Dart decode, low memory.
+  Future<int> _logoFingerprint(Uint8List bytes) async {
+    try {
+      final codec = await ui.instantiateImageCodec(bytes,
+          targetWidth: 9, targetHeight: 8);
+      final frame = await codec.getNextFrame();
+      final data =
+          await frame.image.toByteData(format: ui.ImageByteFormat.rawRgba);
+      frame.image.dispose();
+      codec.dispose();
+      if (data == null) return 0;
+      final px = data.buffer.asUint8List(); // 9*8*4 RGBA
+      int lum(int x, int y) {
+        final i = (y * 9 + x) * 4;
+        return px[i] * 30 + px[i + 1] * 59 + px[i + 2] * 11;
+      }
+      var hash = 0;
+      var bit = 0;
+      for (var y = 0; y < 8; y++) {
+        for (var x = 0; x < 8; x++) {
+          if (lum(x, y) > lum(x + 1, y)) hash |= (1 << bit);
+          bit++;
+        }
+      }
+      return hash;
+    } catch (_) {
+      return 0;
+    }
   }
 
   Future<void> _pickCornerLogo() async {
@@ -270,9 +327,9 @@ class _HomePageState extends State<HomePage> {
     final bytes = await x.readAsBytes();
     setState(() => _importing = true);
     final path = await _copyBytesToApp(bytes, 'logos');
-    final analysis = await compute(analyzeLogo, bytes);
+    final fp = await _logoFingerprint(bytes);
     setState(() {
-      _cornerLogo = LogoItem(_nextLogoId++, path, x.name, bytes, analysis.phash,
+      _cornerLogo = LogoItem(_nextLogoId++, path, x.name, bytes, fp,
           const <String>{}, const <String>{});
       _importing = false;
     });
