@@ -154,7 +154,7 @@ class _HomePageState extends State<HomePage> {
     final data = await rootBundle.load('assets/default_corner_logo.png');
     final bytes = data.buffer.asUint8List();
     final path = await _copyBytesToApp(bytes, 'logos');
-    final fp = await _logoFingerprint(bytes);
+    final fp = _imageSig(bytes);
     if (!mounted) return;
     setState(() => _cornerLogo = LogoItem(_nextLogoId++, path,
         'asset:default_corner', bytes, fp,
@@ -229,10 +229,6 @@ class _HomePageState extends State<HomePage> {
       b.isNotEmpty &&
       (a == b || a.contains(b) || b.contains(a));
 
-  // Max perceptual-hash (dHash) distance for two logos to count as "similar".
-  // 0 = identical; higher = more tolerant (blocks more). 64 bits total.
-  static const _kSimilarThreshold = 14;
-
   Future<void> _pickLogos(List<LogoItem> target) async {
     // Logos come from the photo gallery (same as the photos).
     final picked = await _picker.pickMultiImage();
@@ -242,17 +238,16 @@ class _HomePageState extends State<HomePage> {
       _checkDone = 0;
       _checkTotal = picked.length;
     });
-    // De-dup against logos already in the rows AND the main logo, by visual
-    // fingerprint (so the same logo can't be in both rows) and by file name.
-    // The fingerprint decodes a tiny 9x8 thumbnail via the OS decoder (off the
-    // main thread, low memory) — no heavy pure-Dart decode, so it won't freeze.
+    // De-dup against logos already in the rows AND the main logo, by file name
+    // and by EXACT image (a cheap byte signature — no decoding, so it can't
+    // freeze). No visual/AI similarity, no OCR.
     final existing = [
       ..._bottomLogos,
       ..._topLeftLogos,
       if (_cornerLogo != null) _cornerLogo!,
     ];
     final usedNames = existing.map((e) => _logoName(e.sourceKey)).toList();
-    final usedFps = existing.map((e) => e.phash).where((h) => h != 0).toList();
+    final usedSigs = existing.map((e) => e.phash).toSet();
     var skipped = 0;
     try {
       for (var i = 0; i < picked.length; i++) {
@@ -262,20 +257,19 @@ class _HomePageState extends State<HomePage> {
           final x = picked[i];
           final bytes = await x.readAsBytes();
           final name = _logoName(x.name);
-          final fp = await _logoFingerprint(bytes);
+          final sig = _imageSig(bytes);
           final dupName =
               name.isNotEmpty && usedNames.any((u) => _namesRelated(u, name));
-          final dupVisual = fp != 0 &&
-              usedFps.any((p) => perceptualDistance(p, fp) <= _kSimilarThreshold);
-          if (dupName || dupVisual) {
+          final dupSame = usedSigs.contains(sig);
+          if (dupName || dupSame) {
             skipped++;
             continue;
           }
           final path = await _copyBytesToApp(bytes, 'logos');
-          target.add(LogoItem(_nextLogoId++, path, x.name, bytes, fp,
+          target.add(LogoItem(_nextLogoId++, path, x.name, bytes, sig,
               const <String>{}, const <String>{}));
           usedNames.add(name);
-          if (fp != 0) usedFps.add(fp);
+          usedSigs.add(sig);
         } catch (_) {
           // One bad logo shouldn't abort the rest.
         }
@@ -284,47 +278,24 @@ class _HomePageState extends State<HomePage> {
       if (mounted) setState(() => _checkingLogos = false);
     }
     if (skipped > 0) {
-      _snack('$skipped logo(s) ignorada(s): igual ou parecida com uma já no '
-          'projeto.');
+      _snack('$skipped logo(s) ignorada(s): mesma imagem ou mesmo nome de uma '
+          'já no projeto.');
     }
     _schedulePreview();
   }
 
-  /// Light visual fingerprint (dHash) using the OS image decoder. Decodes a tiny
-  /// thumbnail (≤32px, aspect-preserved) off the main thread, then samples an
-  /// 8x9 grid proportionally — works for any aspect ratio, low memory.
-  Future<int> _logoFingerprint(Uint8List bytes) async {
-    try {
-      final codec = await ui.instantiateImageCodec(bytes,
-          targetWidth: 32, targetHeight: 32);
-      final frame = await codec.getNextFrame();
-      final image = frame.image;
-      final w = image.width;
-      final h = image.height;
-      final data = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
-      image.dispose();
-      codec.dispose();
-      if (data == null || w < 2 || h < 2) return 0;
-      final px = data.buffer.asUint8List();
-      double lum(int gx, int gy) {
-        final x = (gx * (w - 1) / 8).round();
-        final y = (gy * (h - 1) / 7).round();
-        final i = (y * w + x) * 4;
-        return px[i] * 0.30 + px[i + 1] * 0.59 + px[i + 2] * 0.11;
+  /// Cheap identity signature of the raw image bytes (length + ~64 sampled
+  /// bytes). No decoding, so it never blocks — identifies the EXACT same image.
+  int _imageSig(Uint8List b) {
+    final n = b.length;
+    var h = n & 0x7fffffff;
+    if (n > 0) {
+      final step = (n ~/ 64) < 1 ? 1 : (n ~/ 64);
+      for (var i = 0; i < n; i += step) {
+        h = (h * 31 + b[i]) & 0x7fffffff;
       }
-
-      var hash = 0;
-      var bit = 0;
-      for (var gy = 0; gy < 8; gy++) {
-        for (var gx = 0; gx < 8; gx++) {
-          if (lum(gx, gy) > lum(gx + 1, gy)) hash |= (1 << bit);
-          bit++;
-        }
-      }
-      return hash;
-    } catch (_) {
-      return 0;
     }
+    return h;
   }
 
   Future<void> _pickCornerLogo() async {
@@ -333,7 +304,7 @@ class _HomePageState extends State<HomePage> {
     final bytes = await x.readAsBytes();
     setState(() => _importing = true);
     final path = await _copyBytesToApp(bytes, 'logos');
-    final fp = await _logoFingerprint(bytes);
+    final fp = _imageSig(bytes);
     setState(() {
       _cornerLogo = LogoItem(_nextLogoId++, path, x.name, bytes, fp,
           const <String>{}, const <String>{});
@@ -788,12 +759,18 @@ class _HomePageState extends State<HomePage> {
     // render each at high resolution on demand, so zoom stays sharp.
     final paths = _photoPaths.take(kMaxPreview).toList();
     if (paths.isEmpty) return;
+    // Already-rendered low-res previews show instantly; hi-res loads to replace.
+    final placeholders = [
+      for (var i = 0; i < paths.length; i++)
+        i < _previews.length ? _previews[i].bytes : null,
+    ];
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         fullscreenDialog: true,
         builder: (_) => _FullscreenViewer(
           initialPage: index,
           itemCount: paths.length,
+          placeholders: placeholders,
           loader: (i) => _renderFull(paths[i]),
         ),
       ),
@@ -821,6 +798,7 @@ class _HomePageState extends State<HomePage> {
         builder: (_) => _FullscreenViewer(
           initialPage: index,
           itemCount: images.length,
+          placeholders: images, // already full-res; show immediately
           loader: (i) async => images[i],
         ),
       ),
@@ -1419,11 +1397,16 @@ class _FullscreenViewer extends StatefulWidget {
     required this.initialPage,
     required this.itemCount,
     required this.loader,
+    this.placeholders,
   });
 
   final int initialPage;
   final int itemCount;
   final Future<Uint8List?> Function(int) loader;
+
+  /// Optional already-available images shown immediately (e.g. low-res
+  /// previews) while [loader] produces the sharp version.
+  final List<Uint8List?>? placeholders;
 
   @override
   State<_FullscreenViewer> createState() => _FullscreenViewerState();
@@ -1476,11 +1459,17 @@ class _FullscreenViewerState extends State<_FullscreenViewer> {
               _load(i - 1);
             },
             itemBuilder: (c, i) {
-              final bytes = _cache[i];
+              final hi = _cache[i];
+              final ph = (widget.placeholders != null &&
+                      i < widget.placeholders!.length)
+                  ? widget.placeholders![i]
+                  : null;
+              final bytes = hi ?? ph;
               if (bytes == null) {
                 _load(i);
                 return const Center(child: CircularProgressIndicator());
               }
+              if (hi == null) _load(i); // upgrade placeholder to sharp version
               return InteractiveViewer(
                 maxScale: 6,
                 child: Center(
