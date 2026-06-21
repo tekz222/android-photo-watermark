@@ -580,8 +580,10 @@ class _HomePageState extends State<HomePage> {
         ),
         actions: [
           TextButton(
-            // Greyed out until the project has been saved at least once.
-            onPressed: _savedPaths.isEmpty ? null : _confirmNewProject,
+            // Available once there are photos (or a saved project) to clear.
+            onPressed: (_photoPaths.isNotEmpty || _savedPaths.isNotEmpty)
+                ? _confirmNewProject
+                : null,
             child: const Text('Novo projeto'),
           ),
           IconButton(
