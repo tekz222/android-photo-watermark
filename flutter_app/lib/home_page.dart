@@ -8,7 +8,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:gal/gal.dart';
-import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -45,8 +44,6 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   final ImagePicker _picker = ImagePicker();
-  final TextRecognizer _textRecognizer =
-      TextRecognizer(script: TextRecognitionScript.latin);
 
   final List<String> _photoPaths = []; // internal copies (survive restarts)
   final List<LogoItem> _bottomLogos = [];
@@ -116,7 +113,6 @@ class _HomePageState extends State<HomePage> {
   @override
   void dispose() {
     _debounce?.cancel();
-    _textRecognizer.close();
     super.dispose();
   }
 
@@ -158,11 +154,11 @@ class _HomePageState extends State<HomePage> {
     final data = await rootBundle.load('assets/default_corner_logo.png');
     final bytes = data.buffer.asUint8List();
     final path = await _copyBytesToApp(bytes, 'logos');
-    final phash = await compute(perceptualHash, bytes);
-    final ocr = await _ocrLogo(path);
+    final analysis = await compute(analyzeLogo, bytes);
     if (!mounted) return;
     setState(() => _cornerLogo = LogoItem(_nextLogoId++, path,
-        'asset:default_corner', bytes, phash, ocr.phones, ocr.texts));
+        'asset:default_corner', bytes, analysis.phash,
+        const <String>{}, const <String>{}));
   }
 
   // ---- Picking ----
@@ -246,10 +242,9 @@ class _HomePageState extends State<HomePage> {
       _checkDone = 0;
       _checkTotal = picked.length;
     });
-    // De-dup against logos already in the rows (and the main logo): by visual
-    // SIMILARITY (perceptual hash), by file name, and by OCR'd phone/company
-    // name. All heavy work runs off the main thread (compute / ML Kit), so the
-    // UI stays responsive and shows "Verificando logo X de N".
+    // De-dup against logos already in the rows (and the main logo) by visual
+    // SIMILARITY (perceptual hash) and by file name. Heavy work runs off the
+    // main thread (compute), so the UI stays responsive and shows progress.
     final existing = [
       ..._bottomLogos,
       ..._topLeftLogos,
@@ -257,8 +252,6 @@ class _HomePageState extends State<HomePage> {
     ];
     final usedNames = existing.map((e) => _logoName(e.sourceKey)).toList();
     final usedPhashes = existing.map((e) => e.phash).toList();
-    final usedPhones = existing.expand((e) => e.phones).toSet();
-    final usedTexts = existing.expand((e) => e.texts).toSet();
     var skipped = 0;
     try {
       for (var i = 0; i < picked.length; i++) {
@@ -274,39 +267,20 @@ class _HomePageState extends State<HomePage> {
               const Duration(seconds: 20),
               onTimeout: () => LogoAnalysis(Uint8List(0), 0));
           final phash = analysis.phash;
-          final path = await _copyBytesToApp(bytes, 'logos');
-          // OCR the small flattened JPEG (fast); skip if it failed to produce.
-          var phones = <String>{};
-          var texts = <String>{};
-          if (analysis.ocrJpeg.isNotEmpty) {
-            final ocrPath = await _writeTemp(analysis.ocrJpeg);
-            final ocr = await _ocrLogo(ocrPath);
-            phones = ocr.phones;
-            texts = ocr.texts;
-            try {
-              await File(ocrPath).delete();
-            } catch (_) {}
-          }
           final dupName =
               name.isNotEmpty && usedNames.any((u) => _namesRelated(u, name));
           final dupSimilar = phash != 0 &&
               usedPhashes
                   .any((p) => perceptualDistance(p, phash) <= _kSimilarThreshold);
-          final dupPhone = phones.any(usedPhones.contains);
-          final dupText = texts.any(usedTexts.contains);
-          if (dupName || dupSimilar || dupPhone || dupText) {
-            try {
-              await File(path).delete();
-            } catch (_) {}
+          if (dupName || dupSimilar) {
             skipped++;
             continue;
           }
-          target.add(
-              LogoItem(_nextLogoId++, path, x.name, bytes, phash, phones, texts));
+          final path = await _copyBytesToApp(bytes, 'logos');
+          target.add(LogoItem(_nextLogoId++, path, x.name, bytes, phash,
+              const <String>{}, const <String>{}));
           usedNames.add(name);
           if (phash != 0) usedPhashes.add(phash);
-          usedPhones.addAll(phones);
-          usedTexts.addAll(texts);
         } catch (_) {
           // One bad logo shouldn't abort the rest.
         }
@@ -315,51 +289,9 @@ class _HomePageState extends State<HomePage> {
       if (mounted) setState(() => _checkingLogos = false);
     }
     if (skipped > 0) {
-      _snack('$skipped logo(s) ignorada(s): parecida(s), ou mesmo telefone/nome '
-          'de uma já no projeto.');
+      _snack('$skipped logo(s) ignorada(s): parecida(s) com uma já no projeto.');
     }
     _schedulePreview();
-  }
-
-  /// Writes [bytes] to a temporary file (for ML Kit OCR which needs a path).
-  Future<String> _writeTemp(Uint8List bytes) async {
-    final dir = await getTemporaryDirectory();
-    final f = File(
-        '${dir.path}/ocr_${DateTime.now().microsecondsSinceEpoch}_${_fileSeq++}.jpg');
-    await f.writeAsBytes(bytes);
-    return f.path;
-  }
-
-  /// OCRs a logo and extracts phone numbers and normalized text lines (e.g. the
-  /// company name), used to block logos of the same business.
-  Future<({Set<String> phones, Set<String> texts})> _ocrLogo(
-      String path) async {
-    final phones = <String>{};
-    final texts = <String>{};
-    try {
-      final recognized = await _textRecognizer
-          .processImage(InputImage.fromFilePath(path))
-          .timeout(const Duration(seconds: 12));
-      for (final block in recognized.blocks) {
-        for (final line in block.lines) {
-          final raw = line.text;
-          for (final m in RegExp(r'\d[\d\s().+\-]{6,}\d').allMatches(raw)) {
-            final d = m.group(0)!.replaceAll(RegExp(r'\D'), '');
-            if (d.length >= 8 && d.length <= 13) phones.add(d);
-          }
-          final norm = raw
-              .toUpperCase()
-              .replaceAll(RegExp(r'[^A-Z0-9 ]'), ' ')
-              .replaceAll(RegExp(r'\s+'), ' ')
-              .trim();
-          if (norm.replaceAll(' ', '').length >= 6 &&
-              RegExp(r'[A-Z]').hasMatch(norm)) {
-            texts.add(norm);
-          }
-        }
-      }
-    } catch (_) {}
-    return (phones: phones, texts: texts);
   }
 
   Future<void> _pickCornerLogo() async {
@@ -368,11 +300,10 @@ class _HomePageState extends State<HomePage> {
     final bytes = await x.readAsBytes();
     setState(() => _importing = true);
     final path = await _copyBytesToApp(bytes, 'logos');
-    final phash = await compute(perceptualHash, bytes);
-    final ocr = await _ocrLogo(path);
+    final analysis = await compute(analyzeLogo, bytes);
     setState(() {
-      _cornerLogo = LogoItem(
-          _nextLogoId++, path, x.name, bytes, phash, ocr.phones, ocr.texts);
+      _cornerLogo = LogoItem(_nextLogoId++, path, x.name, bytes, analysis.phash,
+          const <String>{}, const <String>{});
       _importing = false;
     });
     _schedulePreview();
