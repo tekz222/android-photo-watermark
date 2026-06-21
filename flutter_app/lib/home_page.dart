@@ -84,6 +84,7 @@ class _HomePageState extends State<HomePage> {
 
   // Processing state.
   bool _processing = false;
+  bool _cancelRequested = false; // user asked to stop after the current image
   int _done = 0;
   int _total = 0;
 
@@ -398,8 +399,12 @@ class _HomePageState extends State<HomePage> {
     await WakelockPlus.enable();
     // Reuse the project's album; create one (named by date/time) on first save.
     final album = _currentAlbum ?? _nextAlbum();
+    // Snapshot so a cancel can restore the exact pre-save state.
+    final prevSaved = Set<String>.from(_savedPaths);
+    final prevAlbum = _currentAlbum;
     setState(() {
       _processing = true;
+      _cancelRequested = false;
       _currentAlbum = album;
       _lastResult = null;
       _done = 0;
@@ -433,9 +438,26 @@ class _HomePageState extends State<HomePage> {
         _done = processed.length;
         _total = processed.length + _unsavedPaths.length;
       });
+      // Cancel takes effect AFTER the current image finished saving.
+      if (_cancelRequested) break;
     }
 
     await WakelockPlus.disable();
+    if (_cancelRequested) {
+      if (!mounted) return;
+      // Restore the app to exactly how it was before saving started.
+      setState(() {
+        _processing = false;
+        _cancelRequested = false;
+        _savedPaths
+          ..clear()
+          ..addAll(prevSaved);
+        _currentAlbum = prevAlbum;
+        _lastResult = null;
+      });
+      _snack('Salvamento cancelado.');
+      return;
+    }
     await _addHistory(album, saved, failed);
     await _saveProject();
     if (!mounted) return;
@@ -993,15 +1015,26 @@ class _HomePageState extends State<HomePage> {
     if (_processing) {
       final progress = _total == 0 ? 0.0 : _done / _total;
       return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           LinearProgressIndicator(value: progress),
           const SizedBox(height: 8),
-          Text('Processando $_done de $_total…'),
+          Text('Processando $_done de $_total…', textAlign: TextAlign.center),
           const SizedBox(height: 4),
           Text(
-            'Você pode adicionar mais fotos — elas entram na fila. Mantenha o app aberto.',
+            'Mantenha o app aberto.',
             style: Theme.of(context).textTheme.bodySmall,
             textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            // Finishes the current image, then stops and restores the
+            // pre-save state. Disabled (shows "Cancelando…") once tapped.
+            onPressed: _cancelRequested
+                ? null
+                : () => setState(() => _cancelRequested = true),
+            icon: const Icon(Icons.stop_circle_outlined),
+            label: Text(_cancelRequested ? 'Cancelando…' : 'Cancelar'),
           ),
         ],
       );
@@ -1139,6 +1172,7 @@ class _HomePageState extends State<HomePage> {
       _renderingPreview = false;
       _importing = false;
       _checkingLogos = false;
+      _cancelRequested = false;
       _photoCache.clear();
       _logoSize = 22;
       _leftMargin = 1;
