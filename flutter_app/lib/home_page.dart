@@ -337,9 +337,7 @@ class _HomePageState extends State<HomePage> {
       _previewTotal = photos.length;
       _renderingPreview = true;
     });
-    // One render per photo (at a medium size) — used for BOTH the thumbnail and
-    // the fullscreen viewer. Rendering is pure-Dart, so doing a single pass
-    // (instead of a small + a 2560px pass) roughly halves the load time.
+    // Render every preview, then show them ALL AT ONCE (not one by one).
     final results = <_Preview>[];
     for (final path in photos) {
       final bytes = _photoCache[path] ??= await File(path).readAsBytes();
@@ -355,10 +353,12 @@ class _HomePageState extends State<HomePage> {
       codec.dispose();
       if (token != _previewToken) return;
       results.add(_Preview(out, aspect));
-      setState(() => _previews = List.of(results));
     }
     if (token == _previewToken && mounted) {
-      setState(() => _renderingPreview = false);
+      setState(() {
+        _previews = results;
+        _renderingPreview = false;
+      });
     }
   }
 
