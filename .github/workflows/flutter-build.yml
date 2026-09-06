@@ -116,8 +116,8 @@ jobs:
 
       - run: flutter pub get
 
-      - name: Generate launcher icons
-        run: dart run flutter_launcher_icons
+      - name: Generate launcher icons (Windows-only config)
+        run: dart run flutter_launcher_icons -f flutter_launcher_icons-windows.yaml
 
       - name: Build Windows app (portable ZIP)
         run: |

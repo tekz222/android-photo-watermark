@@ -34,6 +34,9 @@ flutter_native_splash:
   color: "#121212"
   color_dark: "#121212"
 
+# Mobile icons (the iOS CI job). Windows icons use the separate
+# flutter_launcher_icons-windows.yaml, since each job scaffolds only its own
+# platform folder.
 flutter_launcher_icons:
   android: true
   ios: true
@@ -42,7 +45,3 @@ flutter_launcher_icons:
   background_color_ios: "#05B2AE"
   adaptive_icon_background: "#05B2AE"
   adaptive_icon_foreground: "assets/launcher_icon_fg.png"
-  windows:
-    generate: true
-    image_path: "assets/launcher_icon.png"
-    icon_size: 256
