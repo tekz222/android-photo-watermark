@@ -1,7 +1,8 @@
-name: Build iOS app
+name: Build apps (iOS + Windows)
 
-# Builds the Flutter app in flutter_app/ on a macOS runner and publishes an
-# UNSIGNED .ipa (+ AltStore source) to the 'ios-latest' release. iOS only.
+# Builds the Flutter app in flutter_app/: an UNSIGNED .ipa on macOS (installed
+# via Sideloadly) and a portable Windows .exe (zipped), both published to the
+# 'ios-latest' release.
 
 on:
   workflow_dispatch:
@@ -79,9 +80,63 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ios-latest
-          name: Latest iOS build
+          name: Latest builds (iOS + Windows)
           body: |
-            Build mais recente do app iOS (não assinado).
-            Instale com o Sideloadly:
+            iOS (não assinado — instale com o Sideloadly):
             https://github.com/${{ github.repository }}/releases/download/ios-latest/PhotoWatermark-unsigned.ipa
+            Windows (extraia o ZIP e abra "JCV Watermarker.exe"):
+            https://github.com/${{ github.repository }}/releases/download/ios-latest/JCV-Watermarker-Windows.zip
           files: flutter_app/build/PhotoWatermark-unsigned.ipa
+
+  windows:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: flutter_app
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Scaffold Windows platform folder (keep our lib/ and pubspec)
+        run: |
+          cp -R lib /tmp/lib_backup
+          cp pubspec.yaml /tmp/pubspec_backup.yaml
+          flutter create --platforms=windows --org com.tekz --project-name photo_watermark .
+          rm -rf lib && cp -R /tmp/lib_backup lib
+          cp /tmp/pubspec_backup.yaml pubspec.yaml
+
+      - name: Set window title
+        run: sed -i 's/L"photo_watermark"/L"JCV Watermarker"/' windows/runner/main.cpp
+
+      - run: flutter pub get
+
+      - name: Generate launcher icons
+        run: dart run flutter_launcher_icons
+
+      - name: Build Windows app (portable ZIP)
+        run: |
+          flutter build windows --release \
+            --build-name=1.0.${{ github.run_number }} \
+            --build-number=${{ github.run_number }} \
+            --dart-define=APP_BUILD=${{ github.run_number }}
+          cd build/windows/x64/runner
+          mv Release/photo_watermark.exe "Release/JCV Watermarker.exe"
+          mv Release "JCV Watermarker"
+          7z a ../../../JCV-Watermarker-Windows.zip "JCV Watermarker"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-app
+          path: flutter_app/build/JCV-Watermarker-Windows.zip
+
+      - name: Publish Windows ZIP to the GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ios-latest
+          files: flutter_app/build/JCV-Watermarker-Windows.zip

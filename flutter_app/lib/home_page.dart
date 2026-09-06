@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show Directory, File;
+import 'dart:io' show Directory, File, Platform;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -426,16 +426,24 @@ class _HomePageState extends State<HomePage> {
 
   // ---- Saving ----
 
+  /// Mobile saves into the photo gallery; desktop (Windows) writes files into
+  /// Pictures\JCV Watermarker\<album>.
+  bool get _usesGallery => Platform.isAndroid || Platform.isIOS;
+
   Future<void> _saveAll() async {
     if (_processing || !_hasAnyLogo) return;
     if (_unsavedPaths.isEmpty) return; // everything is already saved
-    final granted = await Gal.requestAccess(toAlbum: true);
-    if (!granted) {
-      _snack('Permissão da galeria negada.');
-      return;
+    if (_usesGallery) {
+      final granted = await Gal.requestAccess(toAlbum: true);
+      if (!granted) {
+        _snack('Permissão da galeria negada.');
+        return;
+      }
     }
     // Keep the device awake so a long save isn't interrupted by auto-lock.
-    await WakelockPlus.enable();
+    try {
+      await WakelockPlus.enable();
+    } catch (_) {}
     // Reuse the project's album; create one (named by date/time) on first save.
     final album = _currentAlbum ?? _nextAlbum();
     // Snapshot so a cancel can restore the exact pre-save state.
@@ -467,7 +475,13 @@ class _HomePageState extends State<HomePage> {
         final bytes = _photoCache[next] ?? await File(next).readAsBytes();
         final out = await compute(renderWatermark, _request(bytes, png: true));
         final ts = DateTime.now().microsecondsSinceEpoch;
-        await Gal.putImageBytes(out, album: album, name: 'watermarked_$ts.png');
+        if (_usesGallery) {
+          await Gal.putImageBytes(out, album: album, name: 'watermarked_$ts.png');
+        } else {
+          final dir = await _desktopAlbumDir(album);
+          await File('${dir.path}${Platform.pathSeparator}watermarked_$ts.png')
+              .writeAsBytes(out);
+        }
         _savedPaths.add(next);
         saved++;
       } catch (_) {
@@ -481,7 +495,9 @@ class _HomePageState extends State<HomePage> {
       if (_cancelRequested) break;
     }
 
-    await WakelockPlus.disable();
+    try {
+      await WakelockPlus.disable();
+    } catch (_) {}
     if (_cancelRequested) {
       if (!mounted) return;
       // Restore the app to exactly how it was before saving started.
@@ -504,6 +520,25 @@ class _HomePageState extends State<HomePage> {
       _processing = false;
       _lastResult = _ProcessResult(saved: saved, failed: failed, album: album);
     });
+  }
+
+  /// Where desktop builds save: Pictures\JCV Watermarker\<album> (falls back to
+  /// the app documents folder if Pictures can't be found).
+  Future<Directory> _desktopAlbumDir(String album) async {
+    Directory base;
+    final userProfile = Platform.environment['USERPROFILE'];
+    if (userProfile != null &&
+        Directory('$userProfile${Platform.pathSeparator}Pictures')
+            .existsSync()) {
+      base = Directory('$userProfile${Platform.pathSeparator}Pictures');
+    } else {
+      base = await getApplicationDocumentsDirectory();
+    }
+    final dir = Directory(
+        '${base.path}${Platform.pathSeparator}JCV Watermarker'
+        '${Platform.pathSeparator}$album');
+    if (!dir.existsSync()) dir.createSync(recursive: true);
+    return dir;
   }
 
   // ---- Album numbering + history (shared_preferences) ----
