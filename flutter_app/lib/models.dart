@@ -20,3 +20,37 @@ class LogoItem {
 
 /// Where a step's logos are placed, used to draw the little frame glyphs.
 enum Placement { bottom, topLeft, topRight }
+
+/// An editable text overlay. Always centered horizontally on the photo; the
+/// user picks the vertical position ([topPct]) and the size ([heightPct]),
+/// both as percentages of the photo. Mutable on purpose: the editor changes
+/// fields in place and the preview re-renders.
+class TextItem {
+  TextItem({
+    required this.id,
+    this.text = 'Seu texto',
+    this.fontFamily = 'Arial',
+    this.bold = true,
+    this.italic = false,
+    this.color = 0xFFFFFFFF,
+    this.rainbow = false,
+    this.outline = true,
+    this.outlineColor = 0xFF000000,
+    this.outlineWidth = 8, // stroke width as % of the font size
+    this.heightPct = 10, // text height as % of the photo's shortest side
+    this.topPct = 50, // vertical center as % of the photo height
+  });
+
+  final int id;
+  String text;
+  String fontFamily;
+  bool bold;
+  bool italic;
+  int color; // ARGB
+  bool rainbow; // rainbow gradient fill (overrides [color])
+  bool outline;
+  int outlineColor; // ARGB
+  double outlineWidth;
+  double heightPct;
+  double topPct;
+}

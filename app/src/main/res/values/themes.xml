@@ -1,6 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <!-- Base theme used before Compose takes over. Dark, to match the forced
-         dark Material3 theme applied at runtime by PhotoWatermarkTheme. -->
-    <style name="Theme.PhotoWatermark" parent="android:Theme.Material.NoActionBar" />
-</resources>

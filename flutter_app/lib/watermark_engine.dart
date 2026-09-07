@@ -2,6 +2,26 @@ import 'dart:typed_data';
 
 import 'package:image/image.dart' as img;
 
+/// A pre-rasterized text overlay (transparent PNG drawn by the UI with the
+/// system's fonts). Always centered horizontally; [top] places its vertical
+/// center as a fraction of the photo height, [height] scales it as a fraction
+/// of the photo's shortest side.
+class TextOverlay {
+  TextOverlay({
+    required this.png,
+    required this.height,
+    required this.top,
+    this.contentRatio = 1.0,
+  });
+  final Uint8List png;
+  final double height;
+  final double top;
+
+  /// Fraction of the PNG height taken by the text's own line box (the rest is
+  /// padding for the outline), so [height] refers to the glyphs, not the pad.
+  final double contentRatio;
+}
+
 /// All inputs needed to render one watermarked photo. This object is passed
 /// across an isolate via [compute], so every field is a plain, copyable value.
 class WatermarkRequest {
@@ -20,6 +40,8 @@ class WatermarkRequest {
     required this.cornerMargin,
     this.rowOpacity = 1.0,
     this.centered = false,
+    this.spacing = 0.0,
+    this.textOverlays = const [],
     this.png = false,
     this.maxDim,
     this.quality = 95,
@@ -45,8 +67,15 @@ class WatermarkRequest {
   /// Opacity (0..1) applied to the bottom and top rows (not the corner logo).
   final double rowOpacity;
 
-  /// false = rows anchored left (left-to-right); true = rows centered.
+  /// false = bottom row anchored left; true = bottom row centered.
+  /// The top row is ALWAYS anchored left.
   final bool centered;
+
+  /// Horizontal gap between logos in a row, as a fraction of the shortest side.
+  final double spacing;
+
+  /// Text overlays drawn on top of everything.
+  final List<TextOverlay> textOverlays;
 
   /// Encode the result as lossless PNG instead of JPEG.
   final bool png;
@@ -85,25 +114,26 @@ Uint8List renderWatermark(WatermarkRequest r) {
         return d == null ? null : img.bakeOrientation(d);
       });
 
-  // Top-left / top row (lowest layer).
+  final gap = shortest * r.spacing;
+
+  // Top-left / top row (lowest layer). Always anchored to the left; only the
+  // bottom row honors the "centered" option.
   final topH = shortest * r.topLeftHeight;
-  final topStartX = r.centered
-      ? (photo.width - _rowWidth(r.topLeftLogos, decode, topH)) / 2
-      : shortest * r.topLeftLeft;
   _drawRow(
     photo,
     r.topLeftLogos,
     decode,
     height: topH,
-    startX: topStartX,
+    startX: shortest * r.topLeftLeft,
     top: shortest * r.topLeftTop,
     opacity: r.rowOpacity,
+    gap: gap,
   );
 
   // Bottom row.
   final bottomH = shortest * r.bottomHeight;
   final bottomStartX = r.centered
-      ? (photo.width - _rowWidth(r.bottomLogos, decode, bottomH)) / 2
+      ? (photo.width - _rowWidth(r.bottomLogos, decode, bottomH, gap)) / 2
       : shortest * r.bottomLeft;
   _drawRow(
     photo,
@@ -113,6 +143,7 @@ Uint8List renderWatermark(WatermarkRequest r) {
     startX: bottomStartX,
     top: photo.height - shortest * r.bottomMargin - bottomH,
     opacity: r.rowOpacity,
+    gap: gap,
   );
 
   // Top-right main logo (top layer).
@@ -121,12 +152,30 @@ Uint8List renderWatermark(WatermarkRequest r) {
     final logo = decode(cornerBytes);
     if (logo != null) {
       final h = (shortest * r.cornerHeight).round().clamp(1, photo.height);
-      final resized = img.copyResize(logo, height: h);
+      final resized = _resize(logo, height: h);
       final margin = shortest * r.cornerMargin;
       final x = (photo.width - margin - resized.width).round();
       final y = margin.round();
       img.compositeImage(photo, resized, dstX: x, dstY: y);
     }
+  }
+
+  // Text overlays (top-most layer): centered horizontally, vertical center at
+  // [TextOverlay.top]. Shrunk to the photo width if a text is too wide.
+  for (final t in r.textOverlays) {
+    final text = decode(t.png);
+    if (text == null) continue;
+    final ratio = t.contentRatio > 0 ? t.contentRatio : 1.0;
+    final h = (shortest * t.height / ratio).round().clamp(1, photo.height);
+    var resized = _resize(text, height: h);
+    if (resized.width > photo.width) {
+      resized = _resize(text, width: photo.width);
+    }
+    final x = ((photo.width - resized.width) / 2).round();
+    final maxY = photo.height - resized.height;
+    var y = (t.top * photo.height - resized.height / 2).round();
+    y = maxY <= 0 ? 0 : y.clamp(0, maxY);
+    img.compositeImage(photo, resized, dstX: x, dstY: y);
   }
 
   return r.png ? img.encodePng(photo) : img.encodeJpg(photo, quality: r.quality);
@@ -140,6 +189,7 @@ void _drawRow(
   required double startX,
   required double top,
   double opacity = 1.0,
+  double gap = 0.0,
 }) {
   if (logos.isEmpty) return;
   final h = height.round().clamp(1, dst.height);
@@ -148,26 +198,47 @@ void _drawRow(
   for (final bytes in logos) {
     final logo = decode(bytes);
     if (logo == null) continue;
-    final resized = _withOpacity(img.copyResize(logo, height: h), opacity);
+    final resized = _withOpacity(_resize(logo, height: h), opacity);
     img.compositeImage(dst, resized, dstX: x.round(), dstY: y);
-    x += resized.width;
+    x += resized.width + gap;
     if (x > dst.width) break; // Stop once the row has left the frame.
   }
 }
 
-/// Total width of [logos] laid out touching at the given [height].
+/// Total width of [logos] laid out at the given [height] with [gap] pixels
+/// between neighbours.
 double _rowWidth(
   List<Uint8List> logos,
   img.Image? Function(Uint8List) decode,
   double height,
+  double gap,
 ) {
   double w = 0;
+  var n = 0;
   for (final bytes in logos) {
     final logo = decode(bytes);
     if (logo == null) continue;
     w += height * (logo.width / logo.height);
+    n++;
   }
+  if (n > 1) w += gap * (n - 1);
   return w;
+}
+
+/// Resizes with a filter that suits the direction: box-average when shrinking
+/// (no jagged edges on logos and text), linear when enlarging. Palette images
+/// are expanded to RGBA first, since the filters work on real pixel values.
+img.Image _resize(img.Image src, {int? width, int? height}) {
+  final s = src.hasPalette ? src.convert(numChannels: 4) : src;
+  final targetH = height ?? (width! * s.height / s.width);
+  final shrinking = targetH < s.height;
+  return img.copyResize(
+    s,
+    width: width,
+    height: height,
+    interpolation:
+        shrinking ? img.Interpolation.average : img.Interpolation.linear,
+  );
 }
 
 /// Returns a copy of [src] with its alpha scaled by [opacity] (0..1).

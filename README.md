@@ -1,96 +1,27 @@
-# Photo Watermark
+# JCV Watermarker (Windows)
 
-Aplicativo Android para aplicar **logos** em qualquer quantidade de fotos de uma
-só vez, em três posições independentes:
+Aplicativo para Windows que aplica **logos** e **textos** em qualquer quantidade
+de fotos de uma só vez:
 
-- uma fileira de logos na **base** (encostadas, da esquerda para a direita);
-- uma fileira de logos no **canto superior esquerdo** (mesmo layout);
-- uma única **logo principal** no **canto superior direito**.
+- uma fileira de logos na **base** (da esquerda para a direita ou centralizada);
+- uma fileira de logos no **canto superior esquerdo**;
+- uma única **logo principal** no **canto superior direito**;
+- **textos** com fontes do computador, cores, contorno e arco-íris, sempre
+  centralizados na horizontal.
 
-Depois é só salvar todas na galeria.
+O código fica em [`flutter_app/`](flutter_app/) (Flutter/Dart). O build é feito
+pelo GitHub Actions (**Build Windows app**), que publica o ZIP na release
+**Latest Windows build** (tag `windows-latest`).
 
-## Como funciona
+## Como usar
 
-1. **Adicione as fotos** — escolha quantas quiser (seleção múltipla). Pode ir
-   adicionando aos poucos e **remover** qualquer foto pelo “✕” na miniatura.
-2. **Logos da base** — selecione **uma ou mais** logos (de preferência PNG com
-   fundo transparente). Ficam numa fileira no rodapé, **encostadas** da esquerda
-   para a direita. Pode **adicionar a mesma logo várias vezes** — elas vão sendo
-   anexadas até saírem do quadro — e **reordenar** segurando e arrastando cada
-   logo para cima/baixo (de cima para baixo na lista = da esquerda para a direita
-   na foto). Ajuste tamanho, distância da borda inferior e da esquerda.
-3. **Logos do canto superior esquerdo** — mesma ideia da base, mas no topo.
-   Ajuste tamanho, distância do topo e da esquerda.
-4. **Logo principal (canto superior direito)** — escolha **uma** logo. Dá para
-   trocar ou remover quando quiser, e ajustar o tamanho e a distância do canto.
-5. **Pré-visualização** — veja a 1ª foto já com as logos, atualizando ao vivo
-   conforme você muda os ajustes.
-6. **Aplicar e salvar tudo** — cada foto recebe as logos e é salva, na galeria
-   do aparelho, num álbum em `Imagens/` nomeado pela **data/hora** do salvamento
-   (ex.: `Imagens/2026-06-20 10-40-30`). Fotos adicionadas depois do primeiro
-   salvamento vão para o **mesmo álbum**.
-
-## Detalhes técnicos
-
-- **100% Kotlin + Jetpack Compose** (Material 3).
-- Seleção de imagens via **Photo Picker** (`PickMultipleVisualMedia`), sem precisar
-  de permissão de armazenamento para *ler*.
-- Salvamento via **MediaStore** (armazenamento com escopo). Em Android 10+ nenhuma
-  permissão é necessária para salvar; em Android 9 e abaixo o app pede
-  `WRITE_EXTERNAL_STORAGE`.
-- As logos são dimensionadas pela **altura**, em relação ao **menor lado** da foto,
-  então ficam proporcionais tanto em paisagem quanto em retrato. Cada logo mantém
-  sua própria proporção. As fileiras (base e canto superior esquerdo) ficam
-  **encostadas** (sem espaço entre elas); a logo principal fica alinhada ao canto
-  superior direito.
-- A orientação **EXIF** das fotos é respeitada, e imagens muito grandes são
-  reduzidas com segurança para evitar `OutOfMemoryError`.
-- O processamento (e o preview) rodam fora da thread principal (coroutines).
-- Ordem de desenho (camadas): primeiro o canto superior esquerdo, depois a base
-  e, por cima de tudo, a **logo principal** do canto superior direito.
-- A pré-visualização fica **fixa no topo** da tela, sempre visível enquanto você
-  rola os ajustes.
-
-### Padrões / valores ajustáveis
-
-| Parâmetro                                  | Padrão | Intervalo |
-|--------------------------------------------|--------|-----------|
-| Tamanho das logos (cima **e** baixo)       | 12% do menor lado | 5%–30% |
-| Distância da borda esquerda (cima **e** baixo) | 3% do menor lado | 0%–15% |
-| Base — distância da borda inferior         | 3% do menor lado  | 0%–15% |
-| Topo — distância da borda superior         | 3% do menor lado  | 0%–15% |
-| Logo principal — tamanho (altura)          | 12% do menor lado | 5%–30% |
-| Logo principal — distância do canto        | 4% do menor lado  | 0%–15% |
-
-> **Tamanho** e **distância da esquerda** são compartilhados entre as fileiras de
-> cima e de baixo: mexer num desses controles muda as duas fileiras ao mesmo tempo.
-
-## Como compilar
-
-Requisitos: Android Studio (Koala ou mais recente) ou o Android SDK com a
-command-line.
-
-```bash
-# build de debug
-./gradlew assembleDebug
-
-# instalar em um dispositivo/emulador conectado
-./gradlew installDebug
-```
-
-O APK gerado fica em `app/build/outputs/apk/debug/app-debug.apk`.
-
-- `minSdk` 24 (Android 7.0) · `targetSdk`/`compileSdk` 34 · AGP 8.5.2 · Kotlin 1.9.24
-
-## Estrutura
-
-```
-app/src/main/java/com/tekz/watermark/
-├── MainActivity.kt        # UI em Jetpack Compose (fotos, logos, ajustes, preview)
-├── WatermarkViewModel.kt  # estado da tela + processamento em lote
-└── WatermarkEngine.kt     # carregar, compor a fileira de logos e salvar na galeria
-```
-
-## Licença
-
-MIT
+1. Baixe `JCV-Watermarker-Windows.zip` da release, extraia e abra
+   `JCV Watermarker.exe` — não precisa instalar.
+2. **Adicione as fotos** e depois as logos/textos; a pré-visualização das
+   primeiras 5 fotos atualiza ao vivo (clique para abrir em tela cheia; a roda do
+   mouse dá zoom).
+3. **Aplicar e salvar tudo** grava cada foto como JPEG de alta qualidade em
+   `Imagens\JCV Watermarker\<data hora>`. Durante o salvamento só o botão
+   **Cancelar** fica ativo; ao cancelar, o app volta exatamente ao estado
+   anterior.
+4. Ao fechar o app nada fica guardado — cada abertura começa um projeto novo.
