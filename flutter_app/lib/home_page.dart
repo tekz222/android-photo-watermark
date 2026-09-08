@@ -2820,8 +2820,7 @@ class _FullscreenViewerState extends State<_FullscreenViewer> {
   void _goTo(int i) {
     if (i < 0 || i >= widget.itemCount) return;
     _zoom.value = Matrix4.identity();
-    _controller.animateToPage(i,
-        duration: const Duration(milliseconds: 220), curve: Curves.easeOut);
+    _controller.jumpToPage(i); // no slide animation
   }
 
   /// Zooms to [target] around the viewport center and keeps the (viewport
