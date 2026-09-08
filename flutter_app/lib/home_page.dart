@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show Directory, File, Platform;
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -17,6 +18,14 @@ import 'watermark_engine.dart';
 
 /// How many of the selected photos to render in the live preview.
 const int kMaxPreview = 5;
+
+/// Style + measurement of a text at a given font size (see `_measureText`).
+typedef _TextMeasure = ({
+  TextStyle style,
+  double strokeW,
+  double pad,
+  TextPainter measure,
+});
 
 /// A rendered preview plus its aspect ratio, so its frame can match the image.
 class _Preview {
@@ -77,6 +86,7 @@ class _HomePageState extends State<HomePage> {
   final Map<int, Uint8List> _textPng = {}; // rasterized text, by TextItem id
   final Map<int, double> _textRatio = {}; // glyph-box / PNG height, by id
   final Map<int, String> _textSigCache = {}; // look snapshot, for invalidation
+  int _previewIndex = 0; // which of the preview photos is shown big
 
   // ---- Save state: incremental save into ONE album per project ----
   final Set<String> _savedPaths = {}; // photo paths already saved this project
@@ -446,25 +456,12 @@ class _HomePageState extends State<HomePage> {
     'Verdana',
   ];
 
-  static const List<int> _swatches = [
-    0xFFFFFFFF,
-    0xFF000000,
-    0xFFE53935,
-    0xFFFB8C00,
-    0xFFFDD835,
-    0xFF43A047,
-    0xFF1E88E5,
-    0xFF8E24AA,
-    0xFFEC407A,
-    0xFF05B2AE,
-  ];
-
   /// Snapshot of the properties that change the rasterized PNG. Size and
   /// vertical position are applied when compositing, so moving/resizing a text
   /// never forces a re-raster.
   String _textSig(TextItem t) =>
       '${t.text}|${t.fontFamily}|${t.bold}|${t.italic}|${t.color}|'
-      '${t.rainbow}|${t.outline}|${t.outlineColor}|${t.outlineWidth}';
+      '${t.rainbow}|${t.outline}|${t.outlineColor}|${t.outlineWidth}|${t.curve}';
 
   /// Re-rasterizes any text whose look changed. Runs on the UI thread (canvas
   /// text drawing can't run in an isolate) but is fast — it's only text.
@@ -529,38 +526,32 @@ class _HomePageState extends State<HomePage> {
 
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
-    final origin = Offset(pad, pad);
-    if (t.outline) {
-      painterWith(Paint()
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = m.strokeW
-            ..strokeJoin = StrokeJoin.round
-            ..color = Color(t.outlineColor))
-          .paint(canvas, origin);
-    }
-    final fill = Paint();
-    if (t.rainbow) {
-      fill.shader = ui.Gradient.linear(
-        Offset(pad, 0),
-        Offset(pad + textW, 0),
-        const [
-          Color(0xFFE53935),
-          Color(0xFFFB8C00),
-          Color(0xFFFDD835),
-          Color(0xFF43A047),
-          Color(0xFF1E88E5),
-          Color(0xFF8E24AA),
-        ],
-        const [0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
-      );
+    int pngW, pngH;
+    double glyphH;
+    if (t.curve.abs() < 0.5) {
+      // Straight (supports several lines, centered).
+      final origin = Offset(pad, pad);
+      if (t.outline) {
+        painterWith(_outlinePaint(t, m.strokeW)).paint(canvas, origin);
+      }
+      final fill = Paint();
+      if (t.rainbow) {
+        fill.shader = ui.Gradient.linear(
+            Offset(pad, 0), Offset(pad + textW, 0), kRainbow, kRainbowStops);
+      } else {
+        fill.color = Color(t.color);
+      }
+      painterWith(fill).paint(canvas, origin);
+      pngW = (textW + pad * 2).ceil().clamp(1, 8192);
+      pngH = (textH + pad * 2).ceil().clamp(1, 8192);
+      glyphH = textH;
     } else {
-      fill.color = Color(t.color);
+      final r = _paintCurved(canvas, t, m);
+      pngW = r.w;
+      pngH = r.h;
+      glyphH = r.glyphH;
     }
-    painterWith(fill).paint(canvas, origin);
-
     final picture = recorder.endRecording();
-    final pngW = (textW + pad * 2).ceil().clamp(1, 8192);
-    final pngH = (textH + pad * 2).ceil().clamp(1, 8192);
     final image = await picture.toImage(pngW, pngH);
     picture.dispose();
     final data = await image.toByteData(format: ui.ImageByteFormat.png);
@@ -568,14 +559,130 @@ class _HomePageState extends State<HomePage> {
     if (data == null) throw StateError('PNG encode failed');
     return (
       png: data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
-      contentRatio: textH / pngH,
+      contentRatio: glyphH / pngH,
     );
+  }
+
+  static const List<Color> kRainbow = [
+    Color(0xFFE53935),
+    Color(0xFFFB8C00),
+    Color(0xFFFDD835),
+    Color(0xFF43A047),
+    Color(0xFF1E88E5),
+    Color(0xFF8E24AA),
+  ];
+  static const List<double> kRainbowStops = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0];
+
+  Paint _outlinePaint(TextItem t, double strokeW) => Paint()
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = strokeW
+    ..strokeJoin = StrokeJoin.round
+    ..color = Color(t.outlineColor);
+
+  /// Color of the rainbow at position [u] (0..1).
+  Color _rainbowAt(double u) {
+    final x = u.clamp(0.0, 1.0);
+    for (var i = 0; i < kRainbowStops.length - 1; i++) {
+      if (x <= kRainbowStops[i + 1]) {
+        final span = kRainbowStops[i + 1] - kRainbowStops[i];
+        final f = span <= 0 ? 0.0 : (x - kRainbowStops[i]) / span;
+        return Color.lerp(kRainbow[i], kRainbow[i + 1], f)!;
+      }
+    }
+    return kRainbow.last;
+  }
+
+  /// Draws [t] glyph by glyph along a circular arc of [TextItem.curve] degrees
+  /// (positive = arc up, like a rainbow; negative = arc down). Returns the
+  /// bitmap size that fits everything plus the glyph line height.
+  ({int w, int h, double glyphH}) _paintCurved(
+      Canvas canvas, TextItem t, _TextMeasure m) {
+    final chars = [
+      for (final r in t.text.replaceAll('\n', ' ').runes) String.fromCharCode(r)
+    ];
+    final painters = [
+      for (final c in chars)
+        TextPainter(
+          text: TextSpan(text: c, style: m.style),
+          textDirection: TextDirection.ltr,
+        )..layout(),
+    ];
+    final widths = [for (final p in painters) p.width];
+    final total = widths.fold(0.0, (a, b) => a + b);
+    final lineH = painters.isEmpty ? m.style.fontSize! : painters.first.height;
+    final theta = t.curve.abs().clamp(0.5, 355.0) * math.pi / 180;
+    final s = t.curve > 0 ? 1.0 : -1.0;
+    final radius = math.max(total, 1.0) / theta;
+
+    // Glyph centers sit on a circle around the origin; each glyph is rotated
+    // to follow the tangent.
+    final centers = <Offset>[];
+    final angles = <double>[];
+    var acc = 0.0;
+    for (final w in widths) {
+      final phi = -theta / 2 + (acc + w / 2) / radius;
+      acc += w;
+      angles.add(s * phi);
+      centers.add(Offset(radius * math.sin(phi), -s * radius * math.cos(phi)));
+    }
+
+    // Bounding box of the rotated glyph boxes.
+    var minX = double.infinity, minY = double.infinity;
+    var maxX = -double.infinity, maxY = -double.infinity;
+    for (var i = 0; i < chars.length; i++) {
+      final c = centers[i];
+      final rot = angles[i];
+      final hw = widths[i] / 2, hh = lineH / 2;
+      for (final k in [
+        Offset(-hw, -hh),
+        Offset(hw, -hh),
+        Offset(hw, hh),
+        Offset(-hw, hh)
+      ]) {
+        final x = c.dx + k.dx * math.cos(rot) - k.dy * math.sin(rot);
+        final y = c.dy + k.dx * math.sin(rot) + k.dy * math.cos(rot);
+        minX = math.min(minX, x);
+        maxX = math.max(maxX, x);
+        minY = math.min(minY, y);
+        maxY = math.max(maxY, y);
+      }
+    }
+    if (chars.isEmpty) {
+      minX = minY = 0;
+      maxX = maxY = 1;
+    }
+    final pad = m.pad;
+    final w = (maxX - minX + pad * 2).ceil().clamp(1, 8192);
+    final h = (maxY - minY + pad * 2).ceil().clamp(1, 8192);
+    final origin = Offset(pad - minX, pad - minY);
+
+    void pass(Paint Function(int i) paintFor) {
+      for (var i = 0; i < chars.length; i++) {
+        final p = TextPainter(
+          text: TextSpan(
+              text: chars[i], style: m.style.copyWith(foreground: paintFor(i))),
+          textDirection: TextDirection.ltr,
+        )..layout();
+        canvas.save();
+        canvas.translate(origin.dx + centers[i].dx, origin.dy + centers[i].dy);
+        canvas.rotate(angles[i]);
+        p.paint(canvas, Offset(-p.width / 2, -p.height / 2));
+        canvas.restore();
+      }
+    }
+
+    if (t.outline) pass((_) => _outlinePaint(t, m.strokeW));
+    final n = chars.length;
+    pass((i) => Paint()
+      ..color = t.rainbow
+          ? _rainbowAt(n <= 1 ? 0.5 : i / (n - 1))
+          : Color(t.color));
+    return (w: w, h: h, glyphH: lineH);
   }
 
   /// Text style + layout for [t] at [fontSize]. [pad] leaves room for the
   /// outline stroke and for glyphs that overhang (italics, swashes).
-  ({TextStyle style, double strokeW, double pad, TextPainter measure})
-      _measureText(TextItem t, double fontSize) {
+  _TextMeasure _measureText(TextItem t, double fontSize) {
     final style = TextStyle(
       fontFamily: t.fontFamily,
       fontSize: fontSize,
@@ -780,158 +887,61 @@ class _HomePageState extends State<HomePage> {
 
   // ---- UI ----
 
+  static const double _sidebarWidth = 430;
+
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return Scaffold(
-      appBar: AppBar(
-        titleSpacing: 12,
-        title: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ClipOval(
-              child: Image.asset(
-                'assets/appbar_logo.png',
-                width: 30,
-                height: 30,
-                fit: BoxFit.cover,
-              ),
-            ),
-            const SizedBox(width: 9),
-            const Text(
-              'JCV Watermarker',
-              style: TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.bold,
-                letterSpacing: 0.3,
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            // Available once there are photos (or a saved project) to clear;
-            // off while saving (only Cancel works then).
-            onPressed: (!_processing &&
-                    (_photoPaths.isNotEmpty || _savedPaths.isNotEmpty))
-                ? _confirmNewProject
-                : null,
-            child: const Text('Novo projeto'),
-          ),
-          IconButton(
-            icon: const Icon(Icons.history),
-            tooltip: 'Histórico',
-            onPressed: _processing ? null : _openHistory,
-          ),
-        ],
-      ),
       body: Column(
         children: [
-          if (_importing) const LinearProgressIndicator(minHeight: 4),
+          _header(),
+          if (_importing) const LinearProgressIndicator(minHeight: 3),
           if (_checkingLogos) ...[
             LinearProgressIndicator(
-              minHeight: 4,
+              minHeight: 3,
               value: _checkTotal > 0 ? _checkDone / _checkTotal : null,
             ),
             Container(
               width: double.infinity,
-              color: Theme.of(context).colorScheme.secondaryContainer,
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: Text(
-                'Verificando logo $_checkDone de $_checkTotal…',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
+              color: scheme.secondaryContainer,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+              child: Text('Verificando logo $_checkDone de $_checkTotal…',
+                  style: Theme.of(context).textTheme.bodySmall),
             ),
           ],
-          if (_photoPaths.isNotEmpty && _hasAnyContent) _previewBar(),
           Expanded(
-            // Content column capped so it doesn't stretch across a wide
-            // desktop window (no effect on phones/tablets).
-            child: Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 860),
-                child: ListView(
-                  padding: const EdgeInsets.all(16),
-                  children: [
-                    if (_lastResult != null) ...[
-                      _resultBanner(),
-                      const SizedBox(height: 16),
-                    ],
-                    if (_currentAlbum != null && !_processing) ...[
-                      _lockedBanner(),
-                      const SizedBox(height: 16),
-                    ],
-                    _photosCard(),
-                    const SizedBox(height: 16),
-                    _logoCard(
-                      number: 2,
-                      title: 'Logos da base',
-                      placement: Placement.bottom,
-                      items: _bottomLogos,
-                      hint: 'Da esquerda para a direita (ou centralizadas) na '
-                          'base. Tamanho, espaço, opacidade e distância da '
-                          'esquerda valem para as de cima e de baixo.',
-                      onAdd: () => _pickLogos(_bottomLogos),
-                      sliders: [
-                        _alignmentChooser(),
-                        _slider('Tamanho (todas)', _logoSize, 5, 30,
-                            (v) => setState(() => _logoSize = v)),
-                        _slider('Espaço entre as logos (todas)', _logoSpacing,
-                            0, 10, (v) => setState(() => _logoSpacing = v)),
-                        if (!_centered)
-                          _slider('Distância da borda esquerda (todas)',
-                              _leftMargin, 0, 15,
-                              (v) => setState(() => _leftMargin = v)),
-                        _slider('Opacidade (todas)', _logoOpacity, 0, 100,
-                            (v) => setState(() => _logoOpacity = v)),
-                        _slider('Distância da borda inferior', _bottomMargin,
-                            0, 15, (v) => setState(() => _bottomMargin = v)),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    _logoCard(
-                      number: 3,
-                      title: 'Logos do canto superior esquerdo',
-                      placement: Placement.topLeft,
-                      items: _topLeftLogos,
-                      hint: 'Sempre da esquerda para a direita, no topo. '
-                          'Tamanho, espaço, opacidade e distância da esquerda '
-                          'valem para as de cima e de baixo.',
-                      onAdd: () => _pickLogos(_topLeftLogos),
-                      sliders: [
-                        _slider('Tamanho (todas)', _logoSize, 5, 30,
-                            (v) => setState(() => _logoSize = v)),
-                        _slider('Espaço entre as logos (todas)', _logoSpacing,
-                            0, 10, (v) => setState(() => _logoSpacing = v)),
-                        _slider('Distância da borda esquerda (todas)',
-                            _leftMargin, 0, 15,
-                            (v) => setState(() => _leftMargin = v)),
-                        _slider('Opacidade (todas)', _logoOpacity, 0, 100,
-                            (v) => setState(() => _logoOpacity = v)),
-                        _slider('Distância da borda superior', _topMargin, 0,
-                            15, (v) => setState(() => _topMargin = v)),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    _cornerCard(),
-                    const SizedBox(height: 16),
-                    _textsCard(),
-                    const SizedBox(height: 16),
-                    _actionArea(),
-                    const SizedBox(height: 24),
-                    Center(
-                      child: Text(
-                        'Build ${const String.fromEnvironment('APP_BUILD', defaultValue: 'dev')}',
-                        style: Theme.of(context)
-                            .textTheme
-                            .bodySmall
-                            ?.copyWith(color: Theme.of(context).disabledColor),
+            child: LayoutBuilder(
+              builder: (context, c) {
+                if (c.maxWidth >= 900) {
+                  // Desktop: settings on the left, big preview on the right.
+                  return Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      SizedBox(width: _sidebarWidth, child: _settingsPanel()),
+                      VerticalDivider(
+                          width: 1, thickness: 1, color: scheme.outlineVariant),
+                      Expanded(
+                        child: Column(
+                          children: [
+                            Expanded(child: _previewPane()),
+                            _actionBar(),
+                          ],
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 8),
+                    ],
+                  );
+                }
+                // Narrow window: preview on top, settings below.
+                return Column(
+                  children: [
+                    SizedBox(height: 320, child: _previewPane()),
+                    Divider(height: 1, thickness: 1, color: scheme.outlineVariant),
+                    Expanded(child: _settingsPanel()),
+                    _actionBar(),
                   ],
-                ),
-              ),
+                );
+              },
             ),
           ),
         ],
@@ -939,190 +949,164 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _previewBar() {
-    return Material(
-      elevation: 4,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              _photoPaths.length <= 1
-                  ? 'Pré-visualização (1ª foto)'
-                  : 'Pré-visualização (primeiras ${_photoPaths.length.clamp(0, kMaxPreview)} fotos) — arraste para o lado',
-              style: Theme.of(context).textTheme.labelMedium,
-            ),
-            const SizedBox(height: 6),
-            SizedBox(
-              height: 208,
-              child: _previews.isEmpty
-                  ? Center(
-                      child: Text(
-                        'Gerando pré-visualização…',
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                    )
-                  : ListView.separated(
-                      scrollDirection: Axis.horizontal,
-                      itemCount: _previews.length,
-                      separatorBuilder: (_, __) => const SizedBox(width: 8),
-                      itemBuilder: (context, i) => _previewTile(i),
-                    ),
-            ),
-          ],
-        ),
+  Widget _header() {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      height: 46,
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainer,
+        border: Border(bottom: BorderSide(color: scheme.outlineVariant)),
       ),
-    );
-  }
-
-  Widget _previewTile(int i) {
-    final p = _previews[i];
-    // Frame matches the image's aspect ratio (no big empty rectangle), capped
-    // to the available height/width.
-    const maxH = 196.0;
-    final maxW = MediaQuery.of(context).size.width * 0.9;
-    double w = maxH * p.aspect;
-    double h = maxH;
-    if (w > maxW) {
-      w = maxW;
-      h = maxW / p.aspect;
-    }
-    return Center(
-      child: GestureDetector(
-        onTap: _processing ? null : () => _openFullscreen(i),
-        child: Container(
-          // Square corners + light gray frame.
-          decoration: BoxDecoration(
-            border: Border.all(color: Colors.grey.shade400, width: 1),
+      child: Row(
+        children: [
+          ClipOval(
+            child: Image.asset('assets/appbar_logo.png',
+                width: 26, height: 26, fit: BoxFit.cover),
           ),
-          child: ClipRect(
-            child: SizedBox(
-              width: w,
-              height: h,
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  Image.memory(p.bytes, fit: BoxFit.cover),
-                  if (_previews.length > 1)
-                    Positioned(
-                      left: 6,
-                      top: 6,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: Colors.black54,
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Text('${i + 1}/${_previews.length}',
-                            style: const TextStyle(
-                                color: Colors.white, fontSize: 11)),
-                      ),
-                    ),
-                ],
-              ),
-            ),
+          const SizedBox(width: 10),
+          const Text(
+            'JCV Watermarker',
+            style: TextStyle(
+                fontSize: 14, fontWeight: FontWeight.w700, letterSpacing: 0.2),
           ),
-        ),
+          const Spacer(),
+          TextButton.icon(
+            onPressed: (!_processing &&
+                    (_photoPaths.isNotEmpty || _savedPaths.isNotEmpty))
+                ? _confirmNewProject
+                : null,
+            icon: const Icon(Icons.add_box_outlined, size: 18),
+            label: const Text('Novo projeto'),
+          ),
+          const SizedBox(width: 4),
+          TextButton.icon(
+            onPressed: _processing ? null : _openHistory,
+            icon: const Icon(Icons.history, size: 18),
+            label: const Text('Histórico'),
+          ),
+          const SizedBox(width: 10),
+          Text(
+            'Build ${const String.fromEnvironment('APP_BUILD', defaultValue: 'dev')}',
+            style: Theme.of(context)
+                .textTheme
+                .bodySmall
+                ?.copyWith(color: Theme.of(context).disabledColor),
+          ),
+        ],
       ),
     );
   }
 
-  void _openFullscreen(int index) {
-    // Show ALL preview photos (so you can swipe to ones not rendered yet) and
-    // render each at high resolution on demand, so zoom stays sharp.
-    final paths = _photoPaths.take(kMaxPreview).toList();
-    if (paths.isEmpty) return;
-    // Already-rendered low-res previews show instantly; hi-res loads to replace.
-    final placeholders = [
-      for (var i = 0; i < paths.length; i++)
-        i < _previews.length ? _previews[i].bytes : null,
-    ];
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        fullscreenDialog: true,
-        builder: (_) => _FullscreenViewer(
-          initialPage: index,
-          itemCount: paths.length,
-          placeholders: placeholders,
-          loader: (i) => _renderFull(paths[i]),
-        ),
+  // ---- Left panel (settings) ----
+
+  Widget _settingsPanel() {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      color: scheme.surfaceContainerLow,
+      child: ListView(
+        padding: EdgeInsets.zero,
+        children: [
+          if (_lastResult != null) _resultBanner(),
+          if (_currentAlbum != null && !_processing) _lockedBanner(),
+          _photosSection(),
+          _logoSection(
+            number: 2,
+            title: 'Logos da base',
+            placement: Placement.bottom,
+            items: _bottomLogos,
+            hint: 'Fileira na base, da esquerda para a direita ou centralizada. '
+                'Tamanho, espaço, opacidade e distância da esquerda valem para '
+                'as duas fileiras.',
+            onAdd: () => _pickLogos(_bottomLogos),
+            sliders: [
+              _alignmentChooser(),
+              _slider('Tamanho (todas)', _logoSize, 5, 30,
+                  (v) => setState(() => _logoSize = v)),
+              _slider('Espaço entre as logos (todas)', _logoSpacing, 0, 10,
+                  (v) => setState(() => _logoSpacing = v)),
+              if (!_centered)
+                _slider('Distância da borda esquerda (todas)', _leftMargin, 0,
+                    15, (v) => setState(() => _leftMargin = v)),
+              _slider('Opacidade (todas)', _logoOpacity, 0, 100,
+                  (v) => setState(() => _logoOpacity = v)),
+              _slider('Distância da borda inferior', _bottomMargin, 0, 15,
+                  (v) => setState(() => _bottomMargin = v)),
+            ],
+          ),
+          _logoSection(
+            number: 3,
+            title: 'Logos do canto superior esquerdo',
+            placement: Placement.topLeft,
+            items: _topLeftLogos,
+            hint: 'Fileira no topo, sempre da esquerda para a direita.',
+            onAdd: () => _pickLogos(_topLeftLogos),
+            sliders: [
+              _slider('Tamanho (todas)', _logoSize, 5, 30,
+                  (v) => setState(() => _logoSize = v)),
+              _slider('Espaço entre as logos (todas)', _logoSpacing, 0, 10,
+                  (v) => setState(() => _logoSpacing = v)),
+              _slider('Distância da borda esquerda (todas)', _leftMargin, 0,
+                  15, (v) => setState(() => _leftMargin = v)),
+              _slider('Opacidade (todas)', _logoOpacity, 0, 100,
+                  (v) => setState(() => _logoOpacity = v)),
+              _slider('Distância da borda superior', _topMargin, 0, 15,
+                  (v) => setState(() => _topMargin = v)),
+            ],
+          ),
+          _cornerSection(),
+          _textsSection(),
+          const SizedBox(height: 24),
+        ],
       ),
     );
   }
 
-  /// Renders one watermarked photo at FULL resolution (same as the saved file)
-  /// so logos stay sharp when zoomed in the viewer.
-  Future<Uint8List?> _renderFull(String path) async {
-    try {
-      final bytes = _photoCache[path] ??= await File(path).readAsBytes();
-      await _ensureTextPngs();
-      return await compute(
-          renderWatermark, _request(bytes, quality: 95));
-    } catch (_) {
-      return null;
-    }
-  }
-
-  /// Opens any list of image bytes (e.g. logos) in the zoomable fullscreen
-  /// viewer, starting at [index].
-  void _openImagesFullscreen(List<Uint8List> images, int index) {
-    if (images.isEmpty) return;
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        fullscreenDialog: true,
-        builder: (_) => _FullscreenViewer(
-          initialPage: index,
-          itemCount: images.length,
-          placeholders: images, // already full-res; show immediately
-          loader: (i) async => images[i],
-        ),
-      ),
-    );
-  }
-
-  Widget _photosCard() {
-    return _StepCard(
+  Widget _photosSection() {
+    final small = Theme.of(context).textTheme.bodySmall;
+    return _Section(
       number: 1,
-      title: 'Selecione as fotos',
-      icon: const Icon(Icons.photo_library_outlined),
+      title: 'Fotos',
+      icon: const Icon(Icons.photo_library_outlined, size: 18),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          FilledButton.icon(
-            onPressed: _processing ? null : _pickPhotos,
-            icon: const Icon(Icons.add_photo_alternate_outlined),
-            label: const Text('Adicionar fotos'),
+          Row(
+            children: [
+              FilledButton.icon(
+                onPressed: _processing ? null : _pickPhotos,
+                icon: const Icon(Icons.add_photo_alternate_outlined, size: 18),
+                label: const Text('Adicionar fotos'),
+              ),
+              const SizedBox(width: 12),
+              if (_importing)
+                Text(
+                    _importTotal > 0
+                        ? 'Carregando… $_importDone de $_importTotal'
+                        : 'Carregando…',
+                    style: small)
+              else if (_photoPaths.isNotEmpty)
+                Text('${_photoPaths.length} foto(s)', style: small),
+            ],
           ),
-          // Status only while importing photos (no indicator during preview).
-          if (_importing) ...[
-            const SizedBox(height: 12),
-            Text(
-              _importTotal > 0
-                  ? 'Carregando fotos… $_importDone de $_importTotal'
-                  : 'Carregando…',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-          ],
           if (_photoPaths.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            Text('${_photoPaths.length} foto(s)',
-                style: const TextStyle(fontWeight: FontWeight.w500)),
-            const SizedBox(height: 8),
+            const SizedBox(height: 10),
             SizedBox(
-              height: 76,
+              height: 60,
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
                 itemCount: _photoPaths.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 8),
+                separatorBuilder: (_, __) => const SizedBox(width: 6),
                 itemBuilder: (context, i) => _thumb(
+                  size: 60,
                   enabled: _controlsEnabled,
-                  child: Image.file(File(_photoPaths[i]), fit: BoxFit.cover),
+                  child: Image.file(File(_photoPaths[i]),
+                      fit: BoxFit.cover, cacheWidth: 160),
                   onRemove: () {
                     final path = _photoPaths[i];
                     setState(() => _photoPaths.removeAt(i));
                     _photoCache.remove(path);
+                    _previewPhoto.remove(path);
                     File(path).delete().ignore();
                     _schedulePreview();
                   },
@@ -1135,7 +1119,7 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _logoCard({
+  Widget _logoSection({
     required int number,
     required String title,
     required Placement placement,
@@ -1144,38 +1128,40 @@ class _HomePageState extends State<HomePage> {
     required VoidCallback onAdd,
     required List<Widget> sliders,
   }) {
-    return _StepCard(
+    final small = Theme.of(context).textTheme.bodySmall;
+    return _Section(
       number: number,
       title: title,
       icon: _PlacementIcon(placement),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          OutlinedButton.icon(
-            onPressed:
-                (_photoPaths.isEmpty || !_controlsEnabled) ? null : onAdd,
-            icon: const Icon(Icons.image_outlined),
-            label: const Text('Adicionar logos'),
+          Row(
+            children: [
+              OutlinedButton.icon(
+                onPressed:
+                    (_photoPaths.isEmpty || !_controlsEnabled) ? null : onAdd,
+                icon: const Icon(Icons.image_outlined, size: 18),
+                label: const Text('Adicionar logos'),
+              ),
+              const SizedBox(width: 12),
+              if (items.isNotEmpty)
+                Text('${items.length} logo(s)', style: small),
+            ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 6),
           Text(
             _photoPaths.isEmpty
                 ? 'Adicione as fotos primeiro; depois envie as logos.'
                 : hint,
-            style: Theme.of(context).textTheme.bodySmall,
+            style: small,
           ),
           if (items.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            Text('${items.length} logo(s)',
-                style: const TextStyle(fontWeight: FontWeight.w500)),
-            if (items.length > 1)
-              Text('Segure e arraste para cima/baixo para reordenar.',
-                  style: Theme.of(context).textTheme.bodySmall),
             const SizedBox(height: 8),
             ReorderableListView.builder(
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
-              buildDefaultDragHandles: _controlsEnabled,
+              buildDefaultDragHandles: false,
               itemCount: items.length,
               onReorder: (oldIndex, newIndex) {
                 if (!_controlsEnabled) return;
@@ -1189,7 +1175,9 @@ class _HomePageState extends State<HomePage> {
                 final item = items[i];
                 return ListTile(
                   key: ValueKey(item.id),
+                  dense: true,
                   contentPadding: EdgeInsets.zero,
+                  minLeadingWidth: 36,
                   leading: GestureDetector(
                     behavior: HitTestBehavior.opaque,
                     onTap: _processing
@@ -1197,29 +1185,50 @@ class _HomePageState extends State<HomePage> {
                         : () => _openImagesFullscreen(
                             items.map((e) => e.bytes).toList(), i),
                     child: ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
+                      borderRadius: BorderRadius.circular(4),
                       child: Container(
-                        width: 48,
-                        height: 48,
-                        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                        width: 36,
+                        height: 36,
+                        color: Theme.of(context)
+                            .colorScheme
+                            .surfaceContainerHighest,
                         child: Image.memory(item.bytes, fit: BoxFit.contain),
                       ),
                     ),
                   ),
                   title: Text('${i + 1}. ${item.sourceKey}',
                       maxLines: 1, overflow: TextOverflow.ellipsis),
-                  trailing: IconButton(
-                    icon: const Icon(Icons.close),
-                    onPressed: !_controlsEnabled
-                        ? null
-                        : () {
-                            setState(() => items.removeAt(i));
-                            _schedulePreview();
-                          },
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.close, size: 18),
+                        tooltip: 'Remover',
+                        onPressed: !_controlsEnabled
+                            ? null
+                            : () {
+                                setState(() => items.removeAt(i));
+                                _schedulePreview();
+                              },
+                      ),
+                      if (_controlsEnabled && items.length > 1)
+                        ReorderableDragStartListener(
+                          index: i,
+                          child: const MouseRegion(
+                            cursor: SystemMouseCursors.grab,
+                            child: Padding(
+                              padding: EdgeInsets.symmetric(horizontal: 6),
+                              child: Icon(Icons.drag_handle, size: 20),
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
                 );
               },
             ),
+            if (items.length > 1)
+              Text('Arraste pela alça para reordenar.', style: small),
             ...sliders,
           ],
         ],
@@ -1227,39 +1236,45 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _cornerCard() {
-    return _StepCard(
+  Widget _cornerSection() {
+    final small = Theme.of(context).textTheme.bodySmall;
+    return _Section(
       number: 4,
       title: 'Logo principal (canto superior direito)',
       icon: const _PlacementIcon(Placement.topRight),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          OutlinedButton.icon(
-            onPressed: (_photoPaths.isEmpty || !_controlsEnabled)
-                ? null
-                : _pickCornerLogo,
-            icon: const Icon(Icons.image_outlined),
-            label: Text(_cornerLogo == null
-                ? 'Adicionar logo principal'
-                : 'Trocar logo principal'),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              if (_cornerLogo != null) ...[
+                _thumb(
+                  size: 52,
+                  enabled: _controlsEnabled,
+                  onTap: _processing
+                      ? null
+                      : () => _openImagesFullscreen([_cornerLogo!.bytes], 0),
+                  child: Image.memory(_cornerLogo!.bytes, fit: BoxFit.contain),
+                  onRemove: () {
+                    setState(() => _cornerLogo = null);
+                    _schedulePreview();
+                  },
+                ),
+                const SizedBox(width: 10),
+              ],
+              OutlinedButton.icon(
+                onPressed: (_photoPaths.isEmpty || !_controlsEnabled)
+                    ? null
+                    : _pickCornerLogo,
+                icon: const Icon(Icons.image_outlined, size: 18),
+                label: Text(_cornerLogo == null ? 'Adicionar' : 'Trocar'),
+              ),
+            ],
           ),
-          const SizedBox(height: 8),
-          Text('Uma única logo no canto superior direito.',
-              style: Theme.of(context).textTheme.bodySmall),
+          const SizedBox(height: 6),
+          Text('Uma única logo no canto superior direito.', style: small),
           if (_cornerLogo != null) ...[
-            const SizedBox(height: 12),
-            _thumb(
-              enabled: _controlsEnabled,
-              onTap: _processing
-                  ? null
-                  : () => _openImagesFullscreen([_cornerLogo!.bytes], 0),
-              child: Image.memory(_cornerLogo!.bytes, fit: BoxFit.contain),
-              onRemove: () {
-                setState(() => _cornerLogo = null);
-                _schedulePreview();
-              },
-            ),
             _slider('Tamanho', _cornerHeight, 5, 40,
                 (v) => setState(() => _cornerHeight = v)),
             _slider('Distância do canto', _cornerMargin, 0, 15,
@@ -1270,27 +1285,36 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _textsCard() {
-    return _StepCard(
+  Widget _textsSection() {
+    final small = Theme.of(context).textTheme.bodySmall;
+    return _Section(
       number: 5,
-      title: 'Textos nas fotos',
-      icon: const Icon(Icons.text_fields),
+      title: 'Textos',
+      icon: const Icon(Icons.text_fields, size: 18),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          OutlinedButton.icon(
-            onPressed:
-                (_photoPaths.isEmpty || !_controlsEnabled) ? null : _addText,
-            icon: const Icon(Icons.title),
-            label: const Text('Adicionar texto'),
+          Row(
+            children: [
+              OutlinedButton.icon(
+                onPressed: (_photoPaths.isEmpty || !_controlsEnabled)
+                    ? null
+                    : _addText,
+                icon: const Icon(Icons.title, size: 18),
+                label: const Text('Adicionar texto'),
+              ),
+              const SizedBox(width: 12),
+              if (_texts.isNotEmpty)
+                Text('${_texts.length} texto(s)', style: small),
+            ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 6),
           Text(
             _photoPaths.isEmpty
                 ? 'Adicione as fotos primeiro; depois crie os textos.'
-                : 'Sempre centralizado na horizontal. Escolha a fonte do '
-                    'computador, as cores, o contorno, o tamanho e a altura.',
-            style: Theme.of(context).textTheme.bodySmall,
+                : 'Sempre centralizado na horizontal. Fonte do computador, '
+                    'qualquer cor, contorno, arco-íris e curvatura.',
+            style: small,
           ),
           for (final t in _texts) _textEditor(t),
         ],
@@ -1320,282 +1344,720 @@ class _HomePageState extends State<HomePage> {
       _schedulePreview();
     }
 
+    Widget toggle(String label, bool on, ValueChanged<bool> set) => FilterChip(
+          label: Text(label),
+          selected: on,
+          onSelected: !_controlsEnabled ? null : (s) => update(() => set(s)),
+        );
+
     return Container(
-      margin: const EdgeInsets.only(top: 12),
-      padding: const EdgeInsets.all(12),
+      margin: const EdgeInsets.only(top: 10),
+      padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
+        color: scheme.surface,
         border: Border.all(color: scheme.outlineVariant),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(6),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          TextFormField(
+            key: ValueKey('text_${t.id}'),
+            initialValue: t.text,
+            enabled: _controlsEnabled,
+            maxLines: null,
+            decoration: const InputDecoration(labelText: 'Texto'),
+            onChanged: (v) {
+              t.text = v;
+              _schedulePreview();
+            },
+          ),
+          const SizedBox(height: 8),
           Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Expanded(
-                child: TextFormField(
-                  key: ValueKey('text_${t.id}'),
-                  initialValue: t.text,
-                  enabled: _controlsEnabled,
-                  maxLines: null,
+                child: InputDecorator(
                   decoration: const InputDecoration(
-                    labelText: 'Texto',
-                    border: OutlineInputBorder(),
-                    isDense: true,
+                    labelText: 'Fonte (do computador)',
+                    contentPadding:
+                        EdgeInsets.symmetric(horizontal: 10, vertical: 2),
                   ),
-                  onChanged: (v) {
-                    t.text = v;
-                    _schedulePreview();
-                  },
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<String>(
+                      value: kTextFonts.contains(t.fontFamily)
+                          ? t.fontFamily
+                          : kTextFonts.first,
+                      isExpanded: true,
+                      isDense: true,
+                      items: [
+                        for (final f in kTextFonts)
+                          DropdownMenuItem(
+                            value: f,
+                            child: Text(f, style: TextStyle(fontFamily: f)),
+                          ),
+                      ],
+                      onChanged: !_controlsEnabled
+                          ? null
+                          : (v) {
+                              if (v != null) update(() => t.fontFamily = v);
+                            },
+                    ),
+                  ),
                 ),
               ),
+              const SizedBox(width: 4),
               IconButton(
                 tooltip: 'Remover texto',
-                icon: const Icon(Icons.delete_outline),
+                icon: const Icon(Icons.delete_outline, size: 20),
                 onPressed: !_controlsEnabled ? null : () => _removeText(t),
               ),
             ],
           ),
-          const SizedBox(height: 10),
-          InputDecorator(
-            decoration: const InputDecoration(
-              labelText: 'Fonte (do computador)',
-              border: OutlineInputBorder(),
-              isDense: true,
-              contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-            ),
-            child: DropdownButtonHideUnderline(
-              child: DropdownButton<String>(
-                value: kTextFonts.contains(t.fontFamily)
-                    ? t.fontFamily
-                    : kTextFonts.first,
-                isExpanded: true,
-                isDense: true,
-                items: [
-                  for (final f in kTextFonts)
-                    DropdownMenuItem(
-                      value: f,
-                      child: Text(f, style: TextStyle(fontFamily: f)),
-                    ),
-                ],
-                onChanged: !_controlsEnabled
-                    ? null
-                    : (v) {
-                        if (v != null) update(() => t.fontFamily = v);
-                      },
-              ),
-            ),
-          ),
           const SizedBox(height: 8),
           Wrap(
-            spacing: 8,
+            spacing: 6,
             runSpacing: 4,
             children: [
-              FilterChip(
-                label: const Text('Negrito'),
-                selected: t.bold,
-                onSelected:
-                    !_controlsEnabled ? null : (s) => update(() => t.bold = s),
-              ),
-              FilterChip(
-                label: const Text('Itálico'),
-                selected: t.italic,
-                onSelected: !_controlsEnabled
-                    ? null
-                    : (s) => update(() => t.italic = s),
-              ),
-              FilterChip(
-                label: const Text('Contorno'),
-                selected: t.outline,
-                onSelected: !_controlsEnabled
-                    ? null
-                    : (s) => update(() => t.outline = s),
-              ),
-              FilterChip(
-                label: const Text('Arco-íris'),
-                selected: t.rainbow,
-                onSelected: !_controlsEnabled
-                    ? null
-                    : (s) => update(() => t.rainbow = s),
-              ),
+              toggle('Negrito', t.bold, (s) => t.bold = s),
+              toggle('Itálico', t.italic, (s) => t.italic = s),
+              toggle('Contorno', t.outline, (s) => t.outline = s),
+              toggle('Arco-íris', t.rainbow, (s) => t.rainbow = s),
             ],
           ),
           if (!t.rainbow) ...[
             const SizedBox(height: 8),
-            _colorRow('Cor do texto', t.color, (c) => update(() => t.color = c)),
+            _colorField('Cor do texto', t.color,
+                (c) => update(() => t.color = c)),
           ],
           if (t.outline) ...[
             const SizedBox(height: 8),
-            _colorRow('Cor do contorno', t.outlineColor,
+            _colorField('Cor do contorno', t.outlineColor,
                 (c) => update(() => t.outlineColor = c)),
             _slider('Espessura do contorno', t.outlineWidth, 2, 20,
                 (v) => setState(() => t.outlineWidth = v)),
           ],
-          _slider('Tamanho do texto', t.heightPct, 2, 30,
+          _slider('Tamanho do texto', t.heightPct, 2, 60,
               (v) => setState(() => t.heightPct = v)),
-          _slider('Altura na foto (0% = topo, 100% = base)', t.topPct, 0, 100,
+          _slider('Altura na foto (0 = topo, 100 = base)', t.topPct, 0, 100,
               (v) => setState(() => t.topPct = v)),
+          _slider('Curvatura (− para baixo, + para cima)', t.curve, -180, 180,
+              (v) => setState(() => t.curve = v),
+              unit: '°'),
         ],
       ),
     );
   }
 
-  Widget _colorRow(String label, int selected, ValueChanged<int> onPick) {
-    final primary = Theme.of(context).colorScheme.primary;
+  // ---- Colors ----
+
+  static const List<int> _swatches = [
+    0xFFFFFFFF,
+    0xFF000000,
+    0xFFE53935,
+    0xFFFB8C00,
+    0xFFFDD835,
+    0xFF43A047,
+    0xFF1E88E5,
+    0xFF8E24AA,
+    0xFFEC407A,
+    0xFF05B2AE,
+  ];
+
+  static String _hex(int argb) =>
+      (argb & 0xFFFFFF).toRadixString(16).padLeft(6, '0').toUpperCase();
+
+  /// Label + quick swatches + a "custom" box that opens the full color picker.
+  Widget _colorField(String label, int selected, ValueChanged<int> onPick) {
+    final scheme = Theme.of(context).colorScheme;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('$label:', style: const TextStyle(fontWeight: FontWeight.w500)),
+        Text(label, style: Theme.of(context).textTheme.bodySmall),
         const SizedBox(height: 4),
         Wrap(
-          spacing: 6,
-          runSpacing: 6,
+          spacing: 5,
+          runSpacing: 5,
+          crossAxisAlignment: WrapCrossAlignment.center,
           children: [
             for (final c in _swatches)
               GestureDetector(
                 onTap: !_controlsEnabled ? null : () => onPick(c),
                 child: Container(
-                  width: 26,
-                  height: 26,
+                  width: 22,
+                  height: 22,
                   decoration: BoxDecoration(
                     color: Color(c),
-                    shape: BoxShape.circle,
+                    borderRadius: BorderRadius.circular(4),
                     border: Border.all(
-                      color: selected == c ? primary : Colors.grey.shade600,
-                      width: selected == c ? 3 : 1,
+                      color: selected == c ? scheme.primary : scheme.outline,
+                      width: selected == c ? 2 : 1,
                     ),
                   ),
                 ),
               ),
+            OutlinedButton.icon(
+              onPressed: !_controlsEnabled
+                  ? null
+                  : () async {
+                      final c = await _pickColor(selected);
+                      if (c != null) onPick(c);
+                    },
+              style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 8, vertical: 4),
+                  minimumSize: const Size(0, 28)),
+              icon: Container(
+                width: 14,
+                height: 14,
+                decoration: BoxDecoration(
+                  color: Color(selected),
+                  borderRadius: BorderRadius.circular(3),
+                  border: Border.all(color: scheme.outline),
+                ),
+              ),
+              label: Text('#${_hex(selected)}'),
+            ),
           ],
         ),
       ],
     );
   }
 
-  Widget _actionArea() {
+  /// Full color picker: hex code, hue / saturation / brightness sliders and
+  /// the quick swatches. Returns the ARGB value or null if cancelled.
+  Future<int?> _pickColor(int initial) {
+    var hsv = HSVColor.fromColor(Color(initial));
+    final hexCtl = TextEditingController(text: _hex(initial));
+    return showDialog<int>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setD) {
+          final color = hsv.toColor();
+          void setHsv(HSVColor v) {
+            setD(() {
+              hsv = v;
+              hexCtl.text = _hex(v.toColor().toARGB32());
+            });
+          }
+
+          Widget hsvSlider(String label, double value, double max,
+              ValueChanged<double> onChanged,
+              {Gradient? track}) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                        child: Text(label,
+                            style: Theme.of(ctx).textTheme.bodySmall)),
+                    Text(value.round().toString(),
+                        style: Theme.of(ctx).textTheme.bodySmall),
+                  ],
+                ),
+                SizedBox(
+                  height: 28,
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      if (track != null)
+                        Positioned(
+                          left: 6,
+                          right: 6,
+                          child: Container(
+                            height: 10,
+                            decoration: BoxDecoration(
+                              gradient: track,
+                              borderRadius: BorderRadius.circular(5),
+                            ),
+                          ),
+                        ),
+                      Slider(
+                        value: value,
+                        min: 0,
+                        max: max,
+                        activeColor:
+                            track == null ? null : Colors.transparent,
+                        inactiveColor:
+                            track == null ? null : Colors.transparent,
+                        onChanged: onChanged,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            );
+          }
+
+          return AlertDialog(
+            title: const Text('Escolher cor'),
+            content: SizedBox(
+              width: 340,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        width: 44,
+                        height: 44,
+                        decoration: BoxDecoration(
+                          color: color,
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(
+                              color: Theme.of(ctx).colorScheme.outline),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: TextField(
+                          controller: hexCtl,
+                          decoration: const InputDecoration(
+                              labelText: 'Código hex', prefixText: '#'),
+                          onChanged: (v) {
+                            final clean = v.replaceAll('#', '').trim();
+                            if (clean.length != 6) return;
+                            final n = int.tryParse(clean, radix: 16);
+                            if (n == null) return;
+                            setD(() => hsv =
+                                HSVColor.fromColor(Color(0xFF000000 | n)));
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  hsvSlider('Matiz', hsv.hue, 360,
+                      (v) => setHsv(hsv.withHue(v)),
+                      track: LinearGradient(colors: [
+                        for (var h = 0; h <= 360; h += 60)
+                          HSVColor.fromAHSV(1, h.toDouble(), 1, 1).toColor(),
+                      ])),
+                  hsvSlider('Saturação', hsv.saturation * 100, 100,
+                      (v) => setHsv(hsv.withSaturation(v / 100)),
+                      track: LinearGradient(colors: [
+                        HSVColor.fromAHSV(1, hsv.hue, 0, hsv.value).toColor(),
+                        HSVColor.fromAHSV(1, hsv.hue, 1, hsv.value).toColor(),
+                      ])),
+                  hsvSlider('Brilho', hsv.value * 100, 100,
+                      (v) => setHsv(hsv.withValue(v / 100)),
+                      track: LinearGradient(colors: [
+                        Colors.black,
+                        HSVColor.fromAHSV(1, hsv.hue, hsv.saturation, 1)
+                            .toColor(),
+                      ])),
+                  const SizedBox(height: 6),
+                  Wrap(
+                    spacing: 5,
+                    runSpacing: 5,
+                    children: [
+                      for (final c in _swatches)
+                        GestureDetector(
+                          onTap: () => setHsv(HSVColor.fromColor(Color(c))),
+                          child: Container(
+                            width: 22,
+                            height: 22,
+                            decoration: BoxDecoration(
+                              color: Color(c),
+                              borderRadius: BorderRadius.circular(4),
+                              border: Border.all(
+                                  color: Theme.of(ctx).colorScheme.outline),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Cancelar')),
+              FilledButton(
+                  onPressed: () => Navigator.pop(ctx, color.toARGB32()),
+                  child: const Text('Usar cor')),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  // ---- Right pane (preview) ----
+
+  Widget _previewPane() {
+    final scheme = Theme.of(context).colorScheme;
+    final small = Theme.of(context).textTheme.bodySmall;
+    final paths = _photoPaths.take(kMaxPreview).toList();
+    if (paths.isEmpty) {
+      return Container(
+        color: scheme.surface,
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.image_outlined, size: 56, color: scheme.outline),
+              const SizedBox(height: 10),
+              Text('Adicione fotos para ver a pré-visualização.',
+                  style: TextStyle(color: scheme.outline)),
+            ],
+          ),
+        ),
+      );
+    }
+    final n = paths.length;
+    final idx = _previewIndex.clamp(0, n - 1);
+    final ready = _hasAnyContent && idx < _previews.length;
+    final rendering = _hasAnyContent && !ready;
+
+    Widget picture;
+    if (ready) {
+      final p = _previews[idx];
+      picture = AspectRatio(
+        aspectRatio: p.aspect,
+        child: Container(
+          decoration:
+              BoxDecoration(border: Border.all(color: scheme.outlineVariant)),
+          child: Image.memory(p.bytes, fit: BoxFit.contain, gaplessPlayback: true),
+        ),
+      );
+    } else {
+      picture = Image.file(File(paths[idx]),
+          fit: BoxFit.contain, cacheWidth: 1600, gaplessPlayback: true);
+    }
+
+    return Container(
+      color: scheme.surface,
+      child: Column(
+        children: [
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+              child: Stack(
+                children: [
+                  Positioned.fill(
+                    child: Center(
+                      child: MouseRegion(
+                        cursor: _processing
+                            ? SystemMouseCursors.basic
+                            : SystemMouseCursors.zoomIn,
+                        child: GestureDetector(
+                          onTap: _processing ? null : () => _openFullscreen(idx),
+                          child: picture,
+                        ),
+                      ),
+                    ),
+                  ),
+                  if (rendering)
+                    Positioned(
+                        top: 8, left: 8, child: _badge('Gerando pré-visualização…')),
+                  if (!_hasAnyContent)
+                    Positioned(
+                        top: 8,
+                        left: 8,
+                        child: _badge('Foto original — adicione logos ou textos')),
+                  Positioned(top: 8, right: 8, child: _badge('${idx + 1} / $n')),
+                  if (n > 1) ...[
+                    Positioned(
+                      left: 4,
+                      top: 0,
+                      bottom: 0,
+                      child: Center(
+                        child: _navButton(
+                            Icons.chevron_left,
+                            idx > 0
+                                ? () => setState(() => _previewIndex = idx - 1)
+                                : null),
+                      ),
+                    ),
+                    Positioned(
+                      right: 4,
+                      top: 0,
+                      bottom: 0,
+                      child: Center(
+                        child: _navButton(
+                            Icons.chevron_right,
+                            idx < n - 1
+                                ? () => setState(() => _previewIndex = idx + 1)
+                                : null),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          SizedBox(
+            height: 72,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+              itemCount: n,
+              separatorBuilder: (_, __) => const SizedBox(width: 8),
+              itemBuilder: (context, i) {
+                final sel = i == idx;
+                final hasRender = _hasAnyContent && i < _previews.length;
+                return GestureDetector(
+                  onTap: () => setState(() => _previewIndex = i),
+                  child: Container(
+                    width: 60,
+                    decoration: BoxDecoration(
+                      border: Border.all(
+                        color: sel ? scheme.primary : scheme.outlineVariant,
+                        width: sel ? 2 : 1,
+                      ),
+                    ),
+                    child: hasRender
+                        ? Image.memory(_previews[i].bytes, fit: BoxFit.cover)
+                        : Image.file(File(paths[i]),
+                            fit: BoxFit.cover, cacheWidth: 200),
+                  ),
+                );
+              },
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: Text(
+              'Pré-visualização das primeiras $kMaxPreview fotos. Clique na '
+              'imagem para tela cheia (roda do mouse dá zoom).',
+              style: small,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _badge(String text) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: Colors.black54,
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Text(text,
+            style: const TextStyle(color: Colors.white, fontSize: 11.5)),
+      );
+
+  Widget _navButton(IconData icon, VoidCallback? onPressed) => Material(
+        color: Colors.black45,
+        shape: const CircleBorder(),
+        child: IconButton(
+          icon: Icon(icon, color: Colors.white),
+          onPressed: onPressed,
+        ),
+      );
+
+  // ---- Bottom bar (save / progress) ----
+
+  Widget _actionBar() {
+    final scheme = Theme.of(context).colorScheme;
+    final small = Theme.of(context).textTheme.bodySmall;
+    Widget content;
     if (_processing) {
       final progress = _total == 0 ? 0.0 : _done / _total;
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+      content = Row(
         children: [
-          LinearProgressIndicator(value: progress),
-          const SizedBox(height: 8),
-          Text('Processando $_done de $_total…', textAlign: TextAlign.center),
-          const SizedBox(height: 4),
-          Text(
-            'Mantenha o app aberto.',
-            style: Theme.of(context).textTheme.bodySmall,
-            textAlign: TextAlign.center,
+          Expanded(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Salvando $_done de $_total…',
+                    style: const TextStyle(fontWeight: FontWeight.w600)),
+                const SizedBox(height: 6),
+                LinearProgressIndicator(value: progress, minHeight: 6),
+              ],
+            ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(width: 16),
           OutlinedButton.icon(
             // Finishes the current image, then stops and restores the
-            // pre-save state. Disabled (shows "Cancelando…") once tapped.
+            // pre-save state. Disabled (shows "Cancelando…") once clicked.
             onPressed: _cancelRequested
                 ? null
                 : () => setState(() => _cancelRequested = true),
-            icon: const Icon(Icons.stop_circle_outlined),
+            icon: const Icon(Icons.stop_circle_outlined, size: 18),
             label: Text(_cancelRequested ? 'Cancelando…' : 'Cancelar'),
           ),
         ],
       );
-    }
-    // Everything currently selected has already been saved.
-    if (_allSaved && _currentAlbum != null) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+    } else if (_allSaved && _currentAlbum != null) {
+      content = Row(
         children: [
+          Expanded(
+            child: Text(
+              'Tudo salvo na pasta “$_currentAlbum”. Fotos novas vão para a '
+              'mesma pasta; use “Novo projeto” para começar do zero.',
+              style: small,
+            ),
+          ),
+          const SizedBox(width: 16),
           OutlinedButton.icon(
             onPressed: _pickPhotos,
-            icon: const Icon(Icons.add_photo_alternate_outlined),
+            icon: const Icon(Icons.add_photo_alternate_outlined, size: 18),
             label: const Text('Adicionar mais fotos'),
           ),
-          const SizedBox(height: 6),
-          Text(
-            'Tudo salvo na pasta “$_currentAlbum”. Fotos novas vão para a mesma '
-            'pasta. Use “Novo projeto” para começar do zero.',
-            style: Theme.of(context).textTheme.bodySmall,
-            textAlign: TextAlign.center,
+        ],
+      );
+    } else {
+      final firstSave = _currentAlbum == null;
+      content = Row(
+        children: [
+          Expanded(
+            child: Text(
+              firstSave
+                  ? 'As imagens são salvas em Imagens\\JCV Watermarker, numa '
+                      'pasta nomeada pela data/hora.'
+                  : 'As novas fotos vão para a mesma pasta “$_currentAlbum”.',
+              style: small,
+            ),
+          ),
+          const SizedBox(width: 16),
+          FilledButton.icon(
+            onPressed: _canProcess ? _saveAll : null,
+            style: FilledButton.styleFrom(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 22, vertical: 14)),
+            icon: const Icon(Icons.check_circle_outline, size: 18),
+            label: Text(firstSave ? 'Aplicar e salvar tudo' : 'Salvar novas fotos'),
           ),
         ],
       );
     }
-    final firstSave = _currentAlbum == null;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        FilledButton.icon(
-          onPressed: _canProcess ? _saveAll : null,
-          style: FilledButton.styleFrom(
-              minimumSize: const Size.fromHeight(52)),
-          icon: const Icon(Icons.check_circle_outline),
-          label: Text(
-              firstSave ? 'Aplicar e salvar tudo' : 'Salvar novas fotos'),
-        ),
-        const SizedBox(height: 6),
-        Text(
-          firstSave
-              ? 'As imagens são salvas em Imagens\\JCV Watermarker, numa pasta '
-                  'nomeada pela data/hora.'
-              : 'As novas fotos vão para a mesma pasta “$_currentAlbum”.',
-          style: Theme.of(context).textTheme.bodySmall,
-        ),
-      ],
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainer,
+        border: Border(top: BorderSide(color: scheme.outlineVariant)),
+      ),
+      child: content,
     );
   }
 
-  Widget _resultBanner() {
-    final r = _lastResult!;
-    final ok = r.failed == 0;
-    final scheme = Theme.of(context).colorScheme;
-    return Card(
-      color: ok ? scheme.secondaryContainer : scheme.errorContainer,
-      child: ListTile(
-        leading: Icon(ok ? Icons.check_circle : Icons.error_outline),
-        title: Text(ok
-            ? '${r.saved} foto(s) salva(s)'
-            : '${r.saved} salva(s), ${r.failed} falharam'),
-        subtitle: Text('Pasta: Imagens\\JCV Watermarker\\${r.album}'),
-        trailing: IconButton(
-          icon: const Icon(Icons.close),
-          tooltip: 'Dispensar',
-          onPressed: () => setState(() => _lastResult = null),
+  // ---- Fullscreen ----
+
+  void _openFullscreen(int index) {
+    // Show ALL preview photos (so you can move to ones not rendered yet) and
+    // render each at high resolution on demand, so zoom stays sharp.
+    final paths = _photoPaths.take(kMaxPreview).toList();
+    if (paths.isEmpty) return;
+    final placeholders = [
+      for (var i = 0; i < paths.length; i++)
+        i < _previews.length ? _previews[i].bytes : null,
+    ];
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        fullscreenDialog: true,
+        builder: (_) => _FullscreenViewer(
+          initialPage: index,
+          itemCount: paths.length,
+          placeholders: placeholders,
+          loader: (i) => _renderFull(paths[i]),
         ),
       ),
     );
   }
 
+  /// Renders one watermarked photo at FULL resolution (same as the saved file)
+  /// so logos and text stay sharp when zoomed in the viewer.
+  Future<Uint8List?> _renderFull(String path) async {
+    try {
+      final bytes = _photoCache[path] ??= await File(path).readAsBytes();
+      await _ensureTextPngs();
+      return await compute(renderWatermark, _request(bytes, quality: 95));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Opens any list of image bytes (e.g. logos) in the zoomable viewer.
+  void _openImagesFullscreen(List<Uint8List> images, int index) {
+    if (images.isEmpty) return;
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        fullscreenDialog: true,
+        builder: (_) => _FullscreenViewer(
+          initialPage: index,
+          itemCount: images.length,
+          placeholders: images, // already full-res; show immediately
+          loader: (i) async => images[i],
+        ),
+      ),
+    );
+  }
+
+  // ---- Banners / project ----
+
+  Widget _resultBanner() {
+    final r = _lastResult!;
+    final ok = r.failed == 0;
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      margin: const EdgeInsets.fromLTRB(14, 14, 14, 0),
+      padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
+      decoration: BoxDecoration(
+        color: ok ? scheme.secondaryContainer : scheme.errorContainer,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Row(
+        children: [
+          Icon(ok ? Icons.check_circle : Icons.error_outline, size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                    ok
+                        ? '${r.saved} foto(s) salva(s)'
+                        : '${r.saved} salva(s), ${r.failed} falharam',
+                    style: const TextStyle(fontWeight: FontWeight.w600)),
+                Text('Imagens\\JCV Watermarker\\${r.album}',
+                    style: Theme.of(context).textTheme.bodySmall),
+              ],
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.close, size: 18),
+            tooltip: 'Dispensar',
+            onPressed: () => setState(() => _lastResult = null),
+          ),
+        ],
+      ),
+    );
+  }
+
   /// Shown once a project has been saved: edits are locked, only adding photos
-  /// (into the same album) stays available. Makes the locked state obvious and
-  /// offers a one-tap way out.
+  /// (into the same folder) stays available.
   Widget _lockedBanner() {
     final scheme = Theme.of(context).colorScheme;
-    return Card(
-      color: scheme.tertiaryContainer,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
-        child: Row(
-          children: [
-            const Icon(Icons.lock_outline),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                'Projeto já salvo na pasta “$_currentAlbum”. Ajustes, logos e '
-                'textos estão travados; fotos novas vão para a mesma pasta com a '
-                'mesma configuração. Para editar ou usar outras fotos, comece um '
-                'novo projeto.',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
+    return Container(
+      margin: const EdgeInsets.fromLTRB(14, 14, 14, 0),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: scheme.tertiaryContainer,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.lock_outline, size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Projeto salvo na pasta “$_currentAlbum”. Ajustes, logos e textos '
+              'estão travados; fotos novas vão para a mesma pasta com a mesma '
+              'configuração. Para editar, comece um novo projeto.',
+              style: Theme.of(context).textTheme.bodySmall,
             ),
-            const SizedBox(width: 8),
-            FilledButton(
-              onPressed: _confirmNewProject,
-              child: const Text('Novo projeto'),
-            ),
-          ],
-        ),
+          ),
+          const SizedBox(width: 8),
+          FilledButton(
+            onPressed: _confirmNewProject,
+            child: const Text('Novo projeto'),
+          ),
+        ],
       ),
     );
   }
@@ -1633,6 +2095,7 @@ class _HomePageState extends State<HomePage> {
       _lastResult = null;
       _previews = [];
       _previewTotal = 0;
+      _previewIndex = 0;
       _renderingPreview = false;
       _importing = false;
       _checkingLogos = false;
@@ -1658,61 +2121,66 @@ class _HomePageState extends State<HomePage> {
     await _saveProject();
   }
 
+  // ---- Small controls ----
+
   Widget _alignmentChooser() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text('Alinhamento das logos da base:',
-            style: TextStyle(fontWeight: FontWeight.w500)),
-        const SizedBox(height: 4),
-        Wrap(
-          spacing: 8,
-          children: [
-            ChoiceChip(
-              label: const Text('Esquerda → direita'),
-              selected: !_centered,
-              onSelected: !_controlsEnabled
-                  ? null
-                  : (s) {
-                      setState(() => _centered = false);
-                      _schedulePreview();
-                    },
-            ),
-            ChoiceChip(
-              label: const Text('Centralizado'),
-              selected: _centered,
-              onSelected: !_controlsEnabled
-                  ? null
-                  : (s) {
-                      setState(() => _centered = true);
-                      _schedulePreview();
-                    },
-            ),
-          ],
-        ),
-      ],
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: Row(
+        children: [
+          Text('Alinhamento', style: Theme.of(context).textTheme.bodySmall),
+          const SizedBox(width: 10),
+          SegmentedButton<bool>(
+            segments: const [
+              ButtonSegment(value: false, label: Text('Esquerda → direita')),
+              ButtonSegment(value: true, label: Text('Centralizado')),
+            ],
+            selected: {_centered},
+            showSelectedIcon: false,
+            onSelectionChanged: !_controlsEnabled
+                ? null
+                : (s) {
+                    setState(() => _centered = s.first);
+                    _schedulePreview();
+                  },
+          ),
+        ],
+      ),
     );
   }
 
   Widget _slider(String label, double value, double min, double max,
-      ValueChanged<double> onChanged) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('$label: ${value.round()}%',
-            style: const TextStyle(fontWeight: FontWeight.w500)),
-        Slider(
-          value: value,
-          min: min,
-          max: max,
-          onChanged: !_controlsEnabled
-              ? null
-              : (v) {
-                  onChanged(v);
-                  _schedulePreview();
-                },
-        ),
-      ],
+      ValueChanged<double> onChanged,
+      {String unit = '%'}) {
+    final small = Theme.of(context).textTheme.bodySmall;
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(child: Text(label, style: small)),
+              Text('${value.round()}$unit',
+                  style: small?.copyWith(fontWeight: FontWeight.w600)),
+            ],
+          ),
+          SizedBox(
+            height: 26,
+            child: Slider(
+              value: value.clamp(min, max),
+              min: min,
+              max: max,
+              onChanged: !_controlsEnabled
+                  ? null
+                  : (v) {
+                      onChanged(v);
+                      _schedulePreview();
+                    },
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1721,20 +2189,21 @@ class _HomePageState extends State<HomePage> {
     required VoidCallback onRemove,
     VoidCallback? onTap,
     bool enabled = true,
+    double size = 60,
   }) {
     return SizedBox(
-      width: 76,
-      height: 76,
+      width: size,
+      height: size,
       child: Stack(
         children: [
           GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTap: onTap,
             child: ClipRRect(
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(4),
               child: Container(
-                width: 76,
-                height: 76,
+                width: size,
+                height: size,
                 color: Theme.of(context).colorScheme.surfaceContainerHighest,
                 child: child,
               ),
@@ -1751,7 +2220,7 @@ class _HomePageState extends State<HomePage> {
                       color: Colors.black54, shape: BoxShape.circle),
                   padding: const EdgeInsets.all(2),
                   child:
-                      const Icon(Icons.close, size: 16, color: Colors.white),
+                      const Icon(Icons.close, size: 14, color: Colors.white),
                 ),
               ),
             ),
@@ -1761,8 +2230,9 @@ class _HomePageState extends State<HomePage> {
   }
 }
 
-class _StepCard extends StatelessWidget {
-  const _StepCard({
+/// One settings block in the sidebar: numbered header + content + divider.
+class _Section extends StatelessWidget {
+  const _Section({
     required this.number,
     required this.title,
     required this.icon,
@@ -1777,41 +2247,49 @@ class _StepCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return Card(
-      elevation: 2,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                CircleAvatar(
-                  radius: 14,
-                  backgroundColor: scheme.primary,
-                  child: Text('$number',
-                      style: TextStyle(
-                          color: scheme.onPrimary,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 14)),
-                ),
-                const SizedBox(width: 10),
-                SizedBox(width: 28, height: 28, child: icon),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(title,
-                      style: Theme.of(context)
-                          .textTheme
-                          .titleMedium
-                          ?.copyWith(fontWeight: FontWeight.w600)),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            child,
-          ],
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 22,
+                    height: 22,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: scheme.primary,
+                      borderRadius: BorderRadius.circular(5),
+                    ),
+                    child: Text('$number',
+                        style: TextStyle(
+                            color: scheme.onPrimary,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12)),
+                  ),
+                  const SizedBox(width: 8),
+                  SizedBox(width: 22, height: 22, child: icon),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(title,
+                        style: Theme.of(context)
+                            .textTheme
+                            .titleSmall
+                            ?.copyWith(fontWeight: FontWeight.w600)),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              child,
+            ],
+          ),
         ),
-      ),
+        Divider(height: 1, thickness: 1, color: scheme.outlineVariant),
+      ],
     );
   }
 }
@@ -1824,7 +2302,7 @@ class _PlacementIcon extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return CustomPaint(
-      size: const Size(28, 28),
+      size: const Size(22, 22),
       painter: _PlacementPainter(placement, Theme.of(context).colorScheme.primary),
     );
   }
@@ -1840,7 +2318,7 @@ class _PlacementPainter extends CustomPainter {
     final frameW = size.width;
     final frameH = frameW * 9 / 16;
     final top = (size.height - frameH) / 2;
-    final stroke = (frameH * 0.09).clamp(2.0, 4.0);
+    final stroke = (frameH * 0.09).clamp(1.5, 3.0);
     final radius = Radius.circular(frameH * 0.14);
 
     final outline = Paint()
@@ -1894,9 +2372,9 @@ class _PlacementPainter extends CustomPainter {
       old.placement != placement || old.color != color;
 }
 
-/// Full-screen, swipeable image viewer. Each page is produced on demand by
-/// [loader] (e.g. a high-res render), so you can swipe across all items even
-/// before they're ready, and zoom stays sharp. Cached once loaded.
+/// Full-screen image viewer with pages. Each page is produced on demand by
+/// [loader] (e.g. a high-res render) and cached. Zoom with the mouse wheel,
+/// the +/- buttons or a pinch; the image is always kept inside the frame.
 class _FullscreenViewer extends StatefulWidget {
   const _FullscreenViewer({
     required this.initialPage,
@@ -1918,14 +2396,19 @@ class _FullscreenViewer extends StatefulWidget {
 }
 
 class _FullscreenViewerState extends State<_FullscreenViewer> {
+  static const double _maxScale = 8;
   late final PageController _controller;
+  final TransformationController _zoom = TransformationController();
   final Map<int, Uint8List> _cache = {};
   final Set<int> _loading = {};
+  int _page = 0;
 
   @override
   void initState() {
     super.initState();
+    _page = widget.initialPage;
     _controller = PageController(initialPage: widget.initialPage);
+    _zoom.addListener(() => setState(() {}));
     _load(widget.initialPage);
     _load(widget.initialPage + 1);
   }
@@ -1933,6 +2416,7 @@ class _FullscreenViewerState extends State<_FullscreenViewer> {
   @override
   void dispose() {
     _controller.dispose();
+    _zoom.dispose();
     super.dispose();
   }
 
@@ -1949,6 +2433,32 @@ class _FullscreenViewerState extends State<_FullscreenViewer> {
     }
   }
 
+  double get _scale => _zoom.value.getMaxScaleOnAxis();
+
+  /// Zooms to [target] around the viewport center and keeps the (viewport
+  /// sized) child covering the frame, so it can never drift out of view.
+  void _zoomTo(double target) {
+    final size = MediaQuery.of(context).size;
+    final s = target.clamp(1.0, _maxScale);
+    if (s <= 1.0) {
+      _zoom.value = Matrix4.identity();
+      return;
+    }
+    final k = s / _scale;
+    final c = Offset(size.width / 2, size.height / 2);
+    final m = Matrix4.identity()
+      ..translate(c.dx, c.dy)
+      ..scale(k)
+      ..translate(-c.dx, -c.dy);
+    final next = m.multiplied(_zoom.value);
+    final minTx = size.width - size.width * s;
+    final minTy = size.height - size.height * s;
+    final tx = next.storage[12].clamp(minTx, 0.0);
+    final ty = next.storage[13].clamp(minTy, 0.0);
+    next.setTranslationRaw(tx, ty, 0);
+    _zoom.value = next;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -1958,7 +2468,12 @@ class _FullscreenViewerState extends State<_FullscreenViewer> {
           PageView.builder(
             controller: _controller,
             itemCount: widget.itemCount,
+            physics: _scale > 1.01
+                ? const NeverScrollableScrollPhysics()
+                : const PageScrollPhysics(),
             onPageChanged: (i) {
+              _zoom.value = Matrix4.identity();
+              setState(() => _page = i);
               _load(i);
               _load(i + 1);
               _load(i - 1);
@@ -1975,30 +2490,91 @@ class _FullscreenViewerState extends State<_FullscreenViewer> {
                 return const Center(child: CircularProgressIndicator());
               }
               if (hi == null) _load(i); // upgrade placeholder to sharp version
-              // Mouse wheel / pinch zooms; trackpad scroll zooms too.
-              return InteractiveViewer(
-                maxScale: 6,
-                trackpadScrollCausesScale: true,
-                child: Center(
-                  child: Image.memory(bytes, fit: BoxFit.contain),
+              return GestureDetector(
+                onDoubleTap: () => _zoomTo(_scale > 1.01 ? 1 : 2.5),
+                child: InteractiveViewer(
+                  transformationController: i == _page ? _zoom : null,
+                  minScale: 1,
+                  maxScale: _maxScale,
+                  trackpadScrollCausesScale: true,
+                  child: SizedBox.expand(
+                    child: Image.memory(bytes,
+                        fit: BoxFit.contain, gaplessPlayback: true),
+                  ),
                 ),
               );
             },
           ),
+          // Top bar: counter + close.
           SafeArea(
-            child: Align(
-              alignment: Alignment.topRight,
-              child: Padding(
-                padding: const EdgeInsets.all(10),
-                child: Material(
-                  color: Colors.black54,
-                  shape: const CircleBorder(),
-                  child: IconButton(
-                    iconSize: 36,
-                    padding: const EdgeInsets.all(12),
-                    tooltip: 'Fechar',
-                    icon: const Icon(Icons.close, color: Colors.white),
-                    onPressed: () => Navigator.of(context).pop(),
+            child: Padding(
+              padding: const EdgeInsets.all(10),
+              child: Row(
+                children: [
+                  if (widget.itemCount > 1)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                          color: Colors.black54,
+                          borderRadius: BorderRadius.circular(6)),
+                      child: Text('${_page + 1} / ${widget.itemCount}',
+                          style: const TextStyle(color: Colors.white)),
+                    ),
+                  const Spacer(),
+                  Material(
+                    color: Colors.black54,
+                    shape: const CircleBorder(),
+                    child: IconButton(
+                      iconSize: 28,
+                      tooltip: 'Fechar (Esc)',
+                      icon: const Icon(Icons.close, color: Colors.white),
+                      onPressed: () => Navigator.of(context).pop(),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          // Bottom: zoom controls.
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 16,
+            child: Center(
+              child: Material(
+                color: Colors.black54,
+                borderRadius: BorderRadius.circular(8),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        tooltip: 'Menos zoom',
+                        icon: const Icon(Icons.remove, color: Colors.white),
+                        onPressed:
+                            _scale > 1.01 ? () => _zoomTo(_scale / 1.5) : null,
+                      ),
+                      SizedBox(
+                        width: 56,
+                        child: Text('${(_scale * 100).round()}%',
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(color: Colors.white)),
+                      ),
+                      IconButton(
+                        tooltip: 'Mais zoom',
+                        icon: const Icon(Icons.add, color: Colors.white),
+                        onPressed: _scale < _maxScale - 0.01
+                            ? () => _zoomTo(_scale * 1.5)
+                            : null,
+                      ),
+                      IconButton(
+                        tooltip: 'Ajustar à tela',
+                        icon: const Icon(Icons.fit_screen, color: Colors.white),
+                        onPressed: _scale > 1.01 ? () => _zoomTo(1) : null,
+                      ),
+                    ],
                   ),
                 ),
               ),
