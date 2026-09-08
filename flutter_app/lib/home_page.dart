@@ -33,6 +33,24 @@ typedef _TextGeometry = ({
   void Function(Canvas canvas, Offset origin) paint,
 });
 
+/// A picture placed on the text's arc, before and/or after the glyphs.
+class _EndPic {
+  const _EndPic({
+    required this.image,
+    required this.w,
+    required this.h,
+    required this.gap,
+    required this.left,
+    required this.right,
+  });
+  final ui.Image image;
+  final double w;
+  final double h;
+  final double gap;
+  final bool left;
+  final bool right;
+}
+
 /// A rendered preview plus its aspect ratio, so its frame can match the image.
 class _Preview {
   _Preview(this.bytes, this.aspect);
@@ -111,6 +129,7 @@ class _HomePageState extends State<HomePage> {
   int _previewToken = 0;
   Timer? _debounce;
   final ScrollController _thumbCtl = ScrollController();
+  List<Map<String, dynamic>> _history = []; // past saves, newest first
 
   // Processing state.
   bool _processing = false;
@@ -145,6 +164,9 @@ class _HomePageState extends State<HomePage> {
     super.initState();
     _worker.start();
     _loadProject();
+    _getHistory().then((h) {
+      if (mounted) setState(() => _history = h);
+    });
   }
 
   @override
@@ -598,9 +620,6 @@ class _HomePageState extends State<HomePage> {
       fontSize *= scale;
       m = _measureText(t, fontSize);
     }
-    final geo =
-        t.curve.abs() < 0.5 ? _straightGeometry(t, m) : _curvedGeometry(t, m);
-
     // Optional picture attached to the text (decoded by Flutter: fast).
     ui.Image? pic;
     final picBytes = t.imageBytes;
@@ -615,43 +634,70 @@ class _HomePageState extends State<HomePage> {
       }
     }
 
-    // Lay out text + picture as ONE block; the engine centers the block.
     final hasText = t.text.trim().isNotEmpty;
+    final curved = t.curve.abs() >= 0.5;
+    // Curved text is always a single line; straight text may have several.
+    final glyphH = curved ? _lineHeight(m) : m.measure.height;
+    final picH = pic == null ? 0.0 : glyphH * t.imageSize / 100;
+    final picW = pic == null ? 0.0 : picH * pic.width / pic.height;
+    final gap = glyphH * t.imageGap / 100;
+    final sidePos = t.imagePos == TextImagePos.left ||
+        t.imagePos == TextImagePos.right ||
+        t.imagePos == TextImagePos.both;
+
+    // On a curve, a picture beside the text rides the arc like a glyph.
+    _EndPic? endPic;
+    if (pic != null && hasText && curved && sidePos) {
+      endPic = _EndPic(
+        image: pic,
+        w: picW,
+        h: picH,
+        gap: gap,
+        left: t.imagePos != TextImagePos.right,
+        right: t.imagePos != TextImagePos.left,
+      );
+    }
+    final geo = curved
+        ? _curvedGeometry(t, m, endPic: endPic)
+        : _straightGeometry(t, m);
+
+    // Lay out text + picture as ONE block; the engine centers the block.
     var w = geo.w, h = geo.h;
     var textOrigin = Offset.zero;
-    Rect? picRect;
+    final picRects = <Rect>[];
     if (pic != null && !hasText) {
       // Picture only: no phantom empty line around it.
-      final picH = geo.glyphH * t.imageSize / 100;
-      final picW = picH * pic.width / pic.height;
       w = picW;
       h = picH;
-      picRect = Rect.fromLTWH(0, 0, picW, picH);
-    } else if (pic != null) {
-      final picH = geo.glyphH * t.imageSize / 100;
-      final picW = picH * pic.width / pic.height;
-      final gap = geo.glyphH * t.imageGap / 100;
+      picRects.add(Rect.fromLTWH(0, 0, picW, picH));
+    } else if (pic != null && endPic == null) {
       switch (t.imagePos) {
         case TextImagePos.top:
           w = math.max(geo.w, picW);
           h = picH + gap + geo.h;
-          picRect = Rect.fromLTWH((w - picW) / 2, 0, picW, picH);
+          picRects.add(Rect.fromLTWH((w - picW) / 2, 0, picW, picH));
           textOrigin = Offset((w - geo.w) / 2, picH + gap);
         case TextImagePos.bottom:
           w = math.max(geo.w, picW);
           h = geo.h + gap + picH;
           textOrigin = Offset((w - geo.w) / 2, 0);
-          picRect = Rect.fromLTWH((w - picW) / 2, geo.h + gap, picW, picH);
+          picRects.add(Rect.fromLTWH((w - picW) / 2, geo.h + gap, picW, picH));
         case TextImagePos.left:
           w = picW + gap + geo.w;
           h = math.max(geo.h, picH);
-          picRect = Rect.fromLTWH(0, (h - picH) / 2, picW, picH);
+          picRects.add(Rect.fromLTWH(0, (h - picH) / 2, picW, picH));
           textOrigin = Offset(picW + gap, (h - geo.h) / 2);
         case TextImagePos.right:
           w = geo.w + gap + picW;
           h = math.max(geo.h, picH);
           textOrigin = Offset(0, (h - geo.h) / 2);
-          picRect = Rect.fromLTWH(geo.w + gap, (h - picH) / 2, picW, picH);
+          picRects.add(Rect.fromLTWH(geo.w + gap, (h - picH) / 2, picW, picH));
+        case TextImagePos.both:
+          w = picW + gap + geo.w + gap + picW;
+          h = math.max(geo.h, picH);
+          picRects.add(Rect.fromLTWH(0, (h - picH) / 2, picW, picH));
+          textOrigin = Offset(picW + gap, (h - geo.h) / 2);
+          picRects.add(Rect.fromLTWH(w - picW, (h - picH) / 2, picW, picH));
         case TextImagePos.inside:
           // Inside the arc: hanging from the top of an upward curve, resting
           // on the bottom of a downward one; behind the text when straight.
@@ -666,7 +712,7 @@ class _HomePageState extends State<HomePage> {
           }
           final shift = picY < 0 ? -picY : 0.0;
           h = math.max(geo.h, picY + picH) + shift;
-          picRect = Rect.fromLTWH((w - picW) / 2, picY + shift, picW, picH);
+          picRects.add(Rect.fromLTWH((w - picW) / 2, picY + shift, picW, picH));
           textOrigin = Offset((w - geo.w) / 2, shift);
       }
     }
@@ -679,13 +725,15 @@ class _HomePageState extends State<HomePage> {
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
     if (s < 1.0) canvas.scale(s);
-    if (pic != null && picRect != null) {
-      canvas.drawImageRect(
-        pic,
-        Rect.fromLTWH(0, 0, pic.width.toDouble(), pic.height.toDouble()),
-        picRect,
-        Paint()..filterQuality = FilterQuality.high,
-      );
+    if (pic != null) {
+      for (final r in picRects) {
+        canvas.drawImageRect(
+          pic,
+          Rect.fromLTWH(0, 0, pic.width.toDouble(), pic.height.toDouble()),
+          r,
+          Paint()..filterQuality = FilterQuality.high,
+        );
+      }
     }
     if (hasText) geo.paint(canvas, textOrigin);
     final picture = recorder.endRecording();
@@ -763,8 +811,10 @@ class _HomePageState extends State<HomePage> {
   }
 
   /// Lays out [t] glyph by glyph along a circular arc of [TextItem.curve]
-  /// degrees (positive = arc up, like a rainbow; negative = arc down).
-  _TextGeometry _curvedGeometry(TextItem t, _TextMeasure m) {
+  /// degrees (positive = arc up, like a rainbow; negative = arc down). With
+  /// [endPic] the picture is placed on the arc before and/or after the text,
+  /// rotated like the glyphs.
+  _TextGeometry _curvedGeometry(TextItem t, _TextMeasure m, {_EndPic? endPic}) {
     final chars = [
       for (final r in t.text.replaceAll('\n', ' ').runes) String.fromCharCode(r)
     ];
@@ -775,9 +825,32 @@ class _HomePageState extends State<HomePage> {
           textDirection: TextDirection.ltr,
         )..layout(),
     ];
-    final widths = [for (final p in painters) p.width];
+    final lineH = _lineHeight(m);
+    // Items along the arc: [picture, gap,] glyphs... [, gap, picture].
+    // kind: 0 = glyph (index into chars), 1 = picture, 2 = spacer.
+    final kinds = <int>[];
+    final widths = <double>[];
+    final heights = <double>[];
+    final glyphIndex = <int>[];
+    void add(int kind, double w, double h, [int gi = -1]) {
+      kinds.add(kind);
+      widths.add(w);
+      heights.add(h);
+      glyphIndex.add(gi);
+    }
+
+    if (endPic != null && endPic.left) {
+      add(1, endPic.w, endPic.h);
+      add(2, endPic.gap, 1);
+    }
+    for (var i = 0; i < chars.length; i++) {
+      add(0, painters[i].width, lineH, i);
+    }
+    if (endPic != null && endPic.right) {
+      add(2, endPic.gap, 1);
+      add(1, endPic.w, endPic.h);
+    }
     final total = widths.fold(0.0, (a, b) => a + b);
-    final lineH = painters.isEmpty ? m.style.fontSize! : painters.first.height;
     final theta = t.curve.abs().clamp(0.5, 355.0) * math.pi / 180;
     final s = t.curve > 0 ? 1.0 : -1.0;
     final radius = math.max(total, 1.0) / theta;
@@ -794,13 +867,14 @@ class _HomePageState extends State<HomePage> {
       centers.add(Offset(radius * math.sin(phi), -s * radius * math.cos(phi)));
     }
 
-    // Bounding box of the rotated glyph boxes.
+    // Bounding box of the rotated boxes.
     var minX = double.infinity, minY = double.infinity;
     var maxX = -double.infinity, maxY = -double.infinity;
-    for (var i = 0; i < chars.length; i++) {
+    for (var i = 0; i < kinds.length; i++) {
+      if (kinds[i] == 2) continue;
       final c = centers[i];
       final rot = angles[i];
-      final hw = widths[i] / 2, hh = lineH / 2;
+      final hw = widths[i] / 2, hh = heights[i] / 2;
       for (final k in [
         Offset(-hw, -hh),
         Offset(hw, -hh),
@@ -815,7 +889,7 @@ class _HomePageState extends State<HomePage> {
         maxY = math.max(maxY, y);
       }
     }
-    if (chars.isEmpty) {
+    if (minX == double.infinity) {
       minX = minY = 0;
       maxX = maxY = 1;
     }
@@ -828,12 +902,14 @@ class _HomePageState extends State<HomePage> {
       glyphH: lineH,
       paint: (Canvas canvas, Offset origin) {
         final o = origin + Offset(pad - minX, pad - minY);
-        void pass(Paint Function(int i) paintFor) {
-          for (var i = 0; i < chars.length; i++) {
+        void pass(Paint Function(int gi) paintFor) {
+          for (var i = 0; i < kinds.length; i++) {
+            if (kinds[i] != 0) continue;
+            final gi = glyphIndex[i];
             final p = TextPainter(
               text: TextSpan(
-                  text: chars[i],
-                  style: m.style.copyWith(foreground: paintFor(i))),
+                  text: chars[gi],
+                  style: m.style.copyWith(foreground: paintFor(gi))),
               textDirection: TextDirection.ltr,
             )..layout();
             canvas.save();
@@ -844,14 +920,41 @@ class _HomePageState extends State<HomePage> {
           }
         }
 
+        // Pictures on the arc (rotated like the glyphs).
+        if (endPic != null) {
+          final src = Rect.fromLTWH(0, 0, endPic.image.width.toDouble(),
+              endPic.image.height.toDouble());
+          for (var i = 0; i < kinds.length; i++) {
+            if (kinds[i] != 1) continue;
+            canvas.save();
+            canvas.translate(o.dx + centers[i].dx, o.dy + centers[i].dy);
+            canvas.rotate(angles[i]);
+            canvas.drawImageRect(
+              endPic.image,
+              src,
+              Rect.fromCenter(
+                  center: Offset.zero, width: endPic.w, height: endPic.h),
+              Paint()..filterQuality = FilterQuality.high,
+            );
+            canvas.restore();
+          }
+        }
+
         if (t.outline) pass((_) => _outlinePaint(t, m.strokeW));
-        pass((i) => Paint()
+        pass((gi) => Paint()
           ..color = t.rainbow
-              ? _rainbowAt(n <= 1 ? 0.5 : i / (n - 1))
+              ? _rainbowAt(n <= 1 ? 0.5 : gi / (n - 1))
               : Color(t.color));
       },
     );
   }
+
+  /// Height of one text line in [m]'s style (same for every glyph).
+  double _lineHeight(_TextMeasure m) => (TextPainter(
+        text: TextSpan(text: 'Ag', style: m.style),
+        textDirection: TextDirection.ltr,
+      )..layout())
+          .height;
 
   /// Text style + layout for [t] at [fontSize]. [pad] leaves room for the
   /// outline stroke and for glyphs that overhang (italics, swashes).
@@ -1004,6 +1107,7 @@ class _HomePageState extends State<HomePage> {
       'failed': failed,
     }));
     await p.setStringList('runs', list);
+    _history = await _getHistory();
   }
 
   Future<List<Map<String, dynamic>>> _getHistory() async {
@@ -1020,38 +1124,6 @@ class _HomePageState extends State<HomePage> {
     return '${two(d.day)}/${two(d.month)}/${d.year} ${two(d.hour)}:${two(d.minute)}';
   }
 
-  Future<void> _openHistory() async {
-    final runs = await _getHistory();
-    if (!mounted) return;
-    showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Histórico de salvamentos'),
-        content: runs.isEmpty
-            ? const Text('Nenhum salvamento ainda.')
-            : SizedBox(
-                width: double.maxFinite,
-                child: ListView(
-                  shrinkWrap: true,
-                  children: runs.map((r) {
-                    return ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: Text(r['album'] as String),
-                      subtitle: Text(
-                          '${r['saved']} foto(s) · ${_fmtDate(r['time'] as int)}'),
-                    );
-                  }).toList(),
-                ),
-              ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Fechar')),
-        ],
-      ),
-    );
-  }
-
   void _snack(String msg) {
     if (!mounted) return;
     ScaffoldMessenger.of(context)
@@ -1062,11 +1134,33 @@ class _HomePageState extends State<HomePage> {
 
   static const double _sidebarWidth = 430;
 
+  /// Below this width the page keeps its size and scrolls sideways instead of
+  /// squeezing the text into single letters.
+  static const double _minPageWidth = 1000;
+
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
     return Scaffold(
-      body: Column(
+      body: LayoutBuilder(
+        builder: (context, box) {
+          final page = _page();
+          if (box.maxWidth >= _minPageWidth) return page;
+          return SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: SizedBox(
+              width: _minPageWidth,
+              height: box.maxHeight,
+              child: page,
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _page() {
+    final scheme = Theme.of(context).colorScheme;
+    return Column(
         children: [
           _header(),
           if (_importing) const LinearProgressIndicator(minHeight: 3),
@@ -1084,41 +1178,25 @@ class _HomePageState extends State<HomePage> {
             ),
           ],
           Expanded(
-            child: LayoutBuilder(
-              builder: (context, c) {
-                if (c.maxWidth >= 900) {
-                  // Desktop: settings on the left, big preview on the right.
-                  return Row(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
+            // Settings on the left, big preview on the right.
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                SizedBox(width: _sidebarWidth, child: _settingsPanel()),
+                VerticalDivider(
+                    width: 1, thickness: 1, color: scheme.outlineVariant),
+                Expanded(
+                  child: Column(
                     children: [
-                      SizedBox(width: _sidebarWidth, child: _settingsPanel()),
-                      VerticalDivider(
-                          width: 1, thickness: 1, color: scheme.outlineVariant),
-                      Expanded(
-                        child: Column(
-                          children: [
-                            Expanded(child: _previewPane()),
-                            _actionBar(),
-                          ],
-                        ),
-                      ),
+                      Expanded(child: _previewPane()),
+                      _actionBar(),
                     ],
-                  );
-                }
-                // Narrow window: preview on top, settings below.
-                return Column(
-                  children: [
-                    SizedBox(height: 320, child: _previewPane()),
-                    Divider(height: 1, thickness: 1, color: scheme.outlineVariant),
-                    Expanded(child: _settingsPanel()),
-                    _actionBar(),
-                  ],
-                );
-              },
+                  ),
+                ),
+              ],
             ),
           ),
         ],
-      ),
     );
   }
 
@@ -1153,10 +1231,57 @@ class _HomePageState extends State<HomePage> {
             label: const Text('Novo projeto'),
           ),
           const SizedBox(width: 4),
-          TextButton.icon(
-            onPressed: _processing ? null : _openHistory,
-            icon: const Icon(Icons.history, size: 18),
-            label: const Text('Histórico'),
+          PopupMenuButton<int>(
+            enabled: !_processing,
+            tooltip: 'Histórico de salvamentos',
+            position: PopupMenuPosition.under,
+            constraints: const BoxConstraints(minWidth: 260, maxWidth: 380),
+            itemBuilder: (_) => _history.isEmpty
+                ? const [
+                    PopupMenuItem<int>(
+                        value: -1, child: Text('Nenhum salvamento ainda.')),
+                  ]
+                : [
+                    for (var i = 0; i < _history.length && i < 30; i++)
+                      PopupMenuItem<int>(
+                        value: i,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(_history[i]['album'] as String,
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.w600)),
+                            Text(
+                              '${_history[i]['saved']} foto(s) · '
+                              '${_fmtDate(_history[i]['time'] as int)}',
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.history,
+                      size: 18,
+                      color: _processing
+                          ? Theme.of(context).disabledColor
+                          : scheme.primary),
+                  const SizedBox(width: 6),
+                  Text('Histórico',
+                      style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: _processing
+                              ? Theme.of(context).disabledColor
+                              : scheme.primary)),
+                ],
+              ),
+            ),
           ),
           const SizedBox(width: 10),
           Text(
@@ -1671,13 +1796,31 @@ class _HomePageState extends State<HomePage> {
           ],
           if (!t.rainbow) ...[
             const SizedBox(height: 8),
-            _colorField('Cor do texto', t.color,
-                (c) => update(() => t.color = c)),
+            _colorField(
+              '${t.id}:fill',
+              'Cor do texto',
+              t.color,
+              (c) {
+                _hoverBackup.remove('${t.id}:fill');
+                update(() => t.color = c);
+              },
+              (c) => _hover('${t.id}:fill', c, () => t.color,
+                  (v) => t.color = v),
+            ),
           ],
           if (t.outline) ...[
             const SizedBox(height: 8),
-            _colorField('Cor do contorno', t.outlineColor,
-                (c) => update(() => t.outlineColor = c)),
+            _colorField(
+              '${t.id}:outline',
+              'Cor do contorno',
+              t.outlineColor,
+              (c) {
+                _hoverBackup.remove('${t.id}:outline');
+                update(() => t.outlineColor = c);
+              },
+              (c) => _hover('${t.id}:outline', c, () => t.outlineColor,
+                  (v) => t.outlineColor = v),
+            ),
             _slider('Espessura do contorno', t.outlineWidth, 2, 20,
                 (v) => setState(() => t.outlineWidth = v)),
           ],
@@ -1698,6 +1841,7 @@ class _HomePageState extends State<HomePage> {
         TextImagePos.bottom => 'Embaixo',
         TextImagePos.left => 'À esquerda',
         TextImagePos.right => 'À direita',
+        TextImagePos.both => 'Dos dois lados',
         TextImagePos.inside => 'Dentro da curva',
       };
 
@@ -1732,9 +1876,44 @@ class _HomePageState extends State<HomePage> {
   static String _hex(int argb) =>
       (argb & 0xFFFFFF).toRadixString(16).padLeft(6, '0').toUpperCase();
 
-  /// Label + quick swatches + a "custom" box that opens the full color picker.
-  Widget _colorField(String label, int selected, ValueChanged<int> onPick) {
+  String? _openColor; // which color field has its panel open ("id:fill")
+  final Map<String, int> _hoverBackup = {}; // color before a hover preview
+
+  /// Re-renders the previews without touching the saved state (used for the
+  /// temporary hover preview, which is not a real change).
+  void _previewOnly() {
+    _previewVersion++;
+    _kickPreview();
+  }
+
+  /// Hover preview: while the mouse is over a swatch the photo shows that
+  /// color; leaving restores the real one. [c] null = mouse left.
+  void _hover(String key, int? c, int Function() get, void Function(int) set) {
+    if (c == null) {
+      final back = _hoverBackup.remove(key);
+      if (back != null && get() != back) {
+        setState(() => set(back));
+        _previewOnly();
+      }
+    } else {
+      _hoverBackup.putIfAbsent(key, get);
+      if (get() != c) {
+        setState(() => set(c));
+        _previewOnly();
+      }
+    }
+  }
+
+  /// Label + quick swatches (hover to preview) + the current hex value, which
+  /// opens an inline panel with a hex field and hue/saturation/brightness
+  /// sliders that apply live. No dialog, nothing covers the preview.
+  Widget _colorField(String key, String label, int selected,
+      ValueChanged<int> onPick, ValueChanged<int?> onHover) {
     final scheme = Theme.of(context).colorScheme;
+    final open = _openColor == key;
+    // The model holds the hovered color during a hover preview; the REAL
+    // choice is the backup, so clicking the hovered swatch still applies it.
+    final real = _hoverBackup[key] ?? selected;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1746,19 +1925,24 @@ class _HomePageState extends State<HomePage> {
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
             for (final c in _swatches)
-              GestureDetector(
-                onTap: (!_controlsEnabled || c == selected)
-                    ? null
-                    : () => onPick(c),
-                child: Container(
-                  width: 22,
-                  height: 22,
-                  decoration: BoxDecoration(
-                    color: Color(c),
-                    borderRadius: BorderRadius.circular(4),
-                    border: Border.all(
-                      color: selected == c ? scheme.primary : scheme.outline,
-                      width: selected == c ? 2 : 1,
+              MouseRegion(
+                cursor: SystemMouseCursors.click,
+                onEnter: !_controlsEnabled ? null : (_) => onHover(c),
+                onExit: !_controlsEnabled ? null : (_) => onHover(null),
+                child: GestureDetector(
+                  onTap: (!_controlsEnabled || c == real)
+                      ? null
+                      : () => onPick(c),
+                  child: Container(
+                    width: 22,
+                    height: 22,
+                    decoration: BoxDecoration(
+                      color: Color(c),
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(
+                        color: real == c ? scheme.primary : scheme.outline,
+                        width: real == c ? 2 : 1,
+                      ),
                     ),
                   ),
                 ),
@@ -1766,14 +1950,13 @@ class _HomePageState extends State<HomePage> {
             OutlinedButton.icon(
               onPressed: !_controlsEnabled
                   ? null
-                  : () async {
-                      final c = await _pickColor(selected);
-                      if (c != null && c != selected) onPick(c);
-                    },
+                  : () => setState(() => _openColor = open ? null : key),
               style: OutlinedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(
                       horizontal: 8, vertical: 4),
-                  minimumSize: const Size(0, 28)),
+                  minimumSize: const Size(0, 28),
+                  side: BorderSide(
+                      color: open ? scheme.primary : scheme.outline)),
               icon: Container(
                 width: 14,
                 height: 14,
@@ -1783,172 +1966,20 @@ class _HomePageState extends State<HomePage> {
                   border: Border.all(color: scheme.outline),
                 ),
               ),
-              label: Text('#${_hex(selected)}'),
+              label: Text('#${_hex(selected)} ${open ? '▴' : '▾'}'),
             ),
           ],
         ),
+        if (open) ...[
+          const SizedBox(height: 6),
+          _ColorPanel(
+            key: ValueKey('panel:$key'),
+            color: selected,
+            enabled: _controlsEnabled,
+            onChanged: onPick,
+          ),
+        ],
       ],
-    );
-  }
-
-  /// Full color picker: hex code, hue / saturation / brightness sliders and
-  /// the quick swatches. Returns the ARGB value or null if cancelled.
-  Future<int?> _pickColor(int initial) {
-    var hsv = HSVColor.fromColor(Color(initial));
-    final hexCtl = TextEditingController(text: _hex(initial));
-    return showDialog<int>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setD) {
-          final color = hsv.toColor();
-          void setHsv(HSVColor v) {
-            setD(() {
-              hsv = v;
-              hexCtl.text = _hex(v.toColor().toARGB32());
-            });
-          }
-
-          Widget hsvSlider(String label, double value, double max,
-              ValueChanged<double> onChanged,
-              {Gradient? track}) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                        child: Text(label,
-                            style: Theme.of(ctx).textTheme.bodySmall)),
-                    Text(value.round().toString(),
-                        style: Theme.of(ctx).textTheme.bodySmall),
-                  ],
-                ),
-                SizedBox(
-                  height: 28,
-                  child: Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      if (track != null)
-                        Positioned(
-                          left: 6,
-                          right: 6,
-                          child: Container(
-                            height: 10,
-                            decoration: BoxDecoration(
-                              gradient: track,
-                              borderRadius: BorderRadius.circular(5),
-                            ),
-                          ),
-                        ),
-                      Slider(
-                        value: value,
-                        min: 0,
-                        max: max,
-                        activeColor:
-                            track == null ? null : Colors.transparent,
-                        inactiveColor:
-                            track == null ? null : Colors.transparent,
-                        onChanged: onChanged,
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            );
-          }
-
-          return AlertDialog(
-            title: const Text('Escolher cor'),
-            content: SizedBox(
-              width: 340,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Row(
-                    children: [
-                      Container(
-                        width: 44,
-                        height: 44,
-                        decoration: BoxDecoration(
-                          color: color,
-                          borderRadius: BorderRadius.circular(6),
-                          border: Border.all(
-                              color: Theme.of(ctx).colorScheme.outline),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: TextField(
-                          controller: hexCtl,
-                          decoration: const InputDecoration(
-                              labelText: 'Código hex', prefixText: '#'),
-                          onChanged: (v) {
-                            final clean = v.replaceAll('#', '').trim();
-                            if (clean.length != 6) return;
-                            final n = int.tryParse(clean, radix: 16);
-                            if (n == null) return;
-                            setD(() => hsv =
-                                HSVColor.fromColor(Color(0xFF000000 | n)));
-                          },
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  hsvSlider('Matiz', hsv.hue, 360,
-                      (v) => setHsv(hsv.withHue(v)),
-                      track: LinearGradient(colors: [
-                        for (var h = 0; h <= 360; h += 60)
-                          HSVColor.fromAHSV(1, h.toDouble(), 1, 1).toColor(),
-                      ])),
-                  hsvSlider('Saturação', hsv.saturation * 100, 100,
-                      (v) => setHsv(hsv.withSaturation(v / 100)),
-                      track: LinearGradient(colors: [
-                        HSVColor.fromAHSV(1, hsv.hue, 0, hsv.value).toColor(),
-                        HSVColor.fromAHSV(1, hsv.hue, 1, hsv.value).toColor(),
-                      ])),
-                  hsvSlider('Brilho', hsv.value * 100, 100,
-                      (v) => setHsv(hsv.withValue(v / 100)),
-                      track: LinearGradient(colors: [
-                        Colors.black,
-                        HSVColor.fromAHSV(1, hsv.hue, hsv.saturation, 1)
-                            .toColor(),
-                      ])),
-                  const SizedBox(height: 6),
-                  Wrap(
-                    spacing: 5,
-                    runSpacing: 5,
-                    children: [
-                      for (final c in _swatches)
-                        GestureDetector(
-                          onTap: () => setHsv(HSVColor.fromColor(Color(c))),
-                          child: Container(
-                            width: 22,
-                            height: 22,
-                            decoration: BoxDecoration(
-                              color: Color(c),
-                              borderRadius: BorderRadius.circular(4),
-                              border: Border.all(
-                                  color: Theme.of(ctx).colorScheme.outline),
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                  onPressed: () => Navigator.pop(ctx),
-                  child: const Text('Cancelar')),
-              FilledButton(
-                  onPressed: () => Navigator.pop(ctx, color.toARGB32()),
-                  child: const Text('Usar cor')),
-            ],
-          );
-        },
-      ),
     );
   }
 
@@ -2520,6 +2551,245 @@ class _HomePageState extends State<HomePage> {
   }
 }
 
+/// Inline color editor: hex code + hue / saturation / brightness sliders.
+/// Every change is applied immediately (live preview on the photo).
+class _ColorPanel extends StatefulWidget {
+  const _ColorPanel({
+    super.key,
+    required this.color,
+    required this.enabled,
+    required this.onChanged,
+  });
+
+  final int color;
+  final bool enabled;
+  final ValueChanged<int> onChanged;
+
+  @override
+  State<_ColorPanel> createState() => _ColorPanelState();
+}
+
+class _ColorPanelState extends State<_ColorPanel> {
+  late HSVColor _hsv = HSVColor.fromColor(Color(widget.color));
+  late final TextEditingController _hex =
+      TextEditingController(text: _fmt(widget.color));
+  final FocusNode _hexFocus = FocusNode();
+
+  static String _fmt(int argb) =>
+      (argb & 0xFFFFFF).toRadixString(16).padLeft(6, '0').toUpperCase();
+
+  @override
+  void didUpdateWidget(_ColorPanel old) {
+    super.didUpdateWidget(old);
+    // Follow the value when it was changed elsewhere (swatch, hover).
+    if (widget.color != _hsv.toColor().toARGB32()) {
+      _hsv = HSVColor.fromColor(Color(widget.color));
+      if (!_hexFocus.hasFocus) _hex.text = _fmt(widget.color);
+    }
+  }
+
+  @override
+  void dispose() {
+    _hex.dispose();
+    _hexFocus.dispose();
+    super.dispose();
+  }
+
+  void _apply(HSVColor v) {
+    setState(() {
+      _hsv = v;
+      if (!_hexFocus.hasFocus) _hex.text = _fmt(v.toColor().toARGB32());
+    });
+    widget.onChanged(v.toColor().toARGB32());
+  }
+
+  void _svAt(Offset p, Size size) {
+    final sat = (p.dx / size.width).clamp(0.0, 1.0);
+    final val = 1 - (p.dy / size.height).clamp(0.0, 1.0);
+    _apply(_hsv.withSaturation(sat).withValue(val));
+  }
+
+  void _hueAt(Offset p, double width) {
+    _apply(_hsv.withHue((p.dx / width).clamp(0.0, 1.0) * 360));
+  }
+
+  Widget _handle() => Container(
+        width: 16,
+        height: 16,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white, width: 2.5),
+          boxShadow: const [BoxShadow(color: Colors.black54, blurRadius: 3)],
+        ),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final color = _hsv.toColor();
+    final pure = HSVColor.fromAHSV(1, _hsv.hue, 1, 1).toColor();
+    const squareH = 160.0, barH = 14.0;
+    return Container(
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerLow,
+        border: Border.all(color: scheme.outlineVariant),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Column(
+        children: [
+          // Saturation (left→right) × brightness (bottom→top) square.
+          LayoutBuilder(
+            builder: (context, cons) {
+              final size = Size(cons.maxWidth, squareH);
+              return IgnorePointer(
+                ignoring: !widget.enabled,
+                child: GestureDetector(
+                  // Vertical + horizontal recognizers (not pan) so the drag is
+                  // ours and the sidebar list doesn't scroll instead.
+                  behavior: HitTestBehavior.opaque,
+                  onTapDown: (d) => _svAt(d.localPosition, size),
+                  onVerticalDragStart: (d) => _svAt(d.localPosition, size),
+                  onVerticalDragUpdate: (d) => _svAt(d.localPosition, size),
+                  onHorizontalDragStart: (d) => _svAt(d.localPosition, size),
+                  onHorizontalDragUpdate: (d) => _svAt(d.localPosition, size),
+                  child: SizedBox(
+                    width: size.width,
+                    height: size.height,
+                    child: Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        Positioned.fill(
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(6),
+                              gradient: LinearGradient(
+                                  colors: [Colors.white, pure]),
+                            ),
+                          ),
+                        ),
+                        Positioned.fill(
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(6),
+                              gradient: const LinearGradient(
+                                begin: Alignment.topCenter,
+                                end: Alignment.bottomCenter,
+                                colors: [Colors.transparent, Colors.black],
+                              ),
+                            ),
+                          ),
+                        ),
+                        Positioned(
+                          left: _hsv.saturation * size.width - 8,
+                          top: (1 - _hsv.value) * size.height - 8,
+                          child: _handle(),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+          const SizedBox(height: 10),
+          // Hue bar.
+          LayoutBuilder(
+            builder: (context, cons) {
+              final w = cons.maxWidth;
+              return IgnorePointer(
+                ignoring: !widget.enabled,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTapDown: (d) => _hueAt(d.localPosition, w),
+                  onVerticalDragStart: (d) => _hueAt(d.localPosition, w),
+                  onVerticalDragUpdate: (d) => _hueAt(d.localPosition, w),
+                  onHorizontalDragStart: (d) => _hueAt(d.localPosition, w),
+                  onHorizontalDragUpdate: (d) => _hueAt(d.localPosition, w),
+                  child: SizedBox(
+                    width: w,
+                    height: 20,
+                    child: Stack(
+                      clipBehavior: Clip.none,
+                      alignment: Alignment.centerLeft,
+                      children: [
+                        Positioned(
+                          left: 0,
+                          right: 0,
+                          top: (20 - barH) / 2,
+                          child: Container(
+                            height: barH,
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(barH / 2),
+                              gradient: LinearGradient(colors: [
+                                for (var h = 0; h <= 360; h += 60)
+                                  HSVColor.fromAHSV(1, h.toDouble(), 1, 1)
+                                      .toColor(),
+                              ]),
+                            ),
+                          ),
+                        ),
+                        Positioned(
+                          left: (_hsv.hue / 360) * w - 8,
+                          top: 2,
+                          child: _handle(),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Container(
+                width: 30,
+                height: 30,
+                decoration: BoxDecoration(
+                  color: color,
+                  borderRadius: BorderRadius.circular(5),
+                  border: Border.all(color: scheme.outline),
+                ),
+              ),
+              const SizedBox(width: 8),
+              SizedBox(
+                width: 120,
+                height: 30,
+                child: TextField(
+                  controller: _hex,
+                  focusNode: _hexFocus,
+                  enabled: widget.enabled,
+                  style: const TextStyle(fontSize: 13),
+                  decoration: const InputDecoration(
+                    prefixText: '#',
+                    isDense: true,
+                    contentPadding:
+                        EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                  ),
+                  onChanged: (v) {
+                    final clean = v.replaceAll('#', '').trim();
+                    if (clean.length != 6) return;
+                    final n = int.tryParse(clean, radix: 16);
+                    if (n == null) return;
+                    _apply(HSVColor.fromColor(Color(0xFF000000 | n)));
+                  },
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text('A foto atualiza enquanto você arrasta.',
+                    style: Theme.of(context).textTheme.bodySmall),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// Small editable number next to a slider: type a value and press Enter (or
 /// click away) to apply it; it is clamped to the slider's range.
 class _NumberField extends StatefulWidget {
@@ -2783,6 +3053,9 @@ class _FullscreenViewerState extends State<_FullscreenViewer> {
   final TransformationController _zoom = TransformationController();
   final Map<int, Uint8List> _cache = {};
   final Set<int> _loading = {};
+  final Map<int, double> _aspects = {}; // width / height per page
+  final Set<int> _aspectLoading = {};
+  Size? _viewerSize; // size of the image area on the current page
   int _page = 0;
 
   @override
@@ -2817,6 +3090,26 @@ class _FullscreenViewerState extends State<_FullscreenViewer> {
 
   double get _scale => _zoom.value.getMaxScaleOnAxis();
 
+  Future<void> _ensureAspect(int i, Uint8List bytes) async {
+    if (_aspects.containsKey(i) || _aspectLoading.contains(i)) return;
+    _aspectLoading.add(i);
+    try {
+      final codec = await ui.instantiateImageCodec(bytes);
+      try {
+        final frame = await codec.getNextFrame();
+        final img = frame.image;
+        final a = img.height == 0 ? 1.0 : img.width / img.height;
+        img.dispose();
+        if (mounted) setState(() => _aspects[i] = a);
+      } finally {
+        codec.dispose();
+      }
+    } catch (_) {
+    } finally {
+      _aspectLoading.remove(i);
+    }
+  }
+
   void _goTo(int i) {
     if (i < 0 || i >= widget.itemCount) return;
     _zoom.value = Matrix4.identity();
@@ -2826,7 +3119,7 @@ class _FullscreenViewerState extends State<_FullscreenViewer> {
   /// Zooms to [target] around the viewport center and keeps the (viewport
   /// sized) child covering the frame, so it can never drift out of view.
   void _zoomTo(double target) {
-    final size = MediaQuery.of(context).size;
+    final size = _viewerSize ?? MediaQuery.of(context).size;
     final s = target.clamp(1.0, _maxScale);
     if (s <= 1.0) {
       _zoom.value = Matrix4.identity();
@@ -2889,20 +3182,40 @@ class _FullscreenViewerState extends State<_FullscreenViewer> {
                 return const Center(child: CircularProgressIndicator());
               }
               if (hi == null) _load(i); // upgrade placeholder to sharp version
-              return GestureDetector(
-                onDoubleTap: () => _zoomTo(_scale > 1.01 ? 1 : 2.5),
-                child: InteractiveViewer(
-                  transformationController: i == _page ? _zoom : null,
-                  minScale: 1,
-                  maxScale: _maxScale,
-                  trackpadScrollCausesScale: true,
-                  child: SizedBox.expand(
-                    child: Image.memory(bytes,
-                        fit: BoxFit.contain, gaplessPlayback: true),
-                  ),
-                ),
+              final aspect = _aspects[i];
+              if (aspect == null) _ensureAspect(i, bytes);
+              final image = Image.memory(bytes,
+                  fit: BoxFit.contain, gaplessPlayback: true);
+              // The zoomable area is exactly the image: the black margins
+              // around it ignore the wheel and the drag.
+              return Center(
+                child: aspect == null
+                    ? image
+                    : AspectRatio(
+                        aspectRatio: aspect,
+                        child: LayoutBuilder(
+                          builder: (context, cons) {
+                            if (i == _page) _viewerSize = cons.biggest;
+                            return InteractiveViewer(
+                              transformationController:
+                                  i == _page ? _zoom : null,
+                              minScale: 1,
+                              maxScale: _maxScale,
+                              trackpadScrollCausesScale: true,
+                              child: image,
+                            );
+                          },
+                        ),
+                      ),
               );
             },
+          ),
+          // Double-click anywhere closes the viewer (buttons stay on top).
+          Positioned.fill(
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onDoubleTap: () => Navigator.of(context).pop(),
+            ),
           ),
           // Top bar: counter + close.
           SafeArea(

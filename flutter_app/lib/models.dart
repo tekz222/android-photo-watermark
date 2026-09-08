@@ -22,7 +22,7 @@ class LogoItem {
 enum Placement { bottom, topLeft, topRight }
 
 /// Where a picture attached to a text sits relative to the text.
-enum TextImagePos { top, bottom, left, right, inside }
+enum TextImagePos { top, bottom, left, right, both, inside }
 
 /// An editable text overlay. Always centered horizontally on the photo; the
 /// user picks the vertical position ([topPct]) and the size ([heightPct]),
