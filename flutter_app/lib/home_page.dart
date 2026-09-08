@@ -25,6 +25,14 @@ typedef _TextMeasure = ({
   TextPainter measure,
 });
 
+/// Size of a laid-out text block plus a function that paints it at an origin.
+typedef _TextGeometry = ({
+  double w,
+  double h,
+  double glyphH,
+  void Function(Canvas canvas, Offset origin) paint,
+});
+
 /// A rendered preview plus its aspect ratio, so its frame can match the image.
 class _Preview {
   _Preview(this.bytes, this.aspect);
@@ -114,18 +122,19 @@ class _HomePageState extends State<HomePage> {
       _bottomLogos.isNotEmpty || _topLeftLogos.isNotEmpty || _cornerLogo != null;
 
   /// Anything to draw on the photos: a logo or a non-empty text.
-  bool get _hasAnyContent =>
-      _hasAnyLogo || _texts.any((t) => t.text.trim().isNotEmpty);
+  bool get _hasAnyContent => _hasAnyLogo || _texts.any(_textHasContent);
+
+  static bool _textHasContent(TextItem t) =>
+      t.text.trim().isNotEmpty || t.imageBytes != null;
 
   /// Photos selected but not yet saved in this project.
   List<String> get _unsavedPaths =>
       _photoPaths.where((p) => !_savedPaths.contains(p)).toList();
 
-  /// Controls (including the main-logo options) stay disabled until at least
-  /// one photo is added, and lock again once the project has been saved (an
-  /// album exists) — only adding more photos stays available after that.
-  bool get _controlsEnabled =>
-      !_processing && _currentAlbum == null && _photoPaths.isNotEmpty;
+  /// Controls are disabled until at least one photo is added and while a save
+  /// is running. After a save everything is usable again: changing the look
+  /// then makes the next save write every photo again into a new folder.
+  bool get _controlsEnabled => !_processing && _photoPaths.isNotEmpty;
   bool get _canProcess =>
       !_processing && _hasAnyContent && _unsavedPaths.isNotEmpty;
   bool get _allSaved =>
@@ -257,7 +266,7 @@ class _HomePageState extends State<HomePage> {
     ];
     final usedNames = existing.map((e) => _logoName(e.sourceKey)).toList();
     final usedSigs = existing.map((e) => e.phash).toSet();
-    var skipped = 0;
+    var skipped = 0, added = 0;
     _previewToken++; // stop any running preview loop while the lists change
     _worker.cancelPending();
     try {
@@ -281,6 +290,7 @@ class _HomePageState extends State<HomePage> {
               const <String>{}, const <String>{}));
           usedNames.add(name);
           usedSigs.add(sig);
+          added++;
         } catch (_) {
           // One bad logo shouldn't abort the rest.
         }
@@ -292,7 +302,11 @@ class _HomePageState extends State<HomePage> {
       _snack('$skipped logo(s) ignorada(s): mesma imagem ou mesmo nome de uma '
           'já no projeto.');
     }
-    _schedulePreview();
+    if (added > 0) {
+      _schedulePreview();
+    } else {
+      _kickPreview(); // nothing changed; just resume the preview loop
+    }
   }
 
   /// Cheap identity signature of the raw image bytes (length + ~64 sampled
@@ -333,6 +347,14 @@ class _HomePageState extends State<HomePage> {
   void _schedulePreview() {
     _saveProject();
     _previewVersion++;
+    if (_currentAlbum != null && !_processing) {
+      // The look changed after a save: nothing counts as saved any more, so
+      // the next save writes every photo (into a new folder).
+      setState(() {
+        _savedPaths.clear();
+        _currentAlbum = null;
+      });
+    }
     _kickPreview();
   }
 
@@ -523,13 +545,14 @@ class _HomePageState extends State<HomePage> {
   /// never forces a re-raster.
   String _textSig(TextItem t) =>
       '${t.text}|${t.fontFamily}|${t.bold}|${t.italic}|${t.color}|'
-      '${t.rainbow}|${t.outline}|${t.outlineColor}|${t.outlineWidth}|${t.curve}';
+      '${t.rainbow}|${t.outline}|${t.outlineColor}|${t.outlineWidth}|${t.curve}|'
+      '${t.imageSig}|${t.imagePos.index}|${t.imageSize}|${t.imageGap}';
 
   /// Re-rasterizes any text whose look changed. Runs on the UI thread (canvas
   /// text drawing can't run in an isolate) but is fast — it's only text.
   Future<void> _ensureTextPngs() async {
     for (final t in List<TextItem>.from(_texts)) {
-      if (t.text.trim().isEmpty) continue;
+      if (!_textHasContent(t)) continue;
       final sig = _textSig(t);
       if (_textSigCache[t.id] == sig && _textPng.containsKey(t.id)) continue;
       try {
@@ -549,7 +572,7 @@ class _HomePageState extends State<HomePage> {
 
   List<TextOverlay> _textOverlays() => [
         for (final t in _texts)
-          if (t.text.trim().isNotEmpty && _textPng[t.id] != null)
+          if (_textHasContent(t) && _textPng[t.id] != null)
             TextOverlay(
               src: ImageSrc('t:${t.id}:${_textSigCache[t.id]}', _textPng[t.id]!),
               height: t.heightPct / 100,
@@ -575,53 +598,138 @@ class _HomePageState extends State<HomePage> {
       fontSize *= scale;
       m = _measureText(t, fontSize);
     }
-    final textW = m.measure.width;
-    final textH = m.measure.height;
-    final pad = m.pad;
+    final geo =
+        t.curve.abs() < 0.5 ? _straightGeometry(t, m) : _curvedGeometry(t, m);
 
+    // Optional picture attached to the text (decoded by Flutter: fast).
+    ui.Image? pic;
+    final picBytes = t.imageBytes;
+    if (picBytes != null) {
+      try {
+        final codec = await ui.instantiateImageCodec(picBytes,
+            targetWidth: 1024, allowUpscaling: false);
+        pic = (await codec.getNextFrame()).image;
+        codec.dispose();
+      } catch (_) {
+        pic = null;
+      }
+    }
+
+    // Lay out text + picture as ONE block; the engine centers the block.
+    final hasText = t.text.trim().isNotEmpty;
+    var w = geo.w, h = geo.h;
+    var textOrigin = Offset.zero;
+    Rect? picRect;
+    if (pic != null && !hasText) {
+      // Picture only: no phantom empty line around it.
+      final picH = geo.glyphH * t.imageSize / 100;
+      final picW = picH * pic.width / pic.height;
+      w = picW;
+      h = picH;
+      picRect = Rect.fromLTWH(0, 0, picW, picH);
+    } else if (pic != null) {
+      final picH = geo.glyphH * t.imageSize / 100;
+      final picW = picH * pic.width / pic.height;
+      final gap = geo.glyphH * t.imageGap / 100;
+      switch (t.imagePos) {
+        case TextImagePos.top:
+          w = math.max(geo.w, picW);
+          h = picH + gap + geo.h;
+          picRect = Rect.fromLTWH((w - picW) / 2, 0, picW, picH);
+          textOrigin = Offset((w - geo.w) / 2, picH + gap);
+        case TextImagePos.bottom:
+          w = math.max(geo.w, picW);
+          h = geo.h + gap + picH;
+          textOrigin = Offset((w - geo.w) / 2, 0);
+          picRect = Rect.fromLTWH((w - picW) / 2, geo.h + gap, picW, picH);
+        case TextImagePos.left:
+          w = picW + gap + geo.w;
+          h = math.max(geo.h, picH);
+          picRect = Rect.fromLTWH(0, (h - picH) / 2, picW, picH);
+          textOrigin = Offset(picW + gap, (h - geo.h) / 2);
+        case TextImagePos.right:
+          w = geo.w + gap + picW;
+          h = math.max(geo.h, picH);
+          textOrigin = Offset(0, (h - geo.h) / 2);
+          picRect = Rect.fromLTWH(geo.w + gap, (h - picH) / 2, picW, picH);
+        case TextImagePos.inside:
+          // Inside the arc: hanging from the top of an upward curve, resting
+          // on the bottom of a downward one; behind the text when straight.
+          w = math.max(geo.w, picW);
+          double picY;
+          if (t.curve > 0.5) {
+            picY = geo.glyphH + gap;
+          } else if (t.curve < -0.5) {
+            picY = geo.h - geo.glyphH - gap - picH;
+          } else {
+            picY = (geo.h - picH) / 2;
+          }
+          final shift = picY < 0 ? -picY : 0.0;
+          h = math.max(geo.h, picY + picH) + shift;
+          picRect = Rect.fromLTWH((w - picW) / 2, picY + shift, picW, picH);
+          textOrigin = Offset((w - geo.w) / 2, shift);
+      }
+    }
+
+    // Keep the whole block within a sane bitmap (a big picture next to the
+    // text can exceed it): draw everything scaled down instead of clipping.
+    const maxBlockW = 4096.0, maxBlockH = 3072.0;
+    final s = [maxBlockW / w, maxBlockH / h, 1.0].reduce((a, b) => a < b ? a : b);
+
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    if (s < 1.0) canvas.scale(s);
+    if (pic != null && picRect != null) {
+      canvas.drawImageRect(
+        pic,
+        Rect.fromLTWH(0, 0, pic.width.toDouble(), pic.height.toDouble()),
+        picRect,
+        Paint()..filterQuality = FilterQuality.high,
+      );
+    }
+    if (hasText) geo.paint(canvas, textOrigin);
+    final picture = recorder.endRecording();
+    final pngW = (w * s).ceil().clamp(1, 8192);
+    final pngH = (h * s).ceil().clamp(1, 8192);
+    final image = await picture.toImage(pngW, pngH);
+    picture.dispose();
+    pic?.dispose();
+    final data = await image.toByteData(format: ui.ImageByteFormat.png);
+    image.dispose();
+    if (data == null) throw StateError('PNG encode failed');
+    return (
+      png: data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
+      contentRatio: geo.glyphH * s / pngH,
+    );
+  }
+
+  /// Straight text (several lines allowed, centered).
+  _TextGeometry _straightGeometry(TextItem t, _TextMeasure m) {
+    final textW = m.measure.width, textH = m.measure.height, pad = m.pad;
     TextPainter painterWith(Paint foreground) => TextPainter(
           text: TextSpan(
               text: t.text, style: m.style.copyWith(foreground: foreground)),
           textDirection: TextDirection.ltr,
           textAlign: TextAlign.center,
         )..layout(minWidth: textW);
-
-    final recorder = ui.PictureRecorder();
-    final canvas = Canvas(recorder);
-    int pngW, pngH;
-    double glyphH;
-    if (t.curve.abs() < 0.5) {
-      // Straight (supports several lines, centered).
-      final origin = Offset(pad, pad);
-      if (t.outline) {
-        painterWith(_outlinePaint(t, m.strokeW)).paint(canvas, origin);
-      }
-      final fill = Paint();
-      if (t.rainbow) {
-        fill.shader = ui.Gradient.linear(
-            Offset(pad, 0), Offset(pad + textW, 0), kRainbow, kRainbowStops);
-      } else {
-        fill.color = Color(t.color);
-      }
-      painterWith(fill).paint(canvas, origin);
-      pngW = (textW + pad * 2).ceil().clamp(1, 8192);
-      pngH = (textH + pad * 2).ceil().clamp(1, 8192);
-      glyphH = textH;
-    } else {
-      final r = _paintCurved(canvas, t, m);
-      pngW = r.w;
-      pngH = r.h;
-      glyphH = r.glyphH;
-    }
-    final picture = recorder.endRecording();
-    final image = await picture.toImage(pngW, pngH);
-    picture.dispose();
-    final data = await image.toByteData(format: ui.ImageByteFormat.png);
-    image.dispose();
-    if (data == null) throw StateError('PNG encode failed');
     return (
-      png: data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
-      contentRatio: glyphH / pngH,
+      w: textW + pad * 2,
+      h: textH + pad * 2,
+      glyphH: textH,
+      paint: (Canvas canvas, Offset origin) {
+        final o = origin + Offset(pad, pad);
+        if (t.outline) {
+          painterWith(_outlinePaint(t, m.strokeW)).paint(canvas, o);
+        }
+        final fill = Paint();
+        if (t.rainbow) {
+          fill.shader = ui.Gradient.linear(Offset(o.dx, 0),
+              Offset(o.dx + math.max(textW, 1.0), 0), kRainbow, kRainbowStops);
+        } else {
+          fill.color = Color(t.color);
+        }
+        painterWith(fill).paint(canvas, o);
+      },
     );
   }
 
@@ -654,11 +762,9 @@ class _HomePageState extends State<HomePage> {
     return kRainbow.last;
   }
 
-  /// Draws [t] glyph by glyph along a circular arc of [TextItem.curve] degrees
-  /// (positive = arc up, like a rainbow; negative = arc down). Returns the
-  /// bitmap size that fits everything plus the glyph line height.
-  ({int w, int h, double glyphH}) _paintCurved(
-      Canvas canvas, TextItem t, _TextMeasure m) {
+  /// Lays out [t] glyph by glyph along a circular arc of [TextItem.curve]
+  /// degrees (positive = arc up, like a rainbow; negative = arc down).
+  _TextGeometry _curvedGeometry(TextItem t, _TextMeasure m) {
     final chars = [
       for (final r in t.text.replaceAll('\n', ' ').runes) String.fromCharCode(r)
     ];
@@ -714,32 +820,37 @@ class _HomePageState extends State<HomePage> {
       maxX = maxY = 1;
     }
     final pad = m.pad;
-    final w = (maxX - minX + pad * 2).ceil().clamp(1, 8192);
-    final h = (maxY - minY + pad * 2).ceil().clamp(1, 8192);
-    final origin = Offset(pad - minX, pad - minY);
-
-    void pass(Paint Function(int i) paintFor) {
-      for (var i = 0; i < chars.length; i++) {
-        final p = TextPainter(
-          text: TextSpan(
-              text: chars[i], style: m.style.copyWith(foreground: paintFor(i))),
-          textDirection: TextDirection.ltr,
-        )..layout();
-        canvas.save();
-        canvas.translate(origin.dx + centers[i].dx, origin.dy + centers[i].dy);
-        canvas.rotate(angles[i]);
-        p.paint(canvas, Offset(-p.width / 2, -p.height / 2));
-        canvas.restore();
-      }
-    }
-
-    if (t.outline) pass((_) => _outlinePaint(t, m.strokeW));
     final n = chars.length;
-    pass((i) => Paint()
-      ..color = t.rainbow
-          ? _rainbowAt(n <= 1 ? 0.5 : i / (n - 1))
-          : Color(t.color));
-    return (w: w, h: h, glyphH: lineH);
+
+    return (
+      w: maxX - minX + pad * 2,
+      h: maxY - minY + pad * 2,
+      glyphH: lineH,
+      paint: (Canvas canvas, Offset origin) {
+        final o = origin + Offset(pad - minX, pad - minY);
+        void pass(Paint Function(int i) paintFor) {
+          for (var i = 0; i < chars.length; i++) {
+            final p = TextPainter(
+              text: TextSpan(
+                  text: chars[i],
+                  style: m.style.copyWith(foreground: paintFor(i))),
+              textDirection: TextDirection.ltr,
+            )..layout();
+            canvas.save();
+            canvas.translate(o.dx + centers[i].dx, o.dy + centers[i].dy);
+            canvas.rotate(angles[i]);
+            p.paint(canvas, Offset(-p.width / 2, -p.height / 2));
+            canvas.restore();
+          }
+        }
+
+        if (t.outline) pass((_) => _outlinePaint(t, m.strokeW));
+        pass((i) => Paint()
+          ..color = t.rainbow
+              ? _rainbowAt(n <= 1 ? 0.5 : i / (n - 1))
+              : Color(t.color));
+      },
+    );
   }
 
   /// Text style + layout for [t] at [fontSize]. [pad] leaves room for the
@@ -1380,7 +1491,8 @@ class _HomePageState extends State<HomePage> {
             _photoPaths.isEmpty
                 ? 'Adicione as fotos primeiro; depois crie os textos.'
                 : 'Sempre centralizado na horizontal. Fonte do computador, '
-                    'qualquer cor, contorno, arco-íris e curvatura.',
+                    'qualquer cor, contorno, arco-íris, curvatura e uma '
+                    'imagem junto ao texto.',
             style: small,
           ),
           for (final t in _texts) _textEditor(t),
@@ -1466,7 +1578,9 @@ class _HomePageState extends State<HomePage> {
                       onChanged: !_controlsEnabled
                           ? null
                           : (v) {
-                              if (v != null) update(() => t.fontFamily = v);
+                              if (v != null && v != t.fontFamily) {
+                                update(() => t.fontFamily = v);
+                              }
                             },
                     ),
                   ),
@@ -1491,6 +1605,70 @@ class _HomePageState extends State<HomePage> {
               toggle('Arco-íris', t.rainbow, (s) => t.rainbow = s),
             ],
           ),
+          const SizedBox(height: 10),
+          Text('Imagem junto ao texto',
+              style: Theme.of(context).textTheme.bodySmall),
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              if (t.imageBytes != null) ...[
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: Container(
+                    width: 36,
+                    height: 36,
+                    color: scheme.surfaceContainerHighest,
+                    child: Image.memory(t.imageBytes!, fit: BoxFit.contain),
+                  ),
+                ),
+                const SizedBox(width: 8),
+              ],
+              OutlinedButton.icon(
+                onPressed:
+                    !_controlsEnabled ? null : () => _pickTextImage(t),
+                icon: const Icon(Icons.image_outlined, size: 18),
+                label: Text(
+                    t.imageBytes == null ? 'Adicionar imagem' : 'Trocar'),
+              ),
+              if (t.imageBytes != null)
+                IconButton(
+                  tooltip: 'Remover imagem',
+                  icon: const Icon(Icons.close, size: 18),
+                  onPressed: !_controlsEnabled
+                      ? null
+                      : () => update(() {
+                            t.imageBytes = null;
+                            t.imageName = null;
+                            t.imageSig = 0;
+                          }),
+                ),
+            ],
+          ),
+          if (t.imageBytes != null) ...[
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 6,
+              runSpacing: 4,
+              children: [
+                for (final pos in TextImagePos.values)
+                  ChoiceChip(
+                    label: Text(_imagePosLabel(pos)),
+                    selected: t.imagePos == pos,
+                    onSelected: !_controlsEnabled
+                        ? null
+                        : (_) {
+                            if (pos != t.imagePos) {
+                              update(() => t.imagePos = pos);
+                            }
+                          },
+                  ),
+              ],
+            ),
+            _slider('Tamanho da imagem (% da altura do texto)', t.imageSize,
+                20, 400, (v) => setState(() => t.imageSize = v)),
+            _slider('Espaço entre imagem e texto (% da altura do texto)',
+                t.imageGap, 0, 100, (v) => setState(() => t.imageGap = v)),
+          ],
           if (!t.rainbow) ...[
             const SizedBox(height: 8),
             _colorField('Cor do texto', t.color,
@@ -1513,6 +1691,27 @@ class _HomePageState extends State<HomePage> {
         ],
       ),
     );
+  }
+
+  String _imagePosLabel(TextImagePos pos) => switch (pos) {
+        TextImagePos.top => 'Em cima',
+        TextImagePos.bottom => 'Embaixo',
+        TextImagePos.left => 'À esquerda',
+        TextImagePos.right => 'À direita',
+        TextImagePos.inside => 'Dentro da curva',
+      };
+
+  Future<void> _pickTextImage(TextItem t) async {
+    final x = await _picker.pickImage(source: ImageSource.gallery);
+    if (x == null) return;
+    final bytes = await x.readAsBytes();
+    if (!mounted) return;
+    setState(() {
+      t.imageBytes = bytes;
+      t.imageName = x.name;
+      t.imageSig = _imageSig(bytes);
+    });
+    _schedulePreview();
   }
 
   // ---- Colors ----
@@ -1548,7 +1747,9 @@ class _HomePageState extends State<HomePage> {
           children: [
             for (final c in _swatches)
               GestureDetector(
-                onTap: !_controlsEnabled ? null : () => onPick(c),
+                onTap: (!_controlsEnabled || c == selected)
+                    ? null
+                    : () => onPick(c),
                 child: Container(
                   width: 22,
                   height: 22,
@@ -1567,7 +1768,7 @@ class _HomePageState extends State<HomePage> {
                   ? null
                   : () async {
                       final c = await _pickColor(selected);
-                      if (c != null) onPick(c);
+                      if (c != null && c != selected) onPick(c);
                     },
               style: OutlinedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(
@@ -2109,8 +2310,7 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  /// Shown once a project has been saved: edits are locked, only adding photos
-  /// (into the same folder) stays available.
+  /// Shown once a project has been saved and nothing changed since.
   Widget _lockedBanner() {
     final scheme = Theme.of(context).colorScheme;
     return Container(
@@ -2122,13 +2322,13 @@ class _HomePageState extends State<HomePage> {
       ),
       child: Row(
         children: [
-          const Icon(Icons.lock_outline, size: 20),
+          const Icon(Icons.check_circle_outline, size: 20),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              'Projeto salvo na pasta “$_currentAlbum”. Ajustes, logos e textos '
-              'estão travados; fotos novas vão para a mesma pasta com a mesma '
-              'configuração. Para editar, comece um novo projeto.',
+              'Projeto salvo na pasta “$_currentAlbum”. Fotos novas vão para a '
+              'mesma pasta. Se você mudar logos, textos ou ajustes, o próximo '
+              'salvamento grava todas as fotos numa pasta nova.',
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ),
@@ -2242,8 +2442,17 @@ class _HomePageState extends State<HomePage> {
           Row(
             children: [
               Expanded(child: Text(label, style: small)),
-              Text('${value.round()}$unit',
-                  style: small?.copyWith(fontWeight: FontWeight.w600)),
+              _NumberField(
+                value: value,
+                min: min,
+                max: max,
+                unit: unit,
+                enabled: _controlsEnabled,
+                onSubmitted: (v) {
+                  onChanged(v);
+                  _schedulePreview();
+                },
+              ),
             ],
           ),
           SizedBox(
@@ -2306,6 +2515,98 @@ class _HomePageState extends State<HomePage> {
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+/// Small editable number next to a slider: type a value and press Enter (or
+/// click away) to apply it; it is clamped to the slider's range.
+class _NumberField extends StatefulWidget {
+  const _NumberField({
+    required this.value,
+    required this.min,
+    required this.max,
+    required this.unit,
+    required this.enabled,
+    required this.onSubmitted,
+  });
+
+  final double value;
+  final double min;
+  final double max;
+  final String unit;
+  final bool enabled;
+  final ValueChanged<double> onSubmitted;
+
+  @override
+  State<_NumberField> createState() => _NumberFieldState();
+}
+
+class _NumberFieldState extends State<_NumberField> {
+  late final TextEditingController _ctl =
+      TextEditingController(text: _fmt(widget.value));
+  final FocusNode _focus = FocusNode();
+
+  static String _fmt(double v) => v.round().toString();
+
+  @override
+  void initState() {
+    super.initState();
+    _focus.addListener(() {
+      if (!_focus.hasFocus) _commit();
+    });
+  }
+
+  @override
+  void didUpdateWidget(_NumberField old) {
+    super.didUpdateWidget(old);
+    // Follow the slider while the field isn't being edited.
+    if (!_focus.hasFocus && _ctl.text != _fmt(widget.value)) {
+      _ctl.text = _fmt(widget.value);
+    }
+  }
+
+  void _commit() {
+    final parsed = double.tryParse(_ctl.text.replaceAll(',', '.').trim());
+    if (parsed == null) {
+      _ctl.text = _fmt(widget.value);
+      return;
+    }
+    final v = parsed.clamp(widget.min, widget.max).toDouble();
+    _ctl.text = _fmt(v);
+    if (v.round() != widget.value.round()) widget.onSubmitted(v);
+  }
+
+  @override
+  void dispose() {
+    _ctl.dispose();
+    _focus.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 70,
+      height: 26,
+      child: TextField(
+        controller: _ctl,
+        focusNode: _focus,
+        enabled: widget.enabled,
+        textAlign: TextAlign.right,
+        style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
+        keyboardType:
+            const TextInputType.numberWithOptions(signed: true, decimal: true),
+        decoration: InputDecoration(
+          isDense: true,
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+          suffixText: widget.unit,
+          suffixStyle: const TextStyle(fontSize: 12),
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(4)),
+        ),
+        onSubmitted: (_) => _commit(),
       ),
     );
   }

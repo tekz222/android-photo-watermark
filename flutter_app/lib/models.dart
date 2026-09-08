@@ -21,6 +21,9 @@ class LogoItem {
 /// Where a step's logos are placed, used to draw the little frame glyphs.
 enum Placement { bottom, topLeft, topRight }
 
+/// Where a picture attached to a text sits relative to the text.
+enum TextImagePos { top, bottom, left, right, inside }
+
 /// An editable text overlay. Always centered horizontally on the photo; the
 /// user picks the vertical position ([topPct]) and the size ([heightPct]),
 /// both as percentages of the photo. Mutable on purpose: the editor changes
@@ -40,6 +43,12 @@ class TextItem {
     this.heightPct = 10, // text height as % of the photo's shortest side
     this.topPct = 50, // vertical center as % of the photo height
     this.curve = 0, // arc angle in degrees: 0 = straight, >0 arc up, <0 arc down
+    this.imageBytes,
+    this.imageName,
+    this.imageSig = 0,
+    this.imagePos = TextImagePos.left,
+    this.imageSize = 100, // picture height as % of the text height
+    this.imageGap = 15, // gap between picture and text as % of the text height
   });
 
   final int id;
@@ -55,4 +64,13 @@ class TextItem {
   double heightPct;
   double topPct;
   double curve;
+
+  /// Optional picture drawn together with the text (the whole block stays
+  /// horizontally centered on the photo).
+  Uint8List? imageBytes;
+  String? imageName;
+  int imageSig; // cheap identity of [imageBytes], for cache invalidation
+  TextImagePos imagePos;
+  double imageSize;
+  double imageGap;
 }
