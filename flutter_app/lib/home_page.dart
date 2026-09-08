@@ -387,11 +387,15 @@ class _HomePageState extends State<HomePage> {
       if (_previewFailed.contains(path)) continue;
       if (!_photoPaths.contains(path)) continue; // removed meanwhile
       try {
-        var small = _previewPhoto[path];
-        if (small == null) {
+        final Uint8List small;
+        final cached = _previewPhoto[path];
+        if (cached != null) {
+          small = cached;
+        } else {
           final full = await File(path).readAsBytes();
           if (token != _previewToken) return;
-          small = await compute(downscaleImage, (full, 1280, false));
+          small = await compute<(Uint8List, int, bool), Uint8List>(
+              downscaleImage, (full, 1280, false));
           if (token != _previewToken) return;
           if (!_photoPaths.contains(path)) continue;
           _previewPhoto[path] = small;
