@@ -7,17 +7,15 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show rootBundle;
+import 'package:flutter/services.dart' show LogicalKeyboardKey, rootBundle;
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import 'models.dart';
+import 'preview_worker.dart';
 import 'watermark_engine.dart';
-
-/// How many of the selected photos to render in the live preview.
-const int kMaxPreview = 5;
 
 /// Style + measurement of a text at a given font size (see `_measureText`).
 typedef _TextMeasure = ({
@@ -63,8 +61,7 @@ class _HomePageState extends State<HomePage> {
   bool _importing = false;
   int _importDone = 0; // photos copied so far (for the loading message)
   int _importTotal = 0; // photos being copied in the current import
-  int _previewTotal = 0; // photos expected in the preview being rendered
-  bool _renderingPreview = false; // a preview render is in progress
+  bool _renderingPreview = false; // a preview render loop is in progress
   bool _checkingLogos = false; // logos being checked/added (OCR + similarity)
   int _checkDone = 0;
   int _checkTotal = 0;
@@ -93,14 +90,19 @@ class _HomePageState extends State<HomePage> {
   String? _currentAlbum; // album reused for the whole project
   _ProcessResult? _lastResult; // persistent result banner
 
-  // Preview state.
-  final Map<String, Uint8List> _photoCache = {};
+  // Preview state. Renders live in a long-lived worker isolate that caches the
+  // decoded sources, so a change only composites.
+  final PreviewWorker _worker = PreviewWorker();
   // Small downscaled copies used ONLY for the live preview (fast re-renders).
   final Map<String, Uint8List> _previewPhoto = {}; // by photo path
   final Map<int, Uint8List> _previewLogo = {}; // by logo id
-  List<_Preview> _previews = [];
+  final Map<String, _Preview> _previews = {}; // by photo path
+  final Map<String, int> _renderedVersion = {}; // version each render is from
+  final Set<String> _previewFailed = {}; // photos that can't be decoded
+  int _previewVersion = 0; // bumped whenever the look (logos/texts/sliders) changes
   int _previewToken = 0;
   Timer? _debounce;
+  final ScrollController _thumbCtl = ScrollController();
 
   // Processing state.
   bool _processing = false;
@@ -132,12 +134,15 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
+    _worker.start();
     _loadProject();
   }
 
   @override
   void dispose() {
     _debounce?.cancel();
+    _worker.dispose();
+    _thumbCtl.dispose();
     super.dispose();
   }
 
@@ -171,7 +176,7 @@ class _HomePageState extends State<HomePage> {
       }
     } catch (_) {}
     await _installDefaultCorner();
-    _schedulePreview();
+    _kickPreview();
   }
 
   /// Installs the bundled default main (top-right) logo.
@@ -203,7 +208,6 @@ class _HomePageState extends State<HomePage> {
     final paths = await Future.wait(picked.map((x) async {
       final bytes = await x.readAsBytes();
       final path = await _copyBytesToApp(bytes, 'photos');
-      _photoCache[path] = bytes;
       if (mounted) setState(() => _importDone = ++done);
       return path;
     }));
@@ -211,7 +215,7 @@ class _HomePageState extends State<HomePage> {
       _photoPaths.addAll(paths);
       _importing = false;
     });
-    _schedulePreview();
+    _kickPreview();
     // If this project was already saved, the new photos go straight into the
     // same album (only the unsaved ones get processed).
     if (_currentAlbum != null && !_processing) _saveAll();
@@ -254,6 +258,8 @@ class _HomePageState extends State<HomePage> {
     final usedNames = existing.map((e) => _logoName(e.sourceKey)).toList();
     final usedSigs = existing.map((e) => e.phash).toSet();
     var skipped = 0;
+    _previewToken++; // stop any running preview loop while the lists change
+    _worker.cancelPending();
     try {
       for (var i = 0; i < picked.length; i++) {
         setState(() => _checkDone = i + 1);
@@ -310,6 +316,8 @@ class _HomePageState extends State<HomePage> {
     setState(() => _importing = true);
     final path = await _copyBytesToApp(bytes, 'logos');
     final fp = _imageSig(bytes);
+    _previewToken++; // stop any running preview loop while the logo changes
+    _worker.cancelPending();
     setState(() {
       _cornerLogo = LogoItem(_nextLogoId++, path, x.name, bytes, fp,
           const <String>{}, const <String>{});
@@ -320,28 +328,46 @@ class _HomePageState extends State<HomePage> {
 
   // ---- Preview ----
 
+  /// The look changed (logos, texts or sliders): every photo needs a new
+  /// render. The photo on screen is rendered first, the rest in the background.
   void _schedulePreview() {
     _saveProject();
+    _previewVersion++;
+    _kickPreview();
+  }
+
+  /// Restarts the render loop WITHOUT invalidating existing renders (photo
+  /// added/removed, another photo selected): up-to-date photos are skipped.
+  void _kickPreview() {
     _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 180), _recomputePreviews);
+    _debounce = Timer(const Duration(milliseconds: 120), _recomputePreviews);
+  }
+
+  /// Photos in render priority: the selected one first, then its neighbours.
+  List<String> _previewOrder() {
+    if (_photoPaths.isEmpty) return const [];
+    final sel = _previewIndex.clamp(0, _photoPaths.length - 1);
+    final order = <String>[_photoPaths[sel]];
+    for (var d = 1; d < _photoPaths.length; d++) {
+      if (sel + d < _photoPaths.length) order.add(_photoPaths[sel + d]);
+      if (sel - d >= 0) order.add(_photoPaths[sel - d]);
+    }
+    return order;
   }
 
   Future<void> _recomputePreviews() async {
     final token = ++_previewToken;
-    final photos = _photoPaths.take(kMaxPreview).toList();
-    if (photos.isEmpty || !_hasAnyContent) {
+    _worker.cancelPending(); // drop renders queued by an abandoned loop
+    if (_photoPaths.isEmpty || !_hasAnyContent) {
       setState(() {
-        _previews = [];
-        _previewTotal = 0;
+        _previews.clear();
+        _renderedVersion.clear();
         _renderingPreview = false;
       });
       return;
     }
-    setState(() {
-      _previewTotal = photos.length;
-      _renderingPreview = true;
-    });
-    // Prepare small copies of the logos once (cached) so re-renders are cheap.
+    setState(() => _renderingPreview = true);
+    // Small copies of the logos, once (cached), so renders are cheap.
     final allLogos = [
       ..._bottomLogos,
       ..._topLeftLogos,
@@ -354,39 +380,70 @@ class _HomePageState extends State<HomePage> {
     }
     await _ensureTextPngs();
     if (token != _previewToken) return;
-    // Render every preview from the SMALL sources, then show all at once.
-    final results = <_Preview>[];
-    for (final path in photos) {
-      final full = _photoCache[path] ??= await File(path).readAsBytes();
-      if (token != _previewToken) return;
-      final small =
-          _previewPhoto[path] ??= await compute(downscaleImage, (full, 1280, false));
-      if (token != _previewToken) return;
-      final out = await compute(renderWatermark, _previewRequest(small));
-      if (token != _previewToken) return;
-      final codec = await ui.instantiateImageCodec(out);
+
+    final version = _previewVersion;
+    for (final path in _previewOrder()) {
+      if (_renderedVersion[path] == version) continue;
+      if (_previewFailed.contains(path)) continue;
+      if (!_photoPaths.contains(path)) continue; // removed meanwhile
+      try {
+        var small = _previewPhoto[path];
+        if (small == null) {
+          final full = await File(path).readAsBytes();
+          if (token != _previewToken) return;
+          small = await compute(downscaleImage, (full, 1280, false));
+          if (token != _previewToken) return;
+          if (!_photoPaths.contains(path)) continue;
+          _previewPhoto[path] = small;
+        }
+        final out = await _worker.render(_previewRequest(path, small));
+        if (token != _previewToken) return;
+        if (out == null) continue;
+        final aspect = await _aspectOf(out);
+        if (token != _previewToken || !mounted) return;
+        if (!_photoPaths.contains(path)) continue;
+        setState(() {
+          _previews[path] = _Preview(out, aspect);
+          _renderedVersion[path] = version;
+        });
+      } catch (_) {
+        // A photo that can't be read/decoded must not block the others.
+        _previewFailed.add(path);
+        if (token != _previewToken) return;
+      }
+    }
+    if (mounted && token == _previewToken) {
+      setState(() => _renderingPreview = false);
+    }
+  }
+
+  /// Width/height of an encoded image; throws if it can't be decoded (the
+  /// caller treats that as a failed preview).
+  Future<double> _aspectOf(Uint8List bytes) async {
+    final codec = await ui.instantiateImageCodec(bytes);
+    try {
       final frame = await codec.getNextFrame();
       final image = frame.image;
       final aspect = image.height == 0 ? 1.0 : image.width / image.height;
       image.dispose();
+      return aspect;
+    } finally {
       codec.dispose();
-      if (token != _previewToken) return;
-      results.add(_Preview(out, aspect));
-    }
-    if (token == _previewToken && mounted) {
-      setState(() {
-        _previews = results;
-        _renderingPreview = false;
-      });
     }
   }
 
   /// Watermark request for the live preview, using the small cached photo and
   /// logo copies (the saved image still uses the full-resolution originals).
-  WatermarkRequest _previewRequest(Uint8List photoSmall) {
-    Uint8List logo(LogoItem e) => _previewLogo[e.id] ?? e.bytes;
+  /// Keys are stable so the worker reuses its decoded images.
+  WatermarkRequest _previewRequest(String path, Uint8List photoSmall) {
+    ImageSrc logo(LogoItem e) {
+      final small = _previewLogo[e.id];
+      return small != null
+          ? ImageSrc('ls:${e.id}', small)
+          : ImageSrc('l:${e.id}', e.bytes);
+    }
     return WatermarkRequest(
-      photoBytes: photoSmall,
+      photo: ImageSrc('ps:$path', photoSmall),
       bottomLogos: _bottomLogos.map(logo).toList(),
       topLeftLogos: _topLeftLogos.map(logo).toList(),
       cornerLogo: _cornerLogo == null ? null : logo(_cornerLogo!),
@@ -408,11 +465,12 @@ class _HomePageState extends State<HomePage> {
 
   WatermarkRequest _request(Uint8List photoBytes,
       {int? maxDim, int quality = 95, bool png = false}) {
+    ImageSrc logo(LogoItem e) => ImageSrc('l:${e.id}', e.bytes);
     return WatermarkRequest(
-      photoBytes: photoBytes,
-      bottomLogos: _bottomLogos.map((e) => e.bytes).toList(),
-      topLeftLogos: _topLeftLogos.map((e) => e.bytes).toList(),
-      cornerLogo: _cornerLogo?.bytes,
+      photo: ImageSrc('full', photoBytes),
+      bottomLogos: _bottomLogos.map(logo).toList(),
+      topLeftLogos: _topLeftLogos.map(logo).toList(),
+      cornerLogo: _cornerLogo == null ? null : logo(_cornerLogo!),
       bottomHeight: _logoSize / 100,
       bottomMargin: _bottomMargin / 100,
       bottomLeft: _leftMargin / 100,
@@ -489,7 +547,7 @@ class _HomePageState extends State<HomePage> {
         for (final t in _texts)
           if (t.text.trim().isNotEmpty && _textPng[t.id] != null)
             TextOverlay(
-              png: _textPng[t.id]!,
+              src: ImageSrc('t:${t.id}:${_textSigCache[t.id]}', _textPng[t.id]!),
               height: t.heightPct / 100,
               top: t.topPct / 100,
               contentRatio: _textRatio[t.id] ?? 1.0,
@@ -744,7 +802,7 @@ class _HomePageState extends State<HomePage> {
       if (next == null) break;
       processed.add(next);
       try {
-        final bytes = _photoCache[next] ?? await File(next).readAsBytes();
+        final bytes = await File(next).readAsBytes();
         // High-quality JPEG: same kind of file size as the original photo
         // (lossless PNG made 10 MB+ files).
         final out =
@@ -1104,11 +1162,16 @@ class _HomePageState extends State<HomePage> {
                       fit: BoxFit.cover, cacheWidth: 160),
                   onRemove: () {
                     final path = _photoPaths[i];
-                    setState(() => _photoPaths.removeAt(i));
-                    _photoCache.remove(path);
+                    _previewToken++; // discard any in-flight render of it
+                    setState(() {
+                      _photoPaths.removeAt(i);
+                      _previews.remove(path);
+                      _renderedVersion.remove(path);
+                      _previewFailed.remove(path);
+                    });
                     _previewPhoto.remove(path);
                     File(path).delete().ignore();
-                    _schedulePreview();
+                    _kickPreview();
                   },
                 ),
               ),
@@ -1686,10 +1749,22 @@ class _HomePageState extends State<HomePage> {
 
   // ---- Right pane (preview) ----
 
+  void _selectPreview(int i) {
+    setState(() => _previewIndex = i);
+    _kickPreview();
+    // Keep the selected thumbnail in view.
+    if (_thumbCtl.hasClients) {
+      final target = (i * 68.0 - _thumbCtl.position.viewportDimension / 2 + 30)
+          .clamp(0.0, _thumbCtl.position.maxScrollExtent);
+      _thumbCtl.animateTo(target,
+          duration: const Duration(milliseconds: 200), curve: Curves.easeOut);
+    }
+  }
+
   Widget _previewPane() {
     final scheme = Theme.of(context).colorScheme;
     final small = Theme.of(context).textTheme.bodySmall;
-    final paths = _photoPaths.take(kMaxPreview).toList();
+    final paths = _photoPaths;
     if (paths.isEmpty) {
       return Container(
         color: scheme.surface,
@@ -1708,22 +1783,24 @@ class _HomePageState extends State<HomePage> {
     }
     final n = paths.length;
     final idx = _previewIndex.clamp(0, n - 1);
-    final ready = _hasAnyContent && idx < _previews.length;
-    final rendering = _hasAnyContent && !ready;
+    final path = paths[idx];
+    final render = _hasAnyContent ? _previews[path] : null;
+    final stale = render != null && _renderedVersion[path] != _previewVersion;
+    final rendering = _hasAnyContent && (render == null || stale);
 
     Widget picture;
-    if (ready) {
-      final p = _previews[idx];
+    if (render != null) {
       picture = AspectRatio(
-        aspectRatio: p.aspect,
+        aspectRatio: render.aspect,
         child: Container(
           decoration:
               BoxDecoration(border: Border.all(color: scheme.outlineVariant)),
-          child: Image.memory(p.bytes, fit: BoxFit.contain, gaplessPlayback: true),
+          child: Image.memory(render.bytes,
+              fit: BoxFit.contain, gaplessPlayback: true),
         ),
       );
     } else {
-      picture = Image.file(File(paths[idx]),
+      picture = Image.file(File(path),
           fit: BoxFit.contain, cacheWidth: 1600, gaplessPlayback: true);
     }
 
@@ -1751,7 +1828,11 @@ class _HomePageState extends State<HomePage> {
                   ),
                   if (rendering)
                     Positioned(
-                        top: 8, left: 8, child: _badge('Gerando pré-visualização…')),
+                        top: 8,
+                        left: 8,
+                        child: _badge(render == null
+                            ? 'Gerando pré-visualização…'
+                            : 'Atualizando…')),
                   if (!_hasAnyContent)
                     Positioned(
                         top: 8,
@@ -1764,11 +1845,8 @@ class _HomePageState extends State<HomePage> {
                       top: 0,
                       bottom: 0,
                       child: Center(
-                        child: _navButton(
-                            Icons.chevron_left,
-                            idx > 0
-                                ? () => setState(() => _previewIndex = idx - 1)
-                                : null),
+                        child: _navButton(Icons.chevron_left,
+                            idx > 0 ? () => _selectPreview(idx - 1) : null),
                       ),
                     ),
                     Positioned(
@@ -1776,11 +1854,8 @@ class _HomePageState extends State<HomePage> {
                       top: 0,
                       bottom: 0,
                       child: Center(
-                        child: _navButton(
-                            Icons.chevron_right,
-                            idx < n - 1
-                                ? () => setState(() => _previewIndex = idx + 1)
-                                : null),
+                        child: _navButton(Icons.chevron_right,
+                            idx < n - 1 ? () => _selectPreview(idx + 1) : null),
                       ),
                     ),
                   ],
@@ -1790,28 +1865,32 @@ class _HomePageState extends State<HomePage> {
           ),
           SizedBox(
             height: 72,
-            child: ListView.separated(
+            child: ListView.builder(
+              controller: _thumbCtl,
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
               itemCount: n,
-              separatorBuilder: (_, __) => const SizedBox(width: 8),
               itemBuilder: (context, i) {
                 final sel = i == idx;
-                final hasRender = _hasAnyContent && i < _previews.length;
-                return GestureDetector(
-                  onTap: () => setState(() => _previewIndex = i),
-                  child: Container(
-                    width: 60,
-                    decoration: BoxDecoration(
-                      border: Border.all(
-                        color: sel ? scheme.primary : scheme.outlineVariant,
-                        width: sel ? 2 : 1,
+                final r = _hasAnyContent ? _previews[paths[i]] : null;
+                return Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: GestureDetector(
+                    onTap: () => _selectPreview(i),
+                    child: Container(
+                      width: 60,
+                      decoration: BoxDecoration(
+                        border: Border.all(
+                          color: sel ? scheme.primary : scheme.outlineVariant,
+                          width: sel ? 2 : 1,
+                        ),
                       ),
+                      child: r != null
+                          ? Image.memory(r.bytes,
+                              fit: BoxFit.cover, gaplessPlayback: true)
+                          : Image.file(File(paths[i]),
+                              fit: BoxFit.cover, cacheWidth: 200),
                     ),
-                    child: hasRender
-                        ? Image.memory(_previews[i].bytes, fit: BoxFit.cover)
-                        : Image.file(File(paths[i]),
-                            fit: BoxFit.cover, cacheWidth: 200),
                   ),
                 );
               },
@@ -1820,8 +1899,8 @@ class _HomePageState extends State<HomePage> {
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
             child: Text(
-              'Pré-visualização das primeiras $kMaxPreview fotos. Clique na '
-              'imagem para tela cheia (roda do mouse dá zoom).',
+              'Clique na imagem para tela cheia (roda do mouse dá zoom). '
+              'Fotos ainda não atualizadas mostram a versão anterior.',
               style: small,
             ),
           ),
@@ -1941,12 +2020,9 @@ class _HomePageState extends State<HomePage> {
   void _openFullscreen(int index) {
     // Show ALL preview photos (so you can move to ones not rendered yet) and
     // render each at high resolution on demand, so zoom stays sharp.
-    final paths = _photoPaths.take(kMaxPreview).toList();
+    final paths = List<String>.of(_photoPaths);
     if (paths.isEmpty) return;
-    final placeholders = [
-      for (var i = 0; i < paths.length; i++)
-        i < _previews.length ? _previews[i].bytes : null,
-    ];
+    final placeholders = [for (final p in paths) _previews[p]?.bytes];
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         fullscreenDialog: true,
@@ -1964,7 +2040,7 @@ class _HomePageState extends State<HomePage> {
   /// so logos and text stay sharp when zoomed in the viewer.
   Future<Uint8List?> _renderFull(String path) async {
     try {
-      final bytes = _photoCache[path] ??= await File(path).readAsBytes();
+      final bytes = await File(path).readAsBytes();
       await _ensureTextPngs();
       return await compute(renderWatermark, _request(bytes, quality: 95));
     } catch (_) {
@@ -2093,14 +2169,14 @@ class _HomePageState extends State<HomePage> {
       _savedPaths.clear();
       _currentAlbum = null;
       _lastResult = null;
-      _previews = [];
-      _previewTotal = 0;
+      _previews.clear();
+      _renderedVersion.clear();
+      _previewFailed.clear();
       _previewIndex = 0;
       _renderingPreview = false;
       _importing = false;
       _checkingLogos = false;
       _cancelRequested = false;
-      _photoCache.clear();
       _previewPhoto.clear();
       _previewLogo.clear();
       _texts.clear();
@@ -2117,6 +2193,7 @@ class _HomePageState extends State<HomePage> {
       _centered = false;
       _logoSpacing = 0;
     });
+    _worker.clearCache();
     await _installDefaultCorner();
     await _saveProject();
   }
@@ -2435,6 +2512,13 @@ class _FullscreenViewerState extends State<_FullscreenViewer> {
 
   double get _scale => _zoom.value.getMaxScaleOnAxis();
 
+  void _goTo(int i) {
+    if (i < 0 || i >= widget.itemCount) return;
+    _zoom.value = Matrix4.identity();
+    _controller.animateToPage(i,
+        duration: const Duration(milliseconds: 220), curve: Curves.easeOut);
+  }
+
   /// Zooms to [target] around the viewport center and keeps the (viewport
   /// sized) child covering the frame, so it can never drift out of view.
   void _zoomTo(double target) {
@@ -2463,7 +2547,18 @@ class _FullscreenViewerState extends State<_FullscreenViewer> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.black,
-      body: Stack(
+      body: CallbackShortcuts(
+        bindings: {
+          const SingleActivator(LogicalKeyboardKey.arrowLeft): () =>
+              _goTo(_page - 1),
+          const SingleActivator(LogicalKeyboardKey.arrowRight): () =>
+              _goTo(_page + 1),
+          const SingleActivator(LogicalKeyboardKey.escape): () =>
+              Navigator.of(context).pop(),
+        },
+        child: Focus(
+          autofocus: true,
+          child: Stack(
         children: [
           PageView.builder(
             controller: _controller,
@@ -2536,6 +2631,45 @@ class _FullscreenViewerState extends State<_FullscreenViewer> {
               ),
             ),
           ),
+          // Previous / next (also: drag with the mouse, ← → keys).
+          if (widget.itemCount > 1) ...[
+            Positioned(
+              left: 12,
+              top: 0,
+              bottom: 0,
+              child: Center(
+                child: Material(
+                  color: Colors.black54,
+                  shape: const CircleBorder(),
+                  child: IconButton(
+                    iconSize: 30,
+                    tooltip: 'Anterior (←)',
+                    icon: const Icon(Icons.chevron_left, color: Colors.white),
+                    onPressed: _page > 0 ? () => _goTo(_page - 1) : null,
+                  ),
+                ),
+              ),
+            ),
+            Positioned(
+              right: 12,
+              top: 0,
+              bottom: 0,
+              child: Center(
+                child: Material(
+                  color: Colors.black54,
+                  shape: const CircleBorder(),
+                  child: IconButton(
+                    iconSize: 30,
+                    tooltip: 'Próxima (→)',
+                    icon: const Icon(Icons.chevron_right, color: Colors.white),
+                    onPressed: _page < widget.itemCount - 1
+                        ? () => _goTo(_page + 1)
+                        : null,
+                  ),
+                ),
+              ),
+            ),
+          ],
           // Bottom: zoom controls.
           Positioned(
             left: 0,
@@ -2581,6 +2715,8 @@ class _FullscreenViewerState extends State<_FullscreenViewer> {
             ),
           ),
         ],
+          ),
+        ),
       ),
     );
   }

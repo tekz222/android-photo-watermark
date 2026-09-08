@@ -2,18 +2,49 @@ import 'dart:typed_data';
 
 import 'package:image/image.dart' as img;
 
+/// Image bytes plus a stable key, so a long-lived renderer can keep the decoded
+/// image and skip decoding the next time the same source is used.
+class ImageSrc {
+  const ImageSrc(this.key, this.bytes);
+  final String key;
+  final Uint8List bytes;
+}
+
+/// Small LRU cache of decoded images (used by the preview worker isolate).
+class DecodedCache {
+  DecodedCache({this.capacity = 24});
+  final int capacity;
+  final Map<String, img.Image> _m = {}; // insertion-ordered: first = oldest
+
+  img.Image? get(String key) {
+    final v = _m.remove(key);
+    if (v != null) _m[key] = v; // move to most-recent
+    return v;
+  }
+
+  void put(String key, img.Image v) {
+    _m.remove(key);
+    _m[key] = v;
+    while (_m.length > capacity) {
+      _m.remove(_m.keys.first);
+    }
+  }
+
+  void clear() => _m.clear();
+}
+
 /// A pre-rasterized text overlay (transparent PNG drawn by the UI with the
 /// system's fonts). Always centered horizontally; [top] places its vertical
 /// center as a fraction of the photo height, [height] scales it as a fraction
 /// of the photo's shortest side.
 class TextOverlay {
   TextOverlay({
-    required this.png,
+    required this.src,
     required this.height,
     required this.top,
     this.contentRatio = 1.0,
   });
-  final Uint8List png;
+  final ImageSrc src;
   final double height;
   final double top;
 
@@ -23,10 +54,10 @@ class TextOverlay {
 }
 
 /// All inputs needed to render one watermarked photo. This object is passed
-/// across an isolate via [compute], so every field is a plain, copyable value.
+/// across an isolate, so every field is a plain, copyable value.
 class WatermarkRequest {
   WatermarkRequest({
-    required this.photoBytes,
+    required this.photo,
     required this.bottomLogos,
     required this.topLeftLogos,
     required this.cornerLogo,
@@ -47,12 +78,12 @@ class WatermarkRequest {
     this.quality = 95,
   });
 
-  final Uint8List photoBytes;
+  final ImageSrc photo;
 
-  /// Ordered logo bytes (duplicates allowed) for each placement.
-  final List<Uint8List> bottomLogos;
-  final List<Uint8List> topLeftLogos;
-  final Uint8List? cornerLogo;
+  /// Ordered logos (duplicates allowed) for each placement.
+  final List<ImageSrc> bottomLogos;
+  final List<ImageSrc> topLeftLogos;
+  final ImageSrc? cornerLogo;
 
   // Fractions of the photo's shortest side.
   final double bottomHeight;
@@ -80,39 +111,48 @@ class WatermarkRequest {
   /// Encode the result as lossless PNG instead of JPEG.
   final bool png;
 
-  /// Optional longest-edge cap (used to keep the live preview fast). When null
-  /// the photo is processed at full resolution.
+  /// Optional longest-edge cap. When null the photo is processed at full
+  /// resolution.
   final int? maxDim;
   final int quality;
 }
 
-/// Composites the logos onto the photo and returns encoded JPEG bytes.
+/// Composites the logos and texts onto the photo and returns encoded bytes.
 ///
-/// Drawing order (bottom layer first): top-left row, bottom row, then the
-/// top-right main logo on top. Rows run left-to-right with logos touching.
+/// Drawing order (bottom layer first): top-left row, bottom row, the top-right
+/// main logo, then the texts.
 ///
-/// Top-level so it can run inside [compute] off the UI thread.
-Uint8List renderWatermark(WatermarkRequest r) {
-  var photo = img.decodeImage(r.photoBytes);
-  if (photo == null) return r.photoBytes;
-  photo = img.bakeOrientation(photo);
+/// Top-level so it can run inside `compute` (no [cache]) or in the preview
+/// worker isolate, where [cache] keeps decoded sources between renders.
+Uint8List renderWatermark(WatermarkRequest r, {DecodedCache? cache}) {
+  img.Image? load(ImageSrc s) {
+    final hit = cache?.get(s.key);
+    if (hit != null) return hit;
+    final d = img.decodeImage(s.bytes);
+    if (d == null) return null;
+    final o = img.bakeOrientation(d);
+    cache?.put(s.key, o);
+    return o;
+  }
+
+  var photo = load(r.photo);
+  if (photo == null) return r.photo.bytes;
 
   final maxDim = r.maxDim;
   if (maxDim != null && (photo.width > maxDim || photo.height > maxDim)) {
     photo = photo.width >= photo.height
         ? img.copyResize(photo, width: maxDim)
         : img.copyResize(photo, height: maxDim);
+  } else if (cache != null) {
+    photo = photo.clone(); // never draw onto the cached original
   }
 
   final shortest =
       (photo.width < photo.height ? photo.width : photo.height).toDouble();
 
-  // Decode each distinct logo only once (duplicates share the same bytes ref).
-  final cache = <Uint8List, img.Image?>{};
-  img.Image? decode(Uint8List bytes) => cache.putIfAbsent(bytes, () {
-        final d = img.decodeImage(bytes);
-        return d == null ? null : img.bakeOrientation(d);
-      });
+  // Decode each distinct source only once per render.
+  final local = <String, img.Image?>{};
+  img.Image? decode(ImageSrc s) => local.putIfAbsent(s.key, () => load(s));
 
   final gap = shortest * r.spacing;
 
@@ -146,10 +186,10 @@ Uint8List renderWatermark(WatermarkRequest r) {
     gap: gap,
   );
 
-  // Top-right main logo (top layer).
-  final cornerBytes = r.cornerLogo;
-  if (cornerBytes != null) {
-    final logo = decode(cornerBytes);
+  // Top-right main logo.
+  final corner = r.cornerLogo;
+  if (corner != null) {
+    final logo = decode(corner);
     if (logo != null) {
       final h = (shortest * r.cornerHeight).round().clamp(1, photo.height);
       final resized = _resize(logo, height: h);
@@ -163,7 +203,7 @@ Uint8List renderWatermark(WatermarkRequest r) {
   // Text overlays (top-most layer): centered horizontally, vertical center at
   // [TextOverlay.top]. Shrunk to the photo width if a text is too wide.
   for (final t in r.textOverlays) {
-    final text = decode(t.png);
+    final text = decode(t.src);
     if (text == null) continue;
     final ratio = t.contentRatio > 0 ? t.contentRatio : 1.0;
     final h = (shortest * t.height / ratio).round().clamp(1, photo.height);
@@ -183,8 +223,8 @@ Uint8List renderWatermark(WatermarkRequest r) {
 
 void _drawRow(
   img.Image dst,
-  List<Uint8List> logos,
-  img.Image? Function(Uint8List) decode, {
+  List<ImageSrc> logos,
+  img.Image? Function(ImageSrc) decode, {
   required double height,
   required double startX,
   required double top,
@@ -195,8 +235,8 @@ void _drawRow(
   final h = height.round().clamp(1, dst.height);
   final y = top.round();
   var x = startX;
-  for (final bytes in logos) {
-    final logo = decode(bytes);
+  for (final src in logos) {
+    final logo = decode(src);
     if (logo == null) continue;
     final resized = _withOpacity(_resize(logo, height: h), opacity);
     img.compositeImage(dst, resized, dstX: x.round(), dstY: y);
@@ -208,15 +248,15 @@ void _drawRow(
 /// Total width of [logos] laid out at the given [height] with [gap] pixels
 /// between neighbours.
 double _rowWidth(
-  List<Uint8List> logos,
-  img.Image? Function(Uint8List) decode,
+  List<ImageSrc> logos,
+  img.Image? Function(ImageSrc) decode,
   double height,
   double gap,
 ) {
   double w = 0;
   var n = 0;
-  for (final bytes in logos) {
-    final logo = decode(bytes);
+  for (final src in logos) {
+    final logo = decode(src);
     if (logo == null) continue;
     w += height * (logo.width / logo.height);
     n++;
@@ -251,85 +291,10 @@ img.Image _withOpacity(img.Image src, double opacity) {
   return out;
 }
 
-/// Perceptual difference-hash (dHash) of an image, for visual-similarity checks.
-/// Returns a 64-bit fingerprint; two images are "similar" when the Hamming
-/// distance between their hashes is small. Top-level so it can run in an isolate
-/// via [compute].
-int perceptualHash(Uint8List bytes) {
-  final decoded = img.decodeImage(bytes);
-  if (decoded == null) return 0;
-  // Flatten transparency onto white so logos (transparent PNGs) compare on
-  // their visible shape, then reduce to a 9x8 grayscale and build the dHash.
-  final flat = img.Image(width: decoded.width, height: decoded.height);
-  img.fill(flat, color: img.ColorRgb8(255, 255, 255));
-  img.compositeImage(flat, decoded);
-  final small = img.copyResize(img.grayscale(flat), width: 9, height: 8);
-  var hash = 0;
-  var bit = 0;
-  for (var y = 0; y < 8; y++) {
-    for (var x = 0; x < 8; x++) {
-      final left = small.getPixel(x, y).r;
-      final right = small.getPixel(x + 1, y).r;
-      if (left > right) hash |= (1 << bit);
-      bit++;
-    }
-  }
-  return hash;
-}
-
-/// Number of differing bits between two perceptual hashes (0 = identical).
-int perceptualDistance(int a, int b) {
-  var x = a ^ b;
-  var count = 0;
-  while (x != 0) {
-    count += x & 1;
-    x >>= 1;
-  }
-  return count;
-}
-
-/// Result of analyzing a logo off the main thread: a downscaled JPEG (flattened
-/// on white) suitable for fast OCR, plus the perceptual hash.
-class LogoAnalysis {
-  LogoAnalysis(this.ocrJpeg, this.phash);
-  final Uint8List ocrJpeg;
-  final int phash;
-}
-
-/// Decodes [bytes] once, downscales (cap longest side at 1024) and flattens
-/// transparency onto white, then returns a small JPEG for OCR plus the dHash.
-/// Top-level so it can run in an isolate via [compute] (keeps the UI smooth).
-LogoAnalysis analyzeLogo(Uint8List bytes) {
-  final decoded = img.decodeImage(bytes);
-  if (decoded == null) return LogoAnalysis(Uint8List(0), 0);
-  var work = decoded;
-  final longest = decoded.width > decoded.height ? decoded.width : decoded.height;
-  if (longest > 1024) {
-    work = decoded.width >= decoded.height
-        ? img.copyResize(decoded, width: 1024)
-        : img.copyResize(decoded, height: 1024);
-  }
-  final flat = img.Image(width: work.width, height: work.height);
-  img.fill(flat, color: img.ColorRgb8(255, 255, 255));
-  img.compositeImage(flat, work);
-
-  final gray = img.copyResize(img.grayscale(flat), width: 9, height: 8);
-  var hash = 0;
-  var bit = 0;
-  for (var y = 0; y < 8; y++) {
-    for (var x = 0; x < 8; x++) {
-      if (gray.getPixel(x, y).r > gray.getPixel(x + 1, y).r) hash |= (1 << bit);
-      bit++;
-    }
-  }
-  final jpeg = Uint8List.fromList(img.encodeJpg(flat, quality: 85));
-  return LogoAnalysis(jpeg, hash);
-}
-
-/// Downscales an image for the live preview so re-rendering on every slider
-/// change is fast. [keepAlpha] true -> PNG (logos, preserves transparency);
+/// Downscales an image for the live preview so re-rendering on every change
+/// is fast. [keepAlpha] true -> PNG (logos, preserves transparency);
 /// false -> JPEG (photos). Bakes EXIF orientation so the small copy is upright.
-/// Top-level so it runs in an isolate via [compute]. Args: (bytes, maxSide, keepAlpha).
+/// Top-level so it runs in an isolate via `compute`. Args: (bytes, maxSide, keepAlpha).
 Uint8List downscaleImage((Uint8List, int, bool) args) {
   final (bytes, maxSide, keepAlpha) = args;
   var decoded = img.decodeImage(bytes);

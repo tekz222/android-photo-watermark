@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 
 import 'home_page.dart';
@@ -101,6 +102,16 @@ class PhotoWatermarkApp extends StatelessWidget {
       themeMode: ThemeMode.dark,
       theme: _theme(Brightness.light),
       darkTheme: _theme(Brightness.dark),
+      // Let the mouse drag scrollables (page viewer, thumbnail strips, lists);
+      // Flutter only enables touch/stylus dragging by default.
+      scrollBehavior: const MaterialScrollBehavior().copyWith(
+        dragDevices: {
+          PointerDeviceKind.mouse,
+          PointerDeviceKind.touch,
+          PointerDeviceKind.trackpad,
+          PointerDeviceKind.stylus,
+        },
+      ),
       home: const HomePage(),
     );
   }
