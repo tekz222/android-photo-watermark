@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart' show PointerScrollEvent;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show LogicalKeyboardKey, rootBundle;
 import 'package:image_picker/image_picker.dart';
@@ -1817,31 +1818,13 @@ class _HomePageState extends State<HomePage> {
           ],
           if (!t.rainbow) ...[
             const SizedBox(height: 8),
-            _colorField(
-              '${t.id}:fill',
-              'Cor do texto',
-              t.color,
-              (c) {
-                _hoverBackup.remove('${t.id}:fill');
-                update(() => t.color = c);
-              },
-              (c) => _hover('${t.id}:fill', c, () => t.color,
-                  (v) => t.color = v),
-            ),
+            _colorField('${t.id}:fill', 'Cor do texto', t.color,
+                (c) => update(() => t.color = c)),
           ],
           if (t.outline) ...[
             const SizedBox(height: 8),
-            _colorField(
-              '${t.id}:outline',
-              'Cor do contorno',
-              t.outlineColor,
-              (c) {
-                _hoverBackup.remove('${t.id}:outline');
-                update(() => t.outlineColor = c);
-              },
-              (c) => _hover('${t.id}:outline', c, () => t.outlineColor,
-                  (v) => t.outlineColor = v),
-            ),
+            _colorField('${t.id}:outline', 'Cor do contorno', t.outlineColor,
+                (c) => update(() => t.outlineColor = c)),
             _slider('Espessura do contorno', t.outlineWidth, 2, 20,
                 (v) => setState(() => t.outlineWidth = v)),
           ],
@@ -1898,43 +1881,14 @@ class _HomePageState extends State<HomePage> {
       (argb & 0xFFFFFF).toRadixString(16).padLeft(6, '0').toUpperCase();
 
   String? _openColor; // which color field has its panel open ("id:fill")
-  final Map<String, int> _hoverBackup = {}; // color before a hover preview
 
-  /// Re-renders the previews without touching the saved state (used for the
-  /// temporary hover preview, which is not a real change).
-  void _previewOnly() {
-    _previewVersion++;
-    _kickPreview();
-  }
-
-  /// Hover preview: while the mouse is over a swatch the photo shows that
-  /// color; leaving restores the real one. [c] null = mouse left.
-  void _hover(String key, int? c, int Function() get, void Function(int) set) {
-    if (c == null) {
-      final back = _hoverBackup.remove(key);
-      if (back != null && get() != back) {
-        setState(() => set(back));
-        _previewOnly();
-      }
-    } else {
-      _hoverBackup.putIfAbsent(key, get);
-      if (get() != c) {
-        setState(() => set(c));
-        _previewOnly();
-      }
-    }
-  }
-
-  /// Label + quick swatches (hover to preview) + the current hex value, which
-  /// opens an inline panel with a hex field and hue/saturation/brightness
-  /// sliders that apply live. No dialog, nothing covers the preview.
-  Widget _colorField(String key, String label, int selected,
-      ValueChanged<int> onPick, ValueChanged<int?> onHover) {
+  /// Label + quick swatches + the current hex value, which opens an inline
+  /// panel (color square, hue bar, hex field) that applies live while you
+  /// drag. No dialog, nothing covers the preview.
+  Widget _colorField(
+      String key, String label, int selected, ValueChanged<int> onPick) {
     final scheme = Theme.of(context).colorScheme;
     final open = _openColor == key;
-    // The model holds the hovered color during a hover preview; the REAL
-    // choice is the backup, so clicking the hovered swatch still applies it.
-    final real = _hoverBackup[key] ?? selected;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1948,10 +1902,8 @@ class _HomePageState extends State<HomePage> {
             for (final c in _swatches)
               MouseRegion(
                 cursor: SystemMouseCursors.click,
-                onEnter: !_controlsEnabled ? null : (_) => onHover(c),
-                onExit: !_controlsEnabled ? null : (_) => onHover(null),
                 child: GestureDetector(
-                  onTap: (!_controlsEnabled || c == real)
+                  onTap: (!_controlsEnabled || c == selected)
                       ? null
                       : () => onPick(c),
                   child: Container(
@@ -1961,8 +1913,8 @@ class _HomePageState extends State<HomePage> {
                       color: Color(c),
                       borderRadius: BorderRadius.circular(4),
                       border: Border.all(
-                        color: real == c ? scheme.primary : scheme.outline,
-                        width: real == c ? 2 : 1,
+                        color: selected == c ? scheme.primary : scheme.outline,
+                        width: selected == c ? 2 : 1,
                       ),
                     ),
                   ),
@@ -3071,20 +3023,24 @@ class _FullscreenViewer extends StatefulWidget {
 class _FullscreenViewerState extends State<_FullscreenViewer> {
   static const double _maxScale = 8;
   late final PageController _controller;
-  final TransformationController _zoom = TransformationController();
   final Map<int, Uint8List> _cache = {};
   final Set<int> _loading = {};
   final Map<int, double> _aspects = {}; // width / height per page
   final Set<int> _aspectLoading = {};
-  Size? _viewerSize; // size of the image area on the current page
+  Size? _viewerSize; // size of the whole viewer (the page)
   int _page = 0;
+
+  // Zoom state of the current page: the image's top-left corner (in viewer
+  // coordinates) and its scale relative to "fit to screen".
+  double _scale = 1;
+  Offset _origin = Offset.zero;
+  double _gestureStartScale = 1;
 
   @override
   void initState() {
     super.initState();
     _page = widget.initialPage;
     _controller = PageController(initialPage: widget.initialPage);
-    _zoom.addListener(() => setState(() {}));
     _load(widget.initialPage);
     _load(widget.initialPage + 1);
   }
@@ -3092,7 +3048,6 @@ class _FullscreenViewerState extends State<_FullscreenViewer> {
   @override
   void dispose() {
     _controller.dispose();
-    _zoom.dispose();
     super.dispose();
   }
 
@@ -3108,8 +3063,6 @@ class _FullscreenViewerState extends State<_FullscreenViewer> {
       _loading.remove(i);
     }
   }
-
-  double get _scale => _zoom.value.getMaxScaleOnAxis();
 
   Future<void> _ensureAspect(int i, Uint8List bytes) async {
     if (_aspects.containsKey(i) || _aspectLoading.contains(i)) return;
@@ -3133,32 +3086,66 @@ class _FullscreenViewerState extends State<_FullscreenViewer> {
 
   void _goTo(int i) {
     if (i < 0 || i >= widget.itemCount) return;
-    _zoom.value = Matrix4.identity();
+    _resetZoom();
     _controller.jumpToPage(i); // no slide animation
   }
 
-  /// Zooms to [target] around the viewport center and keeps the (viewport
-  /// sized) child covering the frame, so it can never drift out of view.
+  void _resetZoom() {
+    _scale = 1;
+    _origin = Offset.zero;
+  }
+
+  /// Size of the image when it fits the viewer (scale 1).
+  Size _fitSize(double aspect, Size vp) {
+    if (vp.width <= 0 || vp.height <= 0) return Size.zero;
+    return vp.width / vp.height > aspect
+        ? Size(vp.height * aspect, vp.height)
+        : Size(vp.width, vp.width / aspect);
+  }
+
+  /// Keeps the image inside the frame: centered while it is smaller than the
+  /// viewer on an axis, otherwise never leaving a gap at the edges.
+  Offset _clampOrigin(Offset o, Size fit, double s, Size vp) {
+    final sw = fit.width * s, sh = fit.height * s;
+    final x = sw <= vp.width
+        ? (vp.width - sw) / 2
+        : o.dx.clamp(vp.width - sw, 0.0);
+    final y = sh <= vp.height
+        ? (vp.height - sh) / 2
+        : o.dy.clamp(vp.height - sh, 0.0);
+    return Offset(x, y);
+  }
+
+  Size get _fit {
+    final vp = _viewerSize ?? MediaQuery.of(context).size;
+    return _fitSize(_aspects[_page] ?? 1.0, vp);
+  }
+
+  /// Zooms to [target] keeping the point under [focal] (viewer coordinates)
+  /// where it is, then clamps.
+  void _zoomAt(Offset focal, double target) {
+    final vp = _viewerSize ?? MediaQuery.of(context).size;
+    final fit = _fit;
+    final next = target.clamp(1.0, _maxScale);
+    final cur = _clampOrigin(_origin, fit, _scale, vp);
+    final k = next / _scale;
+    final o = Offset(
+        focal.dx - (focal.dx - cur.dx) * k, focal.dy - (focal.dy - cur.dy) * k);
+    setState(() {
+      _scale = next;
+      _origin = _clampOrigin(o, fit, next, vp);
+    });
+  }
+
+  /// Zoom buttons: around the center of the viewer.
   void _zoomTo(double target) {
-    final size = _viewerSize ?? MediaQuery.of(context).size;
-    final s = target.clamp(1.0, _maxScale);
-    if (s <= 1.0) {
-      _zoom.value = Matrix4.identity();
-      return;
-    }
-    final k = s / _scale;
-    final c = Offset(size.width / 2, size.height / 2);
-    final m = Matrix4.identity()
-      ..translate(c.dx, c.dy)
-      ..scale(k)
-      ..translate(-c.dx, -c.dy);
-    final next = m.multiplied(_zoom.value);
-    final minTx = size.width - size.width * s;
-    final minTy = size.height - size.height * s;
-    final tx = next.storage[12].clamp(minTx, 0.0);
-    final ty = next.storage[13].clamp(minTy, 0.0);
-    next.setTranslationRaw(tx, ty, 0);
-    _zoom.value = next;
+    final vp = _viewerSize ?? MediaQuery.of(context).size;
+    _zoomAt(Offset(vp.width / 2, vp.height / 2), target);
+  }
+
+  void _pan(Offset delta) {
+    final vp = _viewerSize ?? MediaQuery.of(context).size;
+    setState(() => _origin = _clampOrigin(_origin + delta, _fit, _scale, vp));
   }
 
   @override
@@ -3185,7 +3172,7 @@ class _FullscreenViewerState extends State<_FullscreenViewer> {
                 ? const NeverScrollableScrollPhysics()
                 : const PageScrollPhysics(),
             onPageChanged: (i) {
-              _zoom.value = Matrix4.identity();
+              _resetZoom();
               setState(() => _page = i);
               _load(i);
               _load(i + 1);
@@ -3204,30 +3191,75 @@ class _FullscreenViewerState extends State<_FullscreenViewer> {
               }
               if (hi == null) _load(i); // upgrade placeholder to sharp version
               final aspect = _aspects[i];
-              if (aspect == null) _ensureAspect(i, bytes);
-              final image = Image.memory(bytes,
-                  fit: BoxFit.contain, gaplessPlayback: true);
-              // The zoomable area is exactly the image: the black margins
-              // around it ignore the wheel and the drag.
-              return Center(
-                child: aspect == null
-                    ? image
-                    : AspectRatio(
-                        aspectRatio: aspect,
-                        child: LayoutBuilder(
-                          builder: (context, cons) {
-                            if (i == _page) _viewerSize = cons.biggest;
-                            return InteractiveViewer(
-                              transformationController:
-                                  i == _page ? _zoom : null,
-                              minScale: 1,
-                              maxScale: _maxScale,
-                              trackpadScrollCausesScale: true,
-                              child: image,
-                            );
+              if (aspect == null) {
+                _ensureAspect(i, bytes);
+                return Center(
+                  child: Image.memory(bytes,
+                      fit: BoxFit.contain, gaplessPlayback: true),
+                );
+              }
+              // Whole-screen zoom: the image grows over the black margins,
+              // but can never be dragged past its own edges.
+              return LayoutBuilder(
+                builder: (context, cons) {
+                  final vp = cons.biggest;
+                  final current = i == _page;
+                  if (current) _viewerSize = vp;
+                  final fit = _fitSize(aspect, vp);
+                  final s = current ? _scale : 1.0;
+                  final origin = _clampOrigin(
+                      current ? _origin : Offset.zero, fit, s, vp);
+                  final zoomed = current && _scale > 1.01;
+                  return Listener(
+                    onPointerSignal: !current
+                        ? null
+                        : (e) {
+                            if (e is! PointerScrollEvent) return;
+                            if (e.scrollDelta.dy != 0) {
+                              final factor = e.scrollDelta.dy < 0 ? 1.2 : 1 / 1.2;
+                              _zoomAt(e.localPosition, _scale * factor);
+                            } else if (zoomed && e.scrollDelta.dx != 0) {
+                              _pan(Offset(-e.scrollDelta.dx, 0)); // sideways scroll pans
+                            }
                           },
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      // Only while zoomed: at scale 1 the drag belongs to the
+                      // page viewer (previous / next photo).
+                      onScaleStart:
+                          zoomed ? (_) => _gestureStartScale = _scale : null,
+                      onScaleUpdate: !zoomed
+                          ? null
+                          : (d) {
+                              final target = _gestureStartScale * d.scale;
+                              if ((target - _scale).abs() > 0.001) {
+                                _zoomAt(d.localFocalPoint, target);
+                              }
+                              if (d.focalPointDelta != Offset.zero) {
+                                _pan(d.focalPointDelta);
+                              }
+                            },
+                      child: ClipRect(
+                        child: SizedBox.expand(
+                          child: Stack(
+                            children: [
+                              Positioned(
+                                left: origin.dx,
+                                top: origin.dy,
+                                width: fit.width * s,
+                                height: fit.height * s,
+                                child: Image.memory(bytes,
+                                    fit: BoxFit.fill,
+                                    gaplessPlayback: true,
+                                    filterQuality: FilterQuality.medium),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
+                    ),
+                  );
+                },
               );
             },
           ),
