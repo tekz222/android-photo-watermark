@@ -5,9 +5,14 @@ import 'package:image/image.dart' as img;
 /// Image bytes plus a stable key, so a long-lived renderer can keep the decoded
 /// image and skip decoding the next time the same source is used.
 class ImageSrc {
-  const ImageSrc(this.key, this.bytes);
+  const ImageSrc(this.key, this.bytes, {this.rawWidth, this.rawHeight});
   final String key;
+
+  /// Encoded image (JPEG/PNG), or raw straight-alpha RGBA pixels when
+  /// [rawWidth]/[rawHeight] are set (no decoding needed).
   final Uint8List bytes;
+  final int? rawWidth;
+  final int? rawHeight;
 }
 
 /// Small LRU cache of decoded images (used by the preview worker isolate).
@@ -15,11 +20,23 @@ class DecodedCache {
   DecodedCache({this.capacity = 24});
   final int capacity;
   final Map<String, img.Image> _m = {}; // insertion-ordered: first = oldest
+  final Map<String, img.Image> _pinned = {}; // never evicted (text rasters)
 
   img.Image? get(String key) {
+    final p = _pinned[key];
+    if (p != null) return p;
     final v = _m.remove(key);
     if (v != null) _m[key] = v; // move to most-recent
     return v;
+  }
+
+  /// Keeps [v] under [key] until [clear] or until another image is pinned
+  /// with the same [group] prefix (e.g. a text that was re-rasterized).
+  void pin(String key, img.Image v, {String? group}) {
+    if (group != null) {
+      _pinned.removeWhere((k, _) => k.startsWith(group));
+    }
+    _pinned[key] = v;
   }
 
   void put(String key, img.Image v) {
@@ -30,8 +47,21 @@ class DecodedCache {
     }
   }
 
-  void clear() => _m.clear();
+  void clear() {
+    _m.clear();
+    _pinned.clear();
+  }
 }
+
+/// Builds an image from raw straight-alpha RGBA pixels.
+img.Image imageFromRaw(int w, int h, Uint8List bytes) => img.Image.fromBytes(
+      width: w,
+      height: h,
+      bytes: bytes.buffer,
+      bytesOffset: bytes.offsetInBytes,
+      numChannels: 4,
+      order: img.ChannelOrder.rgba,
+    );
 
 /// A pre-rasterized text overlay (transparent PNG drawn by the UI with the
 /// system's fonts). Always centered horizontally; [top] places its vertical
@@ -128,9 +158,17 @@ Uint8List renderWatermark(WatermarkRequest r, {DecodedCache? cache}) {
   img.Image? load(ImageSrc s) {
     final hit = cache?.get(s.key);
     if (hit != null) return hit;
-    final d = img.decodeImage(s.bytes);
-    if (d == null) return null;
-    final o = img.bakeOrientation(d);
+    img.Image? o;
+    final rw = s.rawWidth, rh = s.rawHeight;
+    if (rw != null && rh != null) {
+      // Raw pixels; an empty payload means "already pinned in the cache".
+      if (s.bytes.length < rw * rh * 4) return null;
+      o = imageFromRaw(rw, rh, s.bytes);
+    } else {
+      final d = img.decodeImage(s.bytes);
+      if (d == null) return null;
+      o = img.bakeOrientation(d);
+    }
     cache?.put(s.key, o);
     return o;
   }

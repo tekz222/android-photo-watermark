@@ -61,7 +61,14 @@ class PreviewWorker {
   }
 
   void _pump() {
-    if (_send == null || _inFlight != null || _queue.isEmpty) return;
+    if (_send == null) return;
+    if (_pendingPuts.isNotEmpty) {
+      for (final m in _pendingPuts) {
+        _send!.send(m);
+      }
+      _pendingPuts.clear();
+    }
+    if (_inFlight != null || _queue.isEmpty) return;
     final job = _queue.removeAt(0);
     _inFlight = job;
     _send!.send([job.id, job.request]);
@@ -69,6 +76,20 @@ class PreviewWorker {
 
   /// Drops every cached decoded image (e.g. on "Novo projeto").
   void clearCache() => _send?.send('clear');
+
+  final List<List<Object>> _pendingPuts = [];
+
+  /// Stores raw RGBA pixels in the worker under [key] once, so renders can
+  /// reference them with an empty payload instead of copying them every time.
+  /// [group] evicts older pins of the same source (e.g. 't:3:').
+  void putRaw(String key, int w, int h, Uint8List bytes, {String? group}) {
+    final msg = <Object>['put', key, w, h, bytes, group ?? ''];
+    if (_send == null) {
+      _pendingPuts.add(msg);
+    } else {
+      _send!.send(msg);
+    }
+  }
 
   void dispose() {
     _disposed = true;
@@ -95,6 +116,15 @@ void _workerMain(SendPort out) {
   inbox.listen((msg) {
     if (msg == 'clear') {
       cache.clear();
+    } else if (msg is List && msg.length == 6 && msg[0] == 'put') {
+      try {
+        final group = msg[5] as String;
+        cache.pin(
+          msg[1] as String,
+          imageFromRaw(msg[2] as int, msg[3] as int, msg[4] as Uint8List),
+          group: group.isEmpty ? null : group,
+        );
+      } catch (_) {}
     } else if (msg is List && msg.length == 2) {
       final id = msg[0] as int;
       Uint8List? result;

@@ -106,8 +106,9 @@ class _HomePageState extends State<HomePage> {
   // Text overlays (always centered horizontally on the photo).
   final List<TextItem> _texts = [];
   int _nextTextId = 0;
-  final Map<int, Uint8List> _textPng = {}; // rasterized text, by TextItem id
-  final Map<int, double> _textRatio = {}; // glyph-box / PNG height, by id
+  final Map<int, ImageSrc> _textSrc = {}; // rasterized text (raw RGBA), by id
+  final Map<int, double> _textRatio = {}; // glyph-box / bitmap height, by id
+  Future<void> _textJob = Future.value(); // rasterizations run one at a time
   final Map<int, String> _textSigCache = {}; // look snapshot, for invalidation
   int _previewIndex = 0; // which of the preview photos is shown big
 
@@ -506,7 +507,7 @@ class _HomePageState extends State<HomePage> {
       rowOpacity: _logoOpacity / 100,
       centered: _centered,
       spacing: _logoSpacing / 100,
-      textOverlays: _textOverlays(),
+      textOverlays: _textOverlays(preview: true),
       quality: 85,
     );
   }
@@ -572,31 +573,53 @@ class _HomePageState extends State<HomePage> {
 
   /// Re-rasterizes any text whose look changed. Runs on the UI thread (canvas
   /// text drawing can't run in an isolate) but is fast — it's only text.
-  Future<void> _ensureTextPngs() async {
+  Future<void> _ensureTextPngs() {
+    // Serialized: while a slider is dragged many calls arrive, but each one
+    // waits for the previous rasterization and then re-checks the signature,
+    // so intermediate looks are skipped instead of piling up.
+    final job = _textJob.then((_) => _rasterizeDirty());
+    _textJob = job.catchError((_) {});
+    return job;
+  }
+
+  Future<void> _rasterizeDirty() async {
     for (final t in List<TextItem>.from(_texts)) {
       if (!_textHasContent(t)) continue;
       final sig = _textSig(t);
-      if (_textSigCache[t.id] == sig && _textPng.containsKey(t.id)) continue;
+      if (_textSigCache[t.id] == sig && _textSrc.containsKey(t.id)) continue;
       try {
         final r = await _rasterizeText(t);
-        _textPng[t.id] = r.png;
+        if (!mounted) return;
+        if (!_texts.contains(t)) continue; // removed meanwhile: discard
+        final key = 't:${t.id}:$sig';
+        _textSrc[t.id] =
+            ImageSrc(key, r.bytes, rawWidth: r.w, rawHeight: r.h);
         _textRatio[t.id] = r.contentRatio;
         _textSigCache[t.id] = sig;
+        // Ship the pixels to the preview worker once; preview requests then
+        // reference them by key with an empty payload.
+        _worker.putRaw(key, r.w, r.h, r.bytes, group: 't:${t.id}:');
       } catch (_) {
         // Couldn't render this text: drop it (never show a stale look) and
         // keep going with the rest.
-        _textPng.remove(t.id);
+        _textSrc.remove(t.id);
         _textRatio.remove(t.id);
         _textSigCache.remove(t.id);
       }
     }
   }
 
-  List<TextOverlay> _textOverlays() => [
+  /// [preview] requests reference the text pixels already pinned in the
+  /// worker (empty payload); full renders/saves carry the pixels.
+  List<TextOverlay> _textOverlays({bool preview = false}) => [
         for (final t in _texts)
-          if (_textHasContent(t) && _textPng[t.id] != null)
+          if (_textHasContent(t) && _textSrc[t.id] != null)
             TextOverlay(
-              src: ImageSrc('t:${t.id}:${_textSigCache[t.id]}', _textPng[t.id]!),
+              src: preview
+                  ? ImageSrc(_textSrc[t.id]!.key, Uint8List(0),
+                      rawWidth: _textSrc[t.id]!.rawWidth,
+                      rawHeight: _textSrc[t.id]!.rawHeight)
+                  : _textSrc[t.id]!,
               height: t.heightPct / 100,
               top: t.topPct / 100,
               contentRatio: _textRatio[t.id] ?? 1.0,
@@ -607,10 +630,10 @@ class _HomePageState extends State<HomePage> {
   /// fonts, outline, rainbow gradient). Rendered big so it stays sharp when
   /// scaled onto full-resolution photos, but capped in width so the pure-Dart
   /// decode in the engine stays cheap and long texts are never clipped.
-  Future<({Uint8List png, double contentRatio})> _rasterizeText(
-      TextItem t) async {
-    const maxWidth = 2560.0, maxHeight = 1600.0;
-    var fontSize = 320.0;
+  Future<({Uint8List bytes, int w, int h, double contentRatio})>
+      _rasterizeText(TextItem t) async {
+    const maxWidth = 2048.0, maxHeight = 1200.0;
+    var fontSize = 256.0;
     var m = _measureText(t, fontSize);
     final totalW = m.measure.width + m.pad * 2;
     final totalH = m.measure.height + m.pad * 2;
@@ -719,7 +742,7 @@ class _HomePageState extends State<HomePage> {
 
     // Keep the whole block within a sane bitmap (a big picture next to the
     // text can exceed it): draw everything scaled down instead of clipping.
-    const maxBlockW = 4096.0, maxBlockH = 3072.0;
+    const maxBlockW = 2560.0, maxBlockH = 1600.0;
     final s = [maxBlockW / w, maxBlockH / h, 1.0].reduce((a, b) => a < b ? a : b);
 
     final recorder = ui.PictureRecorder();
@@ -742,11 +765,15 @@ class _HomePageState extends State<HomePage> {
     final image = await picture.toImage(pngW, pngH);
     picture.dispose();
     pic?.dispose();
-    final data = await image.toByteData(format: ui.ImageByteFormat.png);
+    // Raw pixels: no PNG encode here and no pure-Dart decode in the renderer.
+    final data =
+        await image.toByteData(format: ui.ImageByteFormat.rawStraightRgba);
     image.dispose();
-    if (data == null) throw StateError('PNG encode failed');
+    if (data == null) throw StateError('raster readback failed');
     return (
-      png: data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
+      bytes: data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
+      w: pngW,
+      h: pngH,
       contentRatio: geo.glyphH * s / pngH,
     );
   }
@@ -1231,56 +1258,50 @@ class _HomePageState extends State<HomePage> {
             label: const Text('Novo projeto'),
           ),
           const SizedBox(width: 4),
-          PopupMenuButton<int>(
-            enabled: !_processing,
-            tooltip: 'Histórico de salvamentos',
-            position: PopupMenuPosition.under,
-            constraints: const BoxConstraints(minWidth: 260, maxWidth: 380),
-            itemBuilder: (_) => _history.isEmpty
-                ? const [
-                    PopupMenuItem<int>(
-                        value: -1, child: Text('Nenhum salvamento ainda.')),
+          MenuAnchor(
+            alignmentOffset: const Offset(0, 4),
+            style: const MenuStyle(
+              padding: WidgetStatePropertyAll(EdgeInsets.symmetric(vertical: 6)),
+            ),
+            menuChildren: _history.isEmpty
+                ? [
+                    const MenuItemButton(
+                      child: Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 6),
+                        child: Text('Nenhum salvamento ainda.'),
+                      ),
+                    ),
                   ]
                 : [
                     for (var i = 0; i < _history.length && i < 30; i++)
-                      PopupMenuItem<int>(
-                        value: i,
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(_history[i]['album'] as String,
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.w600)),
-                            Text(
-                              '${_history[i]['saved']} foto(s) · '
-                              '${_fmtDate(_history[i]['time'] as int)}',
-                              style: Theme.of(context).textTheme.bodySmall,
-                            ),
-                          ],
+                      MenuItemButton(
+                        onPressed: () {},
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 6),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(_history[i]['album'] as String,
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.w600)),
+                              Text(
+                                '${_history[i]['saved']} foto(s) · '
+                                '${_fmtDate(_history[i]['time'] as int)}',
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                   ],
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.history,
-                      size: 18,
-                      color: _processing
-                          ? Theme.of(context).disabledColor
-                          : scheme.primary),
-                  const SizedBox(width: 6),
-                  Text('Histórico',
-                      style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: _processing
-                              ? Theme.of(context).disabledColor
-                              : scheme.primary)),
-                ],
-              ),
+            builder: (context, controller, child) => TextButton.icon(
+              onPressed: _processing
+                  ? null
+                  : () =>
+                      controller.isOpen ? controller.close() : controller.open(),
+              icon: const Icon(Icons.history, size: 18),
+              label: const Text('Histórico'),
             ),
           ),
           const SizedBox(width: 10),
@@ -1634,7 +1655,7 @@ class _HomePageState extends State<HomePage> {
   void _removeText(TextItem t) {
     setState(() {
       _texts.remove(t);
-      _textPng.remove(t.id);
+      _textSrc.remove(t.id);
       _textRatio.remove(t.id);
       _textSigCache.remove(t.id);
     });
@@ -2415,7 +2436,7 @@ class _HomePageState extends State<HomePage> {
       _previewPhoto.clear();
       _previewLogo.clear();
       _texts.clear();
-      _textPng.clear();
+      _textSrc.clear();
       _textRatio.clear();
       _textSigCache.clear();
       _logoSize = 22;
