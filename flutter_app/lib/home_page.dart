@@ -169,7 +169,7 @@ class _HomePageState extends State<HomePage> {
     _lifecycle = AppLifecycleListener(
       onExitRequested: () async {
         await _flushSettings();
-        return AppExitResponse.exit;
+        return ui.AppExitResponse.exit;
       },
     );
     _loadProject();
