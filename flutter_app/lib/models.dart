@@ -41,7 +41,7 @@ class TextItem {
     this.outlineColor = 0xFF000000,
     this.outlineWidth = 8, // stroke width as % of the font size
     this.heightPct = 10, // text height as % of the photo's shortest side
-    this.topPct = 50, // vertical center as % of the photo height
+    this.topPct = 77, // vertical center as % of the photo height
     this.curve = 0, // arc angle in degrees: 0 = straight, >0 arc up, <0 arc down
     this.imageBytes,
     this.imageName,

@@ -210,6 +210,73 @@ class _HomePageState extends State<HomePage> {
   final Map<int, String> _textImagePath = {}; // saved copy of a text picture
   late final AppLifecycleListener _lifecycle;
 
+  /// Settings of the last text used (font, colors, outline, curve, picture,
+  /// position...). Texts are not restored on launch, but a NEW text starts
+  /// from this template.
+  Map<String, dynamic>? _textTemplate;
+
+  Future<Map<String, dynamic>> _textToJson(TextItem t) async {
+    String? imagePath;
+    final img = t.imageBytes;
+    if (img != null) {
+      imagePath = _textImagePath[t.id] ??= await _copyBytesToApp(img, 'textimg');
+    }
+    return {
+      'text': t.text,
+      'fontFamily': t.fontFamily,
+      'bold': t.bold,
+      'italic': t.italic,
+      'color': t.color,
+      'rainbow': t.rainbow,
+      'outline': t.outline,
+      'outlineColor': t.outlineColor,
+      'outlineWidth': t.outlineWidth,
+      'heightPct': t.heightPct,
+      'topPct': t.topPct,
+      'curve': t.curve,
+      'imagePath': imagePath,
+      'imageName': t.imageName,
+      'imagePos': t.imagePos.index,
+      'imageSize': t.imageSize,
+      'imageGap': t.imageGap,
+    };
+  }
+
+  Future<TextItem> _textFromJson(Map m) async {
+    final posIndex = ((m['imagePos'] as num?)?.toInt() ?? 2)
+        .clamp(0, TextImagePos.values.length - 1)
+        .toInt();
+    final t = TextItem(
+      id: _nextTextId++,
+      text: m['text'] as String? ?? '',
+      fontFamily: m['fontFamily'] as String? ?? 'Arial',
+      bold: m['bold'] as bool? ?? true,
+      italic: m['italic'] as bool? ?? false,
+      color: (m['color'] as num?)?.toInt() ?? 0xFFFFFFFF,
+      rainbow: m['rainbow'] as bool? ?? false,
+      outline: m['outline'] as bool? ?? true,
+      outlineColor: (m['outlineColor'] as num?)?.toInt() ?? 0xFF000000,
+      outlineWidth: (m['outlineWidth'] as num?)?.toDouble() ?? 8,
+      heightPct: (m['heightPct'] as num?)?.toDouble() ?? 10,
+      topPct: (m['topPct'] as num?)?.toDouble() ?? 77,
+      curve: (m['curve'] as num?)?.toDouble() ?? 0,
+      imagePos: TextImagePos.values[posIndex],
+      imageSize: (m['imageSize'] as num?)?.toDouble() ?? 100,
+      imageGap: (m['imageGap'] as num?)?.toDouble() ?? 15,
+    );
+    final ip = m['imagePath'] as String?;
+    if (ip != null && File(ip).existsSync()) {
+      try {
+        final b = await File(ip).readAsBytes();
+        t.imageBytes = b;
+        t.imageName = m['imageName'] as String?;
+        t.imageSig = _imageSig(b);
+        _textImagePath[t.id] = ip;
+      } catch (_) {}
+    }
+    return t;
+  }
+
   Future<void> _saveProject() async {
     _saveDebounce?.cancel();
     _saveDebounce = Timer(const Duration(milliseconds: 300), _writeSettings);
@@ -226,33 +293,8 @@ class _HomePageState extends State<HomePage> {
   Future<void> _writeSettings() async {
     try {
       Map<String, dynamic> logo(LogoItem l) => {'path': l.path, 'name': l.sourceKey};
-      final texts = <Map<String, dynamic>>[];
-      for (final t in List<TextItem>.from(_texts)) {
-        String? imagePath;
-        final img = t.imageBytes;
-        if (img != null) {
-          imagePath = _textImagePath[t.id] ??= await _copyBytesToApp(img, 'textimg');
-        }
-        texts.add({
-          'text': t.text,
-          'fontFamily': t.fontFamily,
-          'bold': t.bold,
-          'italic': t.italic,
-          'color': t.color,
-          'rainbow': t.rainbow,
-          'outline': t.outline,
-          'outlineColor': t.outlineColor,
-          'outlineWidth': t.outlineWidth,
-          'heightPct': t.heightPct,
-          'topPct': t.topPct,
-          'curve': t.curve,
-          'imagePath': imagePath,
-          'imageName': t.imageName,
-          'imagePos': t.imagePos.index,
-          'imageSize': t.imageSize,
-          'imageGap': t.imageGap,
-        });
-      }
+      // The last text in the list becomes the template for future texts.
+      if (_texts.isNotEmpty) _textTemplate = await _textToJson(_texts.last);
       final data = <String, dynamic>{
         'logoSize': _logoSize,
         'leftMargin': _leftMargin,
@@ -266,7 +308,7 @@ class _HomePageState extends State<HomePage> {
         'bottom': _bottomLogos.map(logo).toList(),
         'top': _topLeftLogos.map(logo).toList(),
         'corner': _cornerLogo == null ? null : logo(_cornerLogo!),
-        'texts': texts,
+        'textTemplate': _textTemplate,
       };
       final p = await SharedPreferences.getInstance();
       await p.setString('settings', jsonEncode(data));
@@ -322,40 +364,9 @@ class _HomePageState extends State<HomePage> {
       }
       final corner = await logo(d['corner']);
 
-      final texts = <TextItem>[];
-      for (final m in (d['texts'] as List? ?? const [])) {
-        if (m is! Map) continue;
-        final posIndex = ((m['imagePos'] as num?)?.toInt() ?? 2)
-            .clamp(0, TextImagePos.values.length - 1)
-            .toInt();
-        final t = TextItem(
-          id: _nextTextId++,
-          text: m['text'] as String? ?? '',
-          fontFamily: m['fontFamily'] as String? ?? 'Arial',
-          bold: m['bold'] as bool? ?? true,
-          italic: m['italic'] as bool? ?? false,
-          color: (m['color'] as num?)?.toInt() ?? 0xFFFFFFFF,
-          rainbow: m['rainbow'] as bool? ?? false,
-          outline: m['outline'] as bool? ?? true,
-          outlineColor: (m['outlineColor'] as num?)?.toInt() ?? 0xFF000000,
-          outlineWidth: (m['outlineWidth'] as num?)?.toDouble() ?? 8,
-          heightPct: (m['heightPct'] as num?)?.toDouble() ?? 10,
-          topPct: (m['topPct'] as num?)?.toDouble() ?? 50,
-          curve: (m['curve'] as num?)?.toDouble() ?? 0,
-          imagePos: TextImagePos.values[posIndex],
-          imageSize: (m['imageSize'] as num?)?.toDouble() ?? 100,
-          imageGap: (m['imageGap'] as num?)?.toDouble() ?? 15,
-        );
-        final ip = m['imagePath'] as String?;
-        if (ip != null && File(ip).existsSync()) {
-          final b = await File(ip).readAsBytes();
-          t.imageBytes = b;
-          t.imageName = m['imageName'] as String?;
-          t.imageSig = _imageSig(b);
-          _textImagePath[t.id] = ip;
-        }
-        texts.add(t);
-      }
+      final tpl = d['textTemplate'];
+      if (tpl is Map) _textTemplate = Map<String, dynamic>.from(tpl);
+
       if (!mounted) return true;
       setState(() {
         _logoSize = num_('logoSize', 22);
@@ -374,9 +385,7 @@ class _HomePageState extends State<HomePage> {
           ..clear()
           ..addAll(top);
         _cornerLogo = corner;
-        _texts
-          ..clear()
-          ..addAll(texts);
+        _texts.clear(); // texts never come back by themselves
       });
       return true;
     } catch (_) {
@@ -396,6 +405,8 @@ class _HomePageState extends State<HomePage> {
         ])
           _baseName(l.path),
         for (final p in _textImagePath.values) _baseName(p),
+        if (_textTemplate?['imagePath'] is String)
+          _baseName(_textTemplate!['imagePath'] as String),
       };
       for (final sub in ['logos', 'textimg']) {
         final d = Directory('${dir.path}/$sub');
@@ -1847,8 +1858,13 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  void _addText() {
-    setState(() => _texts.add(TextItem(id: _nextTextId++)));
+  Future<void> _addText() async {
+    final tpl = _textTemplate;
+    final t = tpl == null
+        ? TextItem(id: _nextTextId++)
+        : await _textFromJson(tpl); // same settings as the last text used
+    if (!mounted) return;
+    setState(() => _texts.add(t));
     _schedulePreview();
   }
 
