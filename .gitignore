@@ -1,12 +1,8 @@
-*.iml
-.gradle
-/local.properties
-/.idea
 .DS_Store
+/.idea
+*.iml
 /build
-/captures
-.externalNativeBuild
-.cxx
-local.properties
-/app/build
-/.kotlin
+# Downloaded release builds — never commit binaries.
+*.zip
+*.apk
+*.ipa

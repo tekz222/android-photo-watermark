@@ -1,74 +1,27 @@
-# Photo Watermark
+# JCV Watermarker (Windows)
 
-Aplicativo Android para aplicar **uma ou várias logos** em qualquer quantidade de
-fotos de uma só vez. As logos ficam **em linha, centralizadas e igualmente
-espaçadas na parte de baixo** da foto, com uma margem elegante como em
-fotografias profissionais — e depois é só salvar todas na galeria.
+Aplicativo para Windows que aplica **logos** e **textos** em qualquer quantidade
+de fotos de uma só vez:
 
-## Como funciona
+- uma fileira de logos na **base** (da esquerda para a direita ou centralizada);
+- uma fileira de logos no **canto superior esquerdo**;
+- uma única **logo principal** no **canto superior direito**;
+- **textos** com fontes do computador, cores, contorno e arco-íris, sempre
+  centralizados na horizontal.
 
-1. **Adicione as fotos** — escolha quantas quiser (seleção múltipla). Pode ir
-   adicionando aos poucos e **remover** qualquer foto pelo “✕” na miniatura.
-2. **Envie as logos** — selecione **uma ou mais** logos (de preferência PNG com
-   fundo transparente). Todas entram numa fileira horizontal centralizada no
-   rodapé. Também dá para remover logos individualmente.
-3. **Ajustes** — tamanho das logos, distância da borda inferior e espaçamento
-   entre as logos.
-4. **Pré-visualização** — veja a 1ª foto já com as logos, atualizando ao vivo
-   conforme você muda os ajustes.
-5. **Aplicar e salvar tudo** — cada foto recebe a fileira de logos e é salva em
-   `Imagens/Watermarked` na galeria do aparelho.
+O código fica em [`flutter_app/`](flutter_app/) (Flutter/Dart). O build é feito
+pelo GitHub Actions (**Build Windows app**), que publica o ZIP na release
+**Latest Windows build** (tag `windows-latest`).
 
-## Detalhes técnicos
+## Como usar
 
-- **100% Kotlin + Jetpack Compose** (Material 3).
-- Seleção de imagens via **Photo Picker** (`PickMultipleVisualMedia`), sem precisar
-  de permissão de armazenamento para *ler*.
-- Salvamento via **MediaStore** (armazenamento com escopo). Em Android 10+ nenhuma
-  permissão é necessária para salvar; em Android 9 e abaixo o app pede
-  `WRITE_EXTERNAL_STORAGE`.
-- As logos são dimensionadas pela **altura**, em relação ao **menor lado** da foto,
-  então a fileira fica proporcional tanto em paisagem quanto em retrato. Cada logo
-  mantém sua própria proporção, e a fileira inteira é centralizada; se for mais
-  larga que a foto, é reduzida automaticamente para caber.
-- A orientação **EXIF** das fotos é respeitada, e imagens muito grandes são
-  reduzidas com segurança para evitar `OutOfMemoryError`.
-- O processamento (e o preview) rodam fora da thread principal (coroutines).
-
-### Padrões / valores ajustáveis
-
-| Parâmetro                    | Padrão | Intervalo |
-|------------------------------|--------|-----------|
-| Tamanho das logos (altura)   | 12% do menor lado | 5%–30% |
-| Distância da borda inferior  | 5% do menor lado  | 0%–15% |
-| Espaçamento entre logos      | 4% do menor lado  | 0%–15% |
-
-## Como compilar
-
-Requisitos: Android Studio (Koala ou mais recente) ou o Android SDK com a
-command-line.
-
-```bash
-# build de debug
-./gradlew assembleDebug
-
-# instalar em um dispositivo/emulador conectado
-./gradlew installDebug
-```
-
-O APK gerado fica em `app/build/outputs/apk/debug/app-debug.apk`.
-
-- `minSdk` 24 (Android 7.0) · `targetSdk`/`compileSdk` 34 · AGP 8.5.2 · Kotlin 1.9.24
-
-## Estrutura
-
-```
-app/src/main/java/com/tekz/watermark/
-├── MainActivity.kt        # UI em Jetpack Compose (fotos, logos, ajustes, preview)
-├── WatermarkViewModel.kt  # estado da tela + processamento em lote
-└── WatermarkEngine.kt     # carregar, compor a fileira de logos e salvar na galeria
-```
-
-## Licença
-
-MIT
+1. Baixe `JCV-Watermarker-Windows.zip` da release, extraia e abra
+   `JCV Watermarker.exe` — não precisa instalar.
+2. **Adicione as fotos** e depois as logos/textos; a pré-visualização das
+   primeiras 5 fotos atualiza ao vivo (clique para abrir em tela cheia; a roda do
+   mouse dá zoom).
+3. **Aplicar e salvar tudo** grava cada foto como JPEG de alta qualidade em
+   `Imagens\JCV Watermarker\<data hora>`. Durante o salvamento só o botão
+   **Cancelar** fica ativo; ao cancelar, o app volta exatamente ao estado
+   anterior.
+4. Ao fechar o app nada fica guardado — cada abertura começa um projeto novo.
