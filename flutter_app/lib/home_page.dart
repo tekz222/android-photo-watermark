@@ -5,6 +5,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'package:archive/archive.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart' show PointerScrollEvent;
 import 'package:flutter/material.dart';
@@ -322,6 +323,254 @@ class _HomePageState extends State<HomePage> {
       await p.setString('settings', jsonEncode(data));
     } catch (_) {
       // Persisting the look is best effort; the app keeps working without it.
+    }
+  }
+
+  /// Exports the entire project (photos, logos, texts, all settings) to a single .jcv file.
+  Future<void> _exportProject() async {
+    if (_photoPaths.isEmpty && _bottomLogos.isEmpty && _topLeftLogos.isEmpty && _cornerLogo == null && _texts.isEmpty) {
+      _snack('Nada para exportar.');
+      return;
+    }
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final archive = Archive();
+
+      // 1. Add settings JSON
+      Map<String, dynamic> logo(LogoItem l) => {'path': l.path, 'name': l.sourceKey};
+      if (_texts.isNotEmpty) _textTemplate = await _textToJson(_texts.last);
+      final settings = <String, dynamic>{
+        'version': 1,
+        'logoSize': _logoSize,
+        'leftMargin': _leftMargin,
+        'opacity': _logoOpacity,
+        'bottomMargin': _bottomMargin,
+        'topMargin': _topMargin,
+        'cornerHeight': _cornerHeight,
+        'cornerMargin': _cornerMargin,
+        'centered': _centered,
+        'spacing': _logoSpacing,
+        'bottomGradient': _bottomGradient,
+        'topGradient': _topGradient,
+        'topGradientHeight': _topGradientHeight,
+        'bottomGradientHeight': _bottomGradientHeight,
+        'bottom': _bottomLogos.map(logo).toList(),
+        'top': _topLeftLogos.map(logo).toList(),
+        'corner': _cornerLogo == null ? null : logo(_cornerLogo!),
+        'textTemplate': _textTemplate,
+        'texts': [for (final t in _texts) await _textToJson(t)],
+        'photoCount': _photoPaths.length,
+      };
+      final settingsBytes = utf8.encode(jsonEncode(settings));
+      archive.addFile(ArchiveFile('settings.json', settingsBytes.length, settingsBytes));
+
+      // 2. Add photos
+      for (var i = 0; i < _photoPaths.length; i++) {
+        final bytes = await File(_photoPaths[i]).readAsBytes();
+        final ext = _photoPaths[i].split('.').last.toLowerCase();
+        archive.addFile(ArchiveFile('photos/photo_$i.$ext', bytes.length, bytes));
+      }
+
+      // 3. Add logos (bottom)
+      for (var i = 0; i < _bottomLogos.length; i++) {
+        final l = _bottomLogos[i];
+        final ext = l.sourceKey.split('.').last.toLowerCase();
+        archive.addFile(ArchiveFile('logos/bottom_$i.$ext', l.bytes.length, l.bytes));
+      }
+
+      // 4. Add logos (top-left)
+      for (var i = 0; i < _topLeftLogos.length; i++) {
+        final l = _topLeftLogos[i];
+        final ext = l.sourceKey.split('.').last.toLowerCase();
+        archive.addFile(ArchiveFile('logos/top_$i.$ext', l.bytes.length, l.bytes));
+      }
+
+      // 5. Add corner logo
+      if (_cornerLogo != null) {
+        final ext = _cornerLogo!.sourceKey.split('.').last.toLowerCase();
+        archive.addFile(ArchiveFile('logos/corner.$ext', _cornerLogo!.bytes.length, _cornerLogo!.bytes));
+      }
+
+      // 6. Add text images
+      for (final entry in _textImagePath.entries) {
+        final bytes = await File(entry.value).readAsBytes();
+        final ext = entry.value.split('.').last.toLowerCase();
+        archive.addFile(ArchiveFile('textimg/text_${entry.key}.$ext', bytes.length, bytes));
+      }
+
+      // 7. Write archive
+      final zipBytes = ZipEncoder().encode(archive);
+      if (zipBytes == null) throw StateError('Failed to create zip');
+
+      final downloadsDir = Directory('/storage/emulated/0/Download');
+      String savePath;
+      if (downloadsDir.existsSync()) {
+        savePath = '${downloadsDir.path}/JCV_Watermarker_${DateTime.now().millisecondsSinceEpoch}.jcv';
+      } else {
+        savePath = '${dir.path}/JCV_Watermarker_${DateTime.now().millisecondsSinceEpoch}.jcv';
+      }
+      await File(savePath).writeAsBytes(zipBytes);
+
+      if (!mounted) return;
+      _snack('Projeto exportado para: $savePath');
+    } catch (e) {
+      if (!mounted) return;
+      _snack('Erro ao exportar: $e');
+    }
+  }
+
+  /// Imports a .jcv project file, restoring everything.
+  Future<void> _importProject() async {
+    try {
+      final picked = await _picker.pickMultipleMedia(); // Use pickMultipleMedia to allow file picking
+      if (picked.isEmpty) return;
+
+      // Pick first file that looks like a .jcv
+      XFile? projectFile;
+      for (final x in picked) {
+        if (x.name.toLowerCase().endsWith('.jcv')) {
+          projectFile = x;
+          break;
+        }
+      }
+      if (projectFile == null) {
+        _snack('Selecione um arquivo .jcv');
+        return;
+      }
+
+      setState(() {
+        _importing = true;
+        _importDone = 0;
+        _importTotal = 1;
+      });
+
+      final bytes = await projectFile.readAsBytes();
+      final archive = ZipDecoder().decodeBytes(bytes);
+
+      // Parse settings
+      final settingsFile = archive.findFile('settings.json');
+      if (settingsFile == null) throw StateError('settings.json não encontrado no arquivo');
+      final settings = jsonDecode(utf8.decode(settingsFile.content as List<int>)) as Map<String, dynamic>;
+
+      // Clear current project
+      _previewToken++;
+      setState(() {
+        _photoPaths.clear();
+        _bottomLogos.clear();
+        _topLeftLogos.clear();
+        _cornerLogo = null;
+        _savedPaths.clear();
+        _currentAlbum = null;
+        _lastResult = null;
+        _previews.clear();
+        _renderedVersion.clear();
+        _previewFailed.clear();
+        _previewIndex = 0;
+        _previewPhoto.clear();
+        _previewLogo.clear();
+        _texts.clear();
+        _textImagePath.clear();
+        _textSrc.clear();
+        _textRatio.clear();
+        _textSigCache.clear();
+      });
+      _worker.clearCache();
+
+      // Extract photos
+      int photoIdx = 0;
+      for (final file in archive.files) {
+        if (file.name.startsWith('photos/') && file.isFile) {
+          final ext = file.name.split('.').last;
+          final path = await _copyBytesToApp(Uint8List.fromList(file.content as List<int>), 'photos');
+          _photoPaths.add(path);
+          photoIdx++;
+        }
+      }
+
+      // Extract logos
+      final logoFiles = <String, List<int>>{};
+      for (final file in archive.files) {
+        if (file.name.startsWith('logos/') && file.isFile) {
+          logoFiles[file.name] = file.content as List<int>;
+        }
+      }
+
+      // Load bottom logos (sorted by name)
+      final bottomKeys = logoFiles.keys.where((k) => k.startsWith('logos/bottom_')).toList()..sort();
+      for (var i = 0; i < bottomKeys.length; i++) {
+        final bytes = Uint8List.fromList(logoFiles[bottomKeys[i]]!);
+        final path = await _copyBytesToApp(bytes, 'logos');
+        _bottomLogos.add(LogoItem(_nextLogoId++, path, 'bottom_$i', bytes, _imageSig(bytes), const <String>{}, const <String>{}));
+      }
+
+      // Load top logos
+      final topKeys = logoFiles.keys.where((k) => k.startsWith('logos/top_')).toList()..sort();
+      for (var i = 0; i < topKeys.length; i++) {
+        final bytes = Uint8List.fromList(logoFiles[topKeys[i]]!);
+        final path = await _copyBytesToApp(bytes, 'logos');
+        _topLeftLogos.add(LogoItem(_nextLogoId++, path, 'top_$i', bytes, _imageSig(bytes), const <String>{}, const <String>{}));
+      }
+
+      // Load corner logo
+      final cornerKey = logoFiles.keys.firstWhere((k) => k.startsWith('logos/corner.'), orElse: () => '');
+      if (cornerKey.isNotEmpty) {
+        final bytes = Uint8List.fromList(logoFiles[cornerKey]!);
+        final path = await _copyBytesToApp(bytes, 'logos');
+        _cornerLogo = LogoItem(_nextLogoId++, path, 'corner', bytes, _imageSig(bytes), const <String>{}, const <String>{});
+      }
+
+      // Extract text images
+      final textImgFiles = <String, List<int>>{};
+      for (final file in archive.files) {
+        if (file.name.startsWith('textimg/') && file.isFile) {
+          textImgFiles[file.name] = file.content as List<int>;
+        }
+      }
+      for (final entry in textImgFiles.entries) {
+        final bytes = Uint8List.fromList(entry.value);
+        final path = await _copyBytesToApp(bytes, 'textimg');
+        _textImagePath[int.parse(entry.key.split('_').last.split('.').first)] = path;
+      }
+
+      // Restore texts
+      final textsJson = settings['texts'] as List? ?? [];
+      for (final tJson in textsJson) {
+        final t = await _textFromJson(tJson as Map<String, dynamic>);
+        _texts.add(t);
+      }
+
+      // Restore settings
+      setState(() {
+        _logoSize = (settings['logoSize'] as num?)?.toDouble() ?? 22;
+        _leftMargin = (settings['leftMargin'] as num?)?.toDouble() ?? 1;
+        _logoOpacity = (settings['opacity'] as num?)?.toDouble() ?? 90;
+        _bottomMargin = (settings['bottomMargin'] as num?)?.toDouble() ?? 2;
+        _topMargin = (settings['topMargin'] as num?)?.toDouble() ?? 2;
+        _cornerHeight = (settings['cornerHeight'] as num?)?.toDouble() ?? 22;
+        _cornerMargin = (settings['cornerMargin'] as num?)?.toDouble() ?? 2;
+        _centered = settings['centered'] as bool? ?? false;
+        _logoSpacing = (settings['spacing'] as num?)?.toDouble() ?? 0;
+        _bottomGradient = settings['bottomGradient'] as bool? ?? false;
+        _topGradient = settings['topGradient'] as bool? ?? false;
+        _topGradientHeight = (settings['topGradientHeight'] as num?)?.toDouble() ?? 22;
+        _bottomGradientHeight = (settings['bottomGradientHeight'] as num?)?.toDouble() ?? 22;
+      });
+
+      if (_textTemplate != null) {
+        final tpl = settings['textTemplate'];
+        if (tpl is Map) _textTemplate = Map<String, dynamic>.from(tpl);
+      }
+
+      await _pruneUnusedFiles();
+      _kickPreview();
+
+      if (!mounted) return;
+      setState(() => _importing = false);
+      _snack('Projeto importado com ${_photoPaths.length} foto(s), ${_bottomLogos.length + _topLeftLogos.length} logo(s) e ${_texts.length} texto(s).');
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _importing = false);
+      _snack('Erro ao importar: $e');
     }
   }
 
@@ -1489,6 +1738,21 @@ class _HomePageState extends State<HomePage> {
             label: const Text('Novo projeto'),
           ),
           const SizedBox(width: 4),
+          TextButton.icon(
+            onPressed: (!_processing &&
+                    (_photoPaths.isNotEmpty || _bottomLogos.isNotEmpty || _topLeftLogos.isNotEmpty || _cornerLogo != null || _texts.isNotEmpty))
+                ? _exportProject
+                : null,
+            icon: const Icon(Icons.download_outlined, size: 18),
+            label: const Text('Exportar projeto'),
+          ),
+          const SizedBox(width: 4),
+          TextButton.icon(
+            onPressed: !_processing ? _importProject : null,
+            icon: const Icon(Icons.upload_outlined, size: 18),
+            label: const Text('Importar projeto'),
+          ),
+          const SizedBox(width: 4),
           MenuAnchor(
             alignmentOffset: const Offset(0, 4),
             style: const MenuStyle(
@@ -1684,23 +1948,29 @@ class _HomePageState extends State<HomePage> {
                   scrollDirection: Axis.horizontal,
                   itemCount: _photoPaths.length,
                   separatorBuilder: (_, __) => const SizedBox(width: 6),
-                  itemBuilder: (context, i) => _thumb(
-                  size: 60,
-                  enabled: _controlsEnabled,
-                  child: Image.file(File(_photoPaths[i]),
-                      fit: BoxFit.cover, cacheWidth: 160),
-                  onRemove: () {
-                    final path = _photoPaths[i];
-                    _previewToken++; // discard any in-flight render of it
-                    setState(() {
-                      _photoPaths.removeAt(i);
-                      _previews.remove(path);
-                      _renderedVersion.remove(path);
-                      _previewFailed.remove(path);
-                    });
-                    _previewPhoto.remove(path);
-                    File(path).delete().ignore();
-                    _kickPreview();
+                  itemBuilder: (context, i) {
+                    return _thumb(
+                      size: 60,
+                      enabled: _controlsEnabled,
+                      child: Image.file(
+                        File(_photoPaths[i]),
+                        fit: BoxFit.cover,
+                        cacheWidth: 160,
+                      ),
+                      onRemove: () {
+                        final path = _photoPaths[i];
+                        _previewToken++; // discard any in-flight render of it
+                        setState(() {
+                          _photoPaths.removeAt(i);
+                          _previews.remove(path);
+                          _renderedVersion.remove(path);
+                          _previewFailed.remove(path);
+                        });
+                        _previewPhoto.remove(path);
+                        File(path).delete().ignore();
+                        _kickPreview();
+                      },
+                    );
                   },
                 ),
               ),
