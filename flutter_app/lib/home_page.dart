@@ -1946,6 +1946,7 @@ class _HomePageState extends State<HomePage> {
                 radius: const Radius.circular(3),
                 child: ListView.separated(
                   scrollDirection: Axis.horizontal,
+                  physics: const ClampingScrollPhysics(),
                   itemCount: _photoPaths.length,
                   separatorBuilder: (_, __) => const SizedBox(width: 6),
                   itemBuilder: (context, i) {
