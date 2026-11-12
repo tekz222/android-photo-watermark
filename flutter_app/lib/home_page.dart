@@ -2019,7 +2019,7 @@ class _HomePageState extends State<HomePage> {
                   ChoiceChip(
                     label: Text(_imagePosLabel(pos)),
                     selected: t.imagePos == pos,
-                    onSelected: !_controlsEnabled || (pos == TextImagePos.inside && t.curve.abs() < 0.5)
+                    onSelected: !_controlsEnabled || (pos == TextImagePos.inside && t.curve.abs() < 1.0)
                         ? null
                         : (_) {
                             if (pos != t.imagePos) {
