@@ -103,6 +103,10 @@ class _HomePageState extends State<HomePage> {
   double _cornerHeight = 22, _cornerMargin = 2;
   bool _centered = false; // bottom row: false = left-to-right, true = centered
   double _logoSpacing = 0; // horizontal gap between logos (both rows)
+  bool _bottomGradient = false; // gradient from bottom edge up to bottom row
+  bool _topGradient = false; // gradient from top edge down to top row
+  double _topGradientHeight = 22; // height of top gradient (percent of shortest side)
+  double _bottomGradientHeight = 22; // height of bottom gradient (percent of shortest side)
 
   // Text overlays (always centered horizontally on the photo).
   final List<TextItem> _texts = [];
@@ -305,6 +309,10 @@ class _HomePageState extends State<HomePage> {
         'cornerMargin': _cornerMargin,
         'centered': _centered,
         'spacing': _logoSpacing,
+        'bottomGradient': _bottomGradient,
+        'topGradient': _topGradient,
+        'topGradientHeight': _topGradientHeight,
+        'bottomGradientHeight': _bottomGradientHeight,
         'bottom': _bottomLogos.map(logo).toList(),
         'top': _topLeftLogos.map(logo).toList(),
         'corner': _cornerLogo == null ? null : logo(_cornerLogo!),
@@ -378,6 +386,8 @@ class _HomePageState extends State<HomePage> {
         _cornerMargin = num_('cornerMargin', 2);
         _centered = d['centered'] as bool? ?? false;
         _logoSpacing = num_('spacing', 0);
+        _bottomGradient = d['bottomGradient'] as bool? ?? false;
+        _topGradient = d['topGradient'] as bool? ?? false;
         _bottomLogos
           ..clear()
           ..addAll(bottom);
@@ -720,6 +730,10 @@ class _HomePageState extends State<HomePage> {
       spacing: _logoSpacing / 100,
       textOverlays: _textOverlays(preview: true),
       quality: 85,
+      topGradient: _topGradient,
+      bottomGradient: _bottomGradient,
+      topGradientHeight: _topGradient ? _topGradientHeight / 100 : null,
+      bottomGradientHeight: _bottomGradient ? _bottomGradientHeight / 100 : null,
     );
   }
 
@@ -746,6 +760,10 @@ class _HomePageState extends State<HomePage> {
       png: png,
       maxDim: maxDim,
       quality: quality,
+      topGradient: _topGradient,
+      bottomGradient: _bottomGradient,
+      topGradientHeight: _topGradient ? _topGradientHeight / 100 : null,
+      bottomGradientHeight: _bottomGradient ? _bottomGradientHeight / 100 : null,
     );
   }
 
@@ -1562,6 +1580,19 @@ class _HomePageState extends State<HomePage> {
                   (v) => setState(() => _logoOpacity = v)),
               _slider('Distância da borda inferior', _bottomMargin, 0, 15,
                   (v) => setState(() => _bottomMargin = v)),
+              Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: FilterChip(
+                  label: const Text('Gradiente inferior'),
+                  selected: _bottomGradient,
+                  onSelected: !_controlsEnabled
+                      ? null
+                      : (s) {
+                          setState(() => _bottomGradient = s);
+                          _schedulePreview();
+                        },
+                ),
+              ),
             ],
           ),
           _logoSection(
@@ -1582,6 +1613,19 @@ class _HomePageState extends State<HomePage> {
                   (v) => setState(() => _logoOpacity = v)),
               _slider('Distância da borda superior', _topMargin, 0, 15,
                   (v) => setState(() => _topMargin = v)),
+              Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: FilterChip(
+                  label: const Text('Gradiente superior'),
+                  selected: _topGradient,
+                  onSelected: !_controlsEnabled
+                      ? null
+                      : (s) {
+                          setState(() => _topGradient = s);
+                          _schedulePreview();
+                        },
+                ),
+              ),
             ],
           ),
           _cornerSection(),
@@ -1623,11 +1667,16 @@ class _HomePageState extends State<HomePage> {
             const SizedBox(height: 10),
             SizedBox(
               height: 60,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                itemCount: _photoPaths.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 6),
-                itemBuilder: (context, i) => _thumb(
+              child: Scrollbar(
+                thumbVisibility: true,
+                trackVisibility: true,
+                thickness: 6,
+                radius: const Radius.circular(3),
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: _photoPaths.length,
+                  separatorBuilder: (_, __) => const SizedBox(width: 6),
+                  itemBuilder: (context, i) => _thumb(
                   size: 60,
                   enabled: _controlsEnabled,
                   child: Image.file(File(_photoPaths[i]),
@@ -2620,6 +2669,8 @@ class _HomePageState extends State<HomePage> {
       _cornerMargin = 2;
       _centered = false;
       _logoSpacing = 0;
+      _bottomGradient = false;
+      _topGradient = false;
     });
     _worker.clearCache();
     await _installDefaultCorner();
