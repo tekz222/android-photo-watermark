@@ -2043,7 +2043,7 @@ class _HomePageState extends State<HomePage> {
             const SizedBox(height: 8),
             _colorField('${t.id}:outline', 'Cor do contorno', t.outlineColor,
                 (c) => update(() => t.outlineColor = c)),
-            _slider('Espessura do contorno', t.outlineWidth, 2, 20,
+            _slider('Espessura do contorno', t.outlineWidth, 2, 100,
                 (v) => setState(() => t.outlineWidth = v)),
           ],
           _slider('Tamanho do texto', t.heightPct, 2, 60,
