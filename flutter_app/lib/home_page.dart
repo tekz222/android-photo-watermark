@@ -18,6 +18,7 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 
 import 'models.dart';
 import 'preview_worker.dart';
+import 'project.dart';
 import 'watermark_engine.dart';
 
 /// Style + measurement of a text at a given font size (see `_measureText`).
@@ -54,22 +55,6 @@ class _EndPic {
   final bool right;
 }
 
-/// A rendered preview plus its aspect ratio, so its frame can match the image.
-class _Preview {
-  _Preview(this.bytes, this.aspect);
-  final Uint8List bytes;
-  final double aspect; // width / height
-}
-
-/// Outcome of a save run, shown in the persistent result banner.
-class _ProcessResult {
-  _ProcessResult(
-      {required this.saved, required this.failed, required this.album});
-  final int saved;
-  final int failed;
-  final String album;
-}
-
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
 
@@ -79,115 +64,142 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   final ImagePicker _picker = ImagePicker();
+  final ProjectManager _projectManager = ProjectManager();
+  late final Project _initialProject; // For "Novo Projeto" to copy settings from
 
-  final List<String> _photoPaths = []; // internal copies (survive restarts)
-  final List<LogoItem> _bottomLogos = [];
-  final List<LogoItem> _topLeftLogos = [];
-  LogoItem? _cornerLogo;
-
-  int _nextLogoId = 0;
+  // Global UI state (not per-project)
   int _fileSeq = 0;
   bool _importing = false;
-  int _importDone = 0; // photos copied so far (for the loading message)
-  int _importTotal = 0; // photos being copied in the current import
-  bool _renderingPreview = false; // a preview render loop is in progress
-  bool _checkingLogos = false; // logos being checked/added (OCR + similarity)
+  int _importDone = 0;
+  int _importTotal = 0;
+  bool _renderingPreview = false;
+  bool _checkingLogos = false;
   int _checkDone = 0;
   int _checkTotal = 0;
-
-  // Adjustments (percent of the photo's shortest side).
-  // Size and left margin are SHARED by the bottom and top rows.
-  double _logoSize = 22;
-  double _leftMargin = 1;
-  double _logoOpacity = 90; // shared by both rows (not the main logo)
-  double _bottomMargin = 2; // distance from the bottom edge
-  double _topMargin = 2; // distance from the top edge
-  double _cornerHeight = 22, _cornerMargin = 2;
-  bool _centered = false; // bottom row: false = left-to-right, true = centered
-  double _logoSpacing = 0; // horizontal gap between logos (both rows)
-  bool _bottomGradient = false; // gradient from bottom edge up to bottom row
-  bool _topGradient = false; // gradient from top edge down to top row
-  double _topGradientHeight = 22; // height of top gradient (percent of shortest side)
-  double _bottomGradientHeight = 22; // height of bottom gradient (percent of shortest side)
-  int _gradientColor = 0xFF000000; // gradient color (ARGB) - shared by both
-  double _gradientOpacity = 1.0; // gradient opacity (0.0-1.0) - shared by both
-
-  // Text overlays (always centered horizontally on the photo).
-  final List<TextItem> _texts = [];
-  int _nextTextId = 0;
-  final Map<int, ImageSrc> _textSrc = {}; // rasterized text (raw RGBA), by id
-  final Map<int, double> _textRatio = {}; // glyph-box / bitmap height, by id
-  Future<void> _textJob = Future.value(); // rasterizations run one at a time
-  final Map<int, String> _textSigCache = {}; // look snapshot, for invalidation
-  int _previewIndex = 0; // which of the preview photos is shown big
-
-  // ---- Save state: incremental save into ONE album per project ----
-  final Set<String> _savedPaths = {}; // photo paths already saved this project
-  String? _currentAlbum; // album reused for the whole project
-  _ProcessResult? _lastResult; // persistent result banner
-
-  // Persisted directory preferences.
-  String? _exportDir; // last chosen export directory for .jcv files
-  String? _saveDir; // last chosen save directory for watermarked photos
-
-  // Preview state. Renders live in a long-lived worker isolate that caches the
-  // decoded sources, so a change only composites.
-  final PreviewWorker _worker = PreviewWorker();
-  // Small downscaled copies used ONLY for the live preview (fast re-renders).
-  final Map<String, Uint8List> _previewPhoto = {}; // by photo path
-  final Map<int, Uint8List> _previewLogo = {}; // by logo id
-  final Map<String, _Preview> _previews = {}; // by photo path
-  final Map<String, int> _renderedVersion = {}; // version each render is from
-  final Set<String> _previewFailed = {}; // photos that can't be decoded
-  int _previewVersion = 0; // bumped whenever the look (logos/texts/sliders) changes
-  int _previewToken = 0;
   Timer? _debounce;
   final ScrollController _thumbCtl = ScrollController();
-  List<Map<String, dynamic>> _history = []; // past saves, newest first
+  List<Map<String, dynamic>> _history = [];
+  late final AppLifecycleListener _lifecycle;
 
-  // Processing state.
-  bool _processing = false;
-  bool _cancelRequested = false; // user asked to stop after the current image
-  int _done = 0;
-  int _total = 0;
+  // Preview worker (shared across projects)
+  final PreviewWorker _worker = PreviewWorker();
 
-  bool get _hasAnyLogo =>
-      _bottomLogos.isNotEmpty || _topLeftLogos.isNotEmpty || _cornerLogo != null;
+  // Getters delegating to active project
+  Project get _p => _projectManager.activeProject;
+  List<String> get _photoPaths => _p.photoPaths;
+  List<LogoItem> get _bottomLogos => _p.bottomLogos;
+  List<LogoItem> get _topLeftLogos => _p.topLeftLogos;
+  LogoItem? get _cornerLogo => _p.cornerLogo;
+  set _cornerLogo(LogoItem? v) => _p.cornerLogo = v;
+  List<TextItem> get _texts => _p.texts;
+  Map<int, String> get _textImagePath => _p.textImagePath;
+  Map<int, ImageSrc> get _textSrc => _p.textSrc;
+  Map<int, double> get _textRatio => _p.textRatio;
+  Map<int, String> get _textSigCache => _p.textSigCache;
+  Map<String, dynamic>? get _textTemplate => _p.textTemplate;
+  set _textTemplate(Map<String, dynamic>? v) => _p.textTemplate = v;
 
-  /// Anything to draw on the photos: a logo or a non-empty text.
+  // Settings getters/setters
+  double get _logoSize => _p.logoSize;
+  set _logoSize(double v) => _p.logoSize = v;
+  double get _leftMargin => _p.leftMargin;
+  set _leftMargin(double v) => _p.leftMargin = v;
+  double get _logoOpacity => _p.logoOpacity;
+  set _logoOpacity(double v) => _p.logoOpacity = v;
+  double get _bottomMargin => _p.bottomMargin;
+  set _bottomMargin(double v) => _p.bottomMargin = v;
+  double get _topMargin => _p.topMargin;
+  set _topMargin(double v) => _p.topMargin = v;
+  double get _cornerHeight => _p.cornerHeight;
+  set _cornerHeight(double v) => _p.cornerHeight = v;
+  double get _cornerMargin => _p.cornerMargin;
+  set _cornerMargin(double v) => _p.cornerMargin = v;
+  bool get _centered => _p.centered;
+  set _centered(bool v) => _p.centered = v;
+  double get _logoSpacing => _p.logoSpacing;
+  set _logoSpacing(double v) => _p.logoSpacing = v;
+  bool get _bottomGradient => _p.bottomGradient;
+  set _bottomGradient(bool v) => _p.bottomGradient = v;
+  bool get _topGradient => _p.topGradient;
+  set _topGradient(bool v) => _p.topGradient = v;
+  double get _topGradientHeight => _p.topGradientHeight;
+  set _topGradientHeight(double v) => _p.topGradientHeight = v;
+  double get _bottomGradientHeight => _p.bottomGradientHeight;
+  set _bottomGradientHeight(double v) => _p.bottomGradientHeight = v;
+  int get _gradientColor => _p.gradientColor;
+  set _gradientColor(int v) => _p.gradientColor = v;
+  double get _gradientOpacity => _p.gradientOpacity;
+  set _gradientOpacity(double v) => _p.gradientOpacity = v;
+
+  // Save state getters/setters
+  Set<String> get _savedPaths => _p.savedPaths;
+  String? get _currentAlbum => _p.currentAlbum;
+  set _currentAlbum(String? v) => _p.currentAlbum = v;
+  ProcessResult? get _lastResult => _p.lastResult;
+  set _lastResult(ProcessResult? v) => _p.lastResult = v;
+  bool get _processing => _p.processing;
+  set _processing(bool v) => _p.processing = v;
+  bool get _cancelRequested => _p.cancelRequested;
+  set _cancelRequested(bool v) => _p.cancelRequested = v;
+  int get _done => _p.done;
+  set _done(int v) => _p.done = v;
+  int get _total => _p.total;
+  set _total(int v) => _p.total = v;
+
+  // Preview state getters/setters
+  int get _previewIndex => _p.previewIndex;
+  set _previewIndex(int v) => _p.previewIndex = v;
+  int get _previewVersion => _p.previewVersion;
+  set _previewVersion(int v) => _p.previewVersion = v;
+  int get _previewToken => _p.previewToken;
+  set _previewToken(int v) => _p.previewToken = v;
+
+  // Preview caches getters
+  Map<String, Preview> get _previews => _p.previews;
+  Map<String, int> get _renderedVersion => _p.renderedVersion;
+  Set<String> get _previewFailed => _p.previewFailed;
+  Map<String, Uint8List> get _previewPhoto => _p.previewPhoto;
+  Map<int, Uint8List> get _previewLogo => _p.previewLogo;
+  Future<void> get _textJob => _p.textJob ?? Future<void>.value();
+  set _textJob(Future<void> v) => _p.textJob = v;
+
+  // Global directory preferences (shared)
+  String? get _exportDir => _projectManager.exportDir;
+  set _exportDir(String? v) => _projectManager.setExportDir(v!);
+
+  String? get _saveDir => _projectManager.saveDir;
+  set _saveDir(String? v) => _projectManager.setSaveDir(v!);
+
+  // Computed getters
+  bool get _hasAnyLogo => _bottomLogos.isNotEmpty || _topLeftLogos.isNotEmpty || _cornerLogo != null;
   bool get _hasAnyContent => _hasAnyLogo || _texts.any(_textHasContent);
-
-  static bool _textHasContent(TextItem t) =>
-      t.text.trim().isNotEmpty || t.imageBytes != null;
-
-  /// Photos selected but not yet saved in this project.
-  List<String> get _unsavedPaths =>
-      _photoPaths.where((p) => !_savedPaths.contains(p)).toList();
-
-  /// Controls are disabled until at least one photo is added and while a save
-  /// is running. After a save everything is usable again: changing the look
-  /// then makes the next save write every photo again into a new folder.
+  static bool _textHasContent(TextItem t) => t.text.trim().isNotEmpty || t.imageBytes != null;
+  List<String> get _unsavedPaths => _photoPaths.where((p) => !_savedPaths.contains(p)).toList();
   bool get _controlsEnabled => !_processing && _photoPaths.isNotEmpty;
-  bool get _canProcess =>
-      !_processing && _hasAnyContent && _unsavedPaths.isNotEmpty;
-  bool get _allSaved =>
-      _photoPaths.isNotEmpty && _hasAnyContent && _unsavedPaths.isEmpty;
+  bool get _canProcess => !_processing && _hasAnyContent && _unsavedPaths.isNotEmpty;
+  bool get _allSaved => _photoPaths.isNotEmpty && _hasAnyContent && _unsavedPaths.isEmpty;
 
   @override
   void initState() {
     super.initState();
     _worker.start();
-    // Closing the window waits for the look to be written.
     _lifecycle = AppLifecycleListener(
       onExitRequested: () async {
         await _flushSettings();
         return ui.AppExitResponse.exit;
       },
     );
-    _loadProject();
+    _initializeProjects();
     _getHistory().then((h) {
       if (mounted) setState(() => _history = h);
     });
+  }
+
+  Future<void> _initializeProjects() async {
+    await _projectManager.initialize();
+    // Store initial project for "Novo Projeto" to copy settings from
+    _initialProject = _projectManager.activeProject;
+    _kickPreview();
   }
 
   @override
@@ -209,8 +221,7 @@ class _HomePageState extends State<HomePage> {
     final dir = await getApplicationDocumentsDirectory();
     final folder = Directory('${dir.path}/$sub');
     if (!folder.existsSync()) folder.createSync(recursive: true);
-    final file =
-        File('${folder.path}/${DateTime.now().microsecondsSinceEpoch}_${_fileSeq++}');
+    final file = File('${folder.path}/${DateTime.now().microsecondsSinceEpoch}_${_fileSeq++}');
     await file.writeAsBytes(bytes);
     return file.path;
   }
@@ -219,13 +230,6 @@ class _HomePageState extends State<HomePage> {
   // slider); the photos never do — each launch starts with no photos. ----
 
   Timer? _saveDebounce;
-  final Map<int, String> _textImagePath = {}; // saved copy of a text picture
-  late final AppLifecycleListener _lifecycle;
-
-  /// Settings of the last text used (font, colors, outline, curve, picture,
-  /// position...). Texts are not restored on launch, but a NEW text starts
-  /// from this template.
-  Map<String, dynamic>? _textTemplate;
 
   Future<Map<String, dynamic>> _textToJson(TextItem t) async {
     String? imagePath;
@@ -259,7 +263,7 @@ class _HomePageState extends State<HomePage> {
         .clamp(0, TextImagePos.values.length - 1)
         .toInt();
     final t = TextItem(
-      id: _nextTextId++,
+      id: Project.nextTextId(),
       text: m['text'] as String? ?? '',
       fontFamily: m['fontFamily'] as String? ?? 'Arial',
       bold: m['bold'] as bool? ?? true,
@@ -268,13 +272,13 @@ class _HomePageState extends State<HomePage> {
       rainbow: m['rainbow'] as bool? ?? false,
       outline: m['outline'] as bool? ?? true,
       outlineColor: (m['outlineColor'] as num?)?.toInt() ?? 0xFF000000,
-      outlineWidth: (m['outlineWidth'] as num?)?.toDouble() ?? 8,
-      heightPct: (m['heightPct'] as num?)?.toDouble() ?? 10,
-      topPct: (m['topPct'] as num?)?.toDouble() ?? 77,
-      curve: (m['curve'] as num?)?.toDouble() ?? 0,
+      outlineWidth: (m['outlineWidth'] as num?)?.toDouble() ?? 8.0,
+      heightPct: (m['heightPct'] as num?)?.toDouble() ?? 10.0,
+      topPct: (m['topPct'] as num?)?.toDouble() ?? 77.0,
+      curve: (m['curve'] as num?)?.toDouble() ?? 0.0,
       imagePos: TextImagePos.values[posIndex],
-      imageSize: (m['imageSize'] as num?)?.toDouble() ?? 100,
-      imageGap: (m['imageGap'] as num?)?.toDouble() ?? 15,
+      imageSize: (m['imageSize'] as num?)?.toDouble() ?? 100.0,
+      imageGap: (m['imageGap'] as num?)?.toDouble() ?? 15.0,
     );
     final ip = m['imagePath'] as String?;
     if (ip != null && File(ip).existsSync()) {
@@ -282,7 +286,7 @@ class _HomePageState extends State<HomePage> {
         final b = await File(ip).readAsBytes();
         t.imageBytes = b;
         t.imageName = m['imageName'] as String?;
-        t.imageSig = _imageSig(b);
+        t.imageSig = Project.imageSig(b);
         _textImagePath[t.id] = ip;
       } catch (_) {}
     }
@@ -300,42 +304,18 @@ class _HomePageState extends State<HomePage> {
     await _writeSettings();
   }
 
-  static String _baseName(String path) => path.split('/').last.split('\\').last;
-
   Future<void> _writeSettings() async {
     try {
-      Map<String, dynamic> logo(LogoItem l) => {'path': l.path, 'name': l.sourceKey};
       // The last text in the list becomes the template for future texts.
-      if (_texts.isNotEmpty) _textTemplate = await _textToJson(_texts.last);
-      final data = <String, dynamic>{
-        'logoSize': _logoSize,
-        'leftMargin': _leftMargin,
-        'opacity': _logoOpacity,
-        'bottomMargin': _bottomMargin,
-        'topMargin': _topMargin,
-        'cornerHeight': _cornerHeight,
-        'cornerMargin': _cornerMargin,
-        'centered': _centered,
-        'spacing': _logoSpacing,
-        'bottomGradient': _bottomGradient,
-        'topGradient': _topGradient,
-        'topGradientHeight': _topGradientHeight,
-        'bottomGradientHeight': _bottomGradientHeight,
-        'gradientColor': _gradientColor,
-        'gradientOpacity': _gradientOpacity,
-        'bottom': _bottomLogos.map(logo).toList(),
-        'top': _topLeftLogos.map(logo).toList(),
-        'corner': _cornerLogo == null ? null : logo(_cornerLogo!),
-        'textTemplate': _textTemplate,
-        'exportDir': _exportDir,
-        'saveDir': _saveDir,
-      };
-      final p = await SharedPreferences.getInstance();
-      await p.setString('settings', jsonEncode(data));
+      if (_texts.isNotEmpty) _p.textTemplate = await _textToJson(_texts.last);
+      // Save via ProjectManager (which persists all projects)
+      await _projectManager.save();
     } catch (_) {
       // Persisting the look is best effort; the app keeps working without it.
     }
   }
+
+  static String _baseName(String path) => path.split('/').last.split('\\').last;
 
   /// Exports the entire project (photos, logos, texts, all settings) to a single .jcv file.
   Future<void> _exportProject() async {
@@ -565,7 +545,7 @@ class _HomePageState extends State<HomePage> {
         final bytes = findLogoBytes('bottom', originalName);
         if (bytes == null) continue;
         final path = await _copyBytesToApp(bytes, 'logos');
-        _bottomLogos.add(LogoItem(_nextLogoId++, path, originalName, bytes, _imageSig(bytes), const <String>{}, const <String>{}));
+        _bottomLogos.add(LogoItem(Project.nextLogoId(), path, originalName, bytes, Project.imageSig(bytes), const <String>{}, const <String>{}));
       }
 
       // Load top logos - use original names from settings
@@ -576,7 +556,7 @@ class _HomePageState extends State<HomePage> {
         final bytes = findLogoBytes('top', originalName);
         if (bytes == null) continue;
         final path = await _copyBytesToApp(bytes, 'logos');
-        _topLeftLogos.add(LogoItem(_nextLogoId++, path, originalName, bytes, _imageSig(bytes), const <String>{}, const <String>{}));
+        _topLeftLogos.add(LogoItem(Project.nextLogoId(), path, originalName, bytes, Project.imageSig(bytes), const <String>{}, const <String>{}));
       }
 
       // Load corner logo - use original name from settings
@@ -586,7 +566,7 @@ class _HomePageState extends State<HomePage> {
         final bytes = findLogoBytes('corner', originalName);
         if (bytes != null) {
           final path = await _copyBytesToApp(bytes, 'logos');
-          _cornerLogo = LogoItem(_nextLogoId++, path, originalName, bytes, _imageSig(bytes), const <String>{}, const <String>{});
+          _cornerLogo = LogoItem(Project.nextLogoId(), path, originalName, bytes, Project.imageSig(bytes), const <String>{}, const <String>{});
         }
       }
 
@@ -612,19 +592,19 @@ class _HomePageState extends State<HomePage> {
 
       // Restore settings
       setState(() {
-        _logoSize = (settings['logoSize'] as num?)?.toDouble() ?? 22;
-        _leftMargin = (settings['leftMargin'] as num?)?.toDouble() ?? 1;
-        _logoOpacity = (settings['opacity'] as num?)?.toDouble() ?? 90;
-        _bottomMargin = (settings['bottomMargin'] as num?)?.toDouble() ?? 2;
-        _topMargin = (settings['topMargin'] as num?)?.toDouble() ?? 2;
-        _cornerHeight = (settings['cornerHeight'] as num?)?.toDouble() ?? 22;
-        _cornerMargin = (settings['cornerMargin'] as num?)?.toDouble() ?? 2;
+        _logoSize = (settings['logoSize'] as num?)?.toDouble() ?? 22.0;
+        _leftMargin = (settings['leftMargin'] as num?)?.toDouble() ?? 1.0;
+        _logoOpacity = (settings['opacity'] as num?)?.toDouble() ?? 90.0;
+        _bottomMargin = (settings['bottomMargin'] as num?)?.toDouble() ?? 2.0;
+        _topMargin = (settings['topMargin'] as num?)?.toDouble() ?? 2.0;
+        _cornerHeight = (settings['cornerHeight'] as num?)?.toDouble() ?? 22.0;
+        _cornerMargin = (settings['cornerMargin'] as num?)?.toDouble() ?? 2.0;
         _centered = settings['centered'] as bool? ?? false;
-        _logoSpacing = (settings['spacing'] as num?)?.toDouble() ?? 0;
+        _logoSpacing = (settings['spacing'] as num?)?.toDouble() ?? 0.0;
         _bottomGradient = settings['bottomGradient'] as bool? ?? false;
         _topGradient = settings['topGradient'] as bool? ?? false;
-        _topGradientHeight = (settings['topGradientHeight'] as num?)?.toDouble() ?? 22;
-        _bottomGradientHeight = (settings['bottomGradientHeight'] as num?)?.toDouble() ?? 22;
+        _topGradientHeight = (settings['topGradientHeight'] as num?)?.toDouble() ?? 22.0;
+        _bottomGradientHeight = (settings['bottomGradientHeight'] as num?)?.toDouble() ?? 22.0;
         _gradientColor = (settings['gradientColor'] as num?)?.toInt() ?? 0xFF000000;
         _gradientOpacity = (settings['gradientOpacity'] as num?)?.toDouble() ?? 1.0;
       });
@@ -647,129 +627,45 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  Future<void> _loadProject() async {
-    // Cold start: the photos of the previous run are wiped; the look is
-    // restored (or the defaults are used on the very first run).
-    try {
-      final dir = await getApplicationDocumentsDirectory();
-      final d = Directory('${dir.path}/photos');
-      if (d.existsSync()) d.deleteSync(recursive: true);
-    } catch (_) {}
-    final restored = await _restoreSettings();
-    if (!restored) await _installDefaultCorner();
-    await _pruneUnusedFiles();
-    _kickPreview();
-  }
-
-  /// Rebuilds logos, texts and sliders from the last run. False if nothing was
-  /// saved yet (first run) or the data is unusable.
-  Future<bool> _restoreSettings() async {
-    try {
-      final p = await SharedPreferences.getInstance();
-      final raw = p.getString('settings');
-      if (raw == null) return false;
-      final d = jsonDecode(raw) as Map<String, dynamic>;
-      double num_(String k, double def) => (d[k] as num?)?.toDouble() ?? def;
-
-      Future<LogoItem?> logo(dynamic m) async {
-        if (m is! Map) return null;
-        final path = m['path'] as String?;
-        if (path == null) return null;
-        final f = File(path);
-        if (!f.existsSync()) return null;
-        final bytes = await f.readAsBytes();
-        return LogoItem(_nextLogoId++, path, m['name'] as String? ?? '', bytes,
-            _imageSig(bytes), const <String>{}, const <String>{});
-      }
-
-      final bottom = <LogoItem>[];
-      for (final m in (d['bottom'] as List? ?? const [])) {
-        final l = await logo(m);
-        if (l != null) bottom.add(l);
-      }
-      final top = <LogoItem>[];
-      for (final m in (d['top'] as List? ?? const [])) {
-        final l = await logo(m);
-        if (l != null) top.add(l);
-      }
-      final corner = await logo(d['corner']);
-
-      final tpl = d['textTemplate'];
-      if (tpl is Map) _textTemplate = Map<String, dynamic>.from(tpl);
-
-      if (!mounted) return true;
-      setState(() {
-        _logoSize = num_('logoSize', 22);
-        _leftMargin = num_('leftMargin', 1);
-        _logoOpacity = num_('opacity', 90);
-        _bottomMargin = num_('bottomMargin', 2);
-        _topMargin = num_('topMargin', 2);
-        _cornerHeight = num_('cornerHeight', 22);
-        _cornerMargin = num_('cornerMargin', 2);
-        _centered = d['centered'] as bool? ?? false;
-        _logoSpacing = num_('spacing', 0);
-        _bottomGradient = d['bottomGradient'] as bool? ?? false;
-        _topGradient = d['topGradient'] as bool? ?? false;
-        _topGradientHeight = num_('topGradientHeight', 22);
-        _bottomGradientHeight = num_('bottomGradientHeight', 22);
-        _gradientColor = (d['gradientColor'] as num?)?.toInt() ?? 0xFF000000;
-        _gradientOpacity = (d['gradientOpacity'] as num?)?.toDouble() ?? 1.0;
-        _exportDir = d['exportDir'] as String?;
-        _saveDir = d['saveDir'] as String?;
-        _bottomLogos
-          ..clear()
-          ..addAll(bottom);
-        _topLeftLogos
-          ..clear()
-          ..addAll(top);
-        _cornerLogo = corner;
-        _texts.clear(); // texts never come back by themselves
-      });
-      return true;
-    } catch (_) {
-      return false;
-    }
-  }
-
-  /// Deletes logo / text-picture copies that the restored look no longer uses.
-  Future<void> _pruneUnusedFiles() async {
-    try {
-      final dir = await getApplicationDocumentsDirectory();
-      final keep = <String>{
-        for (final l in [
-          ..._bottomLogos,
-          ..._topLeftLogos,
-          if (_cornerLogo != null) _cornerLogo!,
-        ])
-          _baseName(l.path),
-        for (final p in _textImagePath.values) _baseName(p),
-        if (_textTemplate?['imagePath'] is String)
-          _baseName(_textTemplate!['imagePath'] as String),
-      };
-      for (final sub in ['logos', 'textimg']) {
-        final d = Directory('${dir.path}/$sub');
-        if (!d.existsSync()) continue;
-        for (final f in d.listSync()) {
-          if (f is File && !keep.contains(_baseName(f.path))) {
-            try {
-              f.deleteSync();
-            } catch (_) {}
-          }
-        }
-      }
-    } catch (_) {}
-  }
-
   /// Installs the bundled default main (top-right) logo.
   Future<void> _installDefaultCorner() async {
     final data = await rootBundle.load('assets/default_corner_logo.png');
     final bytes = data.buffer.asUint8List();
     final path = await _copyBytesToApp(bytes, 'logos');
-    final fp = _imageSig(bytes);
+    final fp = Project.imageSig(bytes);
     if (!mounted) return;
-    setState(() => _cornerLogo = LogoItem(_nextLogoId++, path,
+    setState(() => _cornerLogo = LogoItem(Project.nextLogoId(), path,
         'asset:default_corner', bytes, fp,
         const <String>{}, const <String>{}));
+  }
+
+  /// Removes orphaned copied files from the app's private directories.
+  Future<void> _pruneUnusedFiles() async {
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final used = <String>{};
+      // Collect all file paths currently in use by the active project
+      for (final p in _photoPaths) used.add(p);
+      for (final l in _bottomLogos) used.add(l.path);
+      for (final l in _topLeftLogos) used.add(l.path);
+      if (_cornerLogo != null) used.add(_cornerLogo!.path);
+      for (final p in _textImagePath.values) used.add(p);
+      // Scan subdirectories and delete files not in the used set
+      final subdirs = ['photos', 'logos', 'textimg'];
+      for (final sub in subdirs) {
+        final subDir = Directory('${dir.path}/$sub');
+        if (!subDir.existsSync()) continue;
+        for (final entity in subDir.listSync()) {
+          if (entity is File && !used.contains(entity.path)) {
+            try {
+              entity.deleteSync();
+            } catch (_) {}
+          }
+        }
+      }
+    } catch (_) {
+      // Best effort; ignore errors.
+    }
   }
 
   // ---- Picking ----
@@ -849,7 +745,7 @@ class _HomePageState extends State<HomePage> {
           final x = picked[i];
           final bytes = await x.readAsBytes();
           final name = _logoName(x.name);
-          final sig = _imageSig(bytes);
+          final sig = Project.imageSig(bytes);
           final dupName =
               name.isNotEmpty && usedNames.any((u) => _namesRelated(u, name));
           final dupSame = usedSigs.contains(sig);
@@ -858,7 +754,7 @@ class _HomePageState extends State<HomePage> {
             continue;
           }
           final path = await _copyBytesToApp(bytes, 'logos');
-          target.add(LogoItem(_nextLogoId++, path, x.name, bytes, sig,
+          target.add(LogoItem(Project.nextLogoId(), path, x.name, bytes, sig,
               const <String>{}, const <String>{}));
           usedNames.add(name);
           usedSigs.add(sig);
@@ -881,31 +777,17 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  /// Cheap identity signature of the raw image bytes (length + ~64 sampled
-  /// bytes). No decoding, so it never blocks — identifies the EXACT same image.
-  int _imageSig(Uint8List b) {
-    final n = b.length;
-    var h = n & 0x7fffffff;
-    if (n > 0) {
-      final step = (n ~/ 64) < 1 ? 1 : (n ~/ 64);
-      for (var i = 0; i < n; i += step) {
-        h = (h * 31 + b[i]) & 0x7fffffff;
-      }
-    }
-    return h;
-  }
-
   Future<void> _pickCornerLogo() async {
     final x = await _picker.pickImage(source: ImageSource.gallery);
     if (x == null) return;
     final bytes = await x.readAsBytes();
     setState(() => _importing = true);
     final path = await _copyBytesToApp(bytes, 'logos');
-    final fp = _imageSig(bytes);
+    final fp = Project.imageSig(bytes);
     _previewToken++; // stop any running preview loop while the logo changes
     _worker.cancelPending();
     setState(() {
-      _cornerLogo = LogoItem(_nextLogoId++, path, x.name, bytes, fp,
+      _cornerLogo = LogoItem(Project.nextLogoId(), path, x.name, bytes, fp,
           const <String>{}, const <String>{});
       _importing = false;
     });
@@ -1001,7 +883,7 @@ class _HomePageState extends State<HomePage> {
         if (token != _previewToken || !mounted) return;
         if (!_photoPaths.contains(path)) continue;
         setState(() {
-          _previews[path] = _Preview(out, aspect);
+          _previews[path] = Preview(out, aspect);
           _renderedVersion[path] = version;
         });
       } catch (_) {
@@ -1665,7 +1547,7 @@ class _HomePageState extends State<HomePage> {
     if (!mounted) return;
     setState(() {
       _processing = false;
-      _lastResult = _ProcessResult(saved: saved, failed: failed, album: album);
+      _lastResult = ProcessResult(saved: saved, failed: failed, album: album);
     });
   }
 
@@ -1825,7 +1707,12 @@ class _HomePageState extends State<HomePage> {
             style: TextStyle(
                 fontSize: 14, fontWeight: FontWeight.w700, letterSpacing: 0.2),
           ),
-          const Spacer(),
+          const SizedBox(width: 16),
+          // Project tabs
+          Expanded(
+            child: _projectTabs(),
+          ),
+          const SizedBox(width: 4),
           TextButton.icon(
             onPressed: (!_processing &&
                     (_photoPaths.isNotEmpty || _savedPaths.isNotEmpty))
@@ -1907,6 +1794,67 @@ class _HomePageState extends State<HomePage> {
         ],
       ),
     );
+  }
+
+  Widget _projectTabs() {
+    final scheme = Theme.of(context).colorScheme;
+    final projects = _projectManager.projects;
+    final activeIndex = _projectManager.activeIndex;
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          for (var i = 0; i < projects.length; i++)
+            _ProjectTab(
+              name: projects[i].name,
+              isActive: i == activeIndex,
+              onTap: () => _switchProject(i),
+              onClose: projects.length > 1 ? () => _removeProject(i) : null,
+            ),
+          _ProjectTab(
+            isNew: true,
+            onTap: _confirmNewProject,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _switchProject(int index) async {
+    if (index == _projectManager.activeIndex) return;
+    await _flushSettings(); // Save current project before switching
+    await _projectManager.setActive(index);
+    _previewToken++; // Invalidate preview
+    _worker.cancelPending();
+    _kickPreview();
+    if (mounted) setState(() {}); // Trigger rebuild with new project
+  }
+
+  Future<void> _removeProject(int index) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Remover projeto?'),
+        content: Text(
+            'O projeto "${_projectManager.projects[index].name}" será removido. '
+            'As imagens já salvas nas pastas são mantidas.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancelar')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Remover')),
+        ],
+      ),
+    );
+    if (ok == true) {
+      await _projectManager.removeProject(index);
+      _previewToken++;
+      _worker.cancelPending();
+      _kickPreview();
+      if (mounted) setState(() {});
+    }
   }
 
   // ---- Left panel (settings) ----
@@ -2296,7 +2244,7 @@ class _HomePageState extends State<HomePage> {
   Future<void> _addText() async {
     final tpl = _textTemplate;
     final t = tpl == null
-        ? TextItem(id: _nextTextId++)
+        ? TextItem(id: Project.nextTextId())
         : await _textFromJson(tpl); // same settings as the last text used
     if (!mounted) return;
     setState(() => _texts.add(t));
@@ -2510,7 +2458,7 @@ class _HomePageState extends State<HomePage> {
     setState(() {
       t.imageBytes = bytes;
       t.imageName = x.name;
-      t.imageSig = _imageSig(bytes);
+      t.imageSig = Project.imageSig(bytes);
     });
     _textImagePath.remove(t.id);
     _schedulePreview();
@@ -3058,17 +3006,17 @@ class _HomePageState extends State<HomePage> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Começar novo projeto?'),
+        title: const Text('Novo projeto?'),
         content: const Text(
-            'Isso limpa as fotos, logos e textos atuais. As imagens já salvas '
-            'na pasta são mantidas.'),
+            'Cria um novo projeto com as mesmas configurações (logos, textos, ajustes). '
+            'O projeto atual continua salvo e acessível nas abas acima.'),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx, false),
               child: const Text('Cancelar')),
           FilledButton(
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Novo projeto')),
+              child: const Text('Criar')),
         ],
       ),
     );
@@ -3077,44 +3025,12 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _newProject() async {
     _previewToken++; // invalidate any in-flight preview render
-    setState(() {
-      _photoPaths.clear();
-      _bottomLogos.clear();
-      _topLeftLogos.clear();
-      _cornerLogo = null;
-      _savedPaths.clear();
-      _currentAlbum = null;
-      _lastResult = null;
-      _previews.clear();
-      _renderedVersion.clear();
-      _previewFailed.clear();
-      _previewIndex = 0;
-      _renderingPreview = false;
-      _importing = false;
-      _checkingLogos = false;
-      _cancelRequested = false;
-      _previewPhoto.clear();
-      _previewLogo.clear();
-      _texts.clear();
-      _textImagePath.clear();
-      _textSrc.clear();
-      _textRatio.clear();
-      _textSigCache.clear();
-      _logoSize = 22;
-      _leftMargin = 1;
-      _logoOpacity = 90;
-      _bottomMargin = 2;
-      _topMargin = 2;
-      _cornerHeight = 22;
-      _cornerMargin = 2;
-      _centered = false;
-      _logoSpacing = 0;
-      _bottomGradient = false;
-      _topGradient = false;
-    });
+    await _flushSettings(); // Save current project first
+    final newProject = await _projectManager.addProject();
+    // Switch to the new project (it's already the active one after addProject)
     _worker.clearCache();
-    await _installDefaultCorner();
-    await _flushSettings();
+    _kickPreview();
+    if (mounted) setState(() {}); // Rebuild with new project
   }
 
   // ---- Small controls ----
@@ -3259,6 +3175,79 @@ class _HomePageState extends State<HomePage> {
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+/// Tab widget for the project bar at the top.
+class _ProjectTab extends StatelessWidget {
+  const _ProjectTab({
+    this.name,
+    this.isActive = false,
+    this.isNew = false,
+    this.onTap,
+    this.onClose,
+  });
+
+  final String? name;
+  final bool isActive;
+  final bool isNew;
+  final VoidCallback? onTap;
+  final VoidCallback? onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final bgColor = isActive
+        ? scheme.primaryContainer
+        : scheme.surfaceContainerHighest;
+    final textColor = isActive
+        ? scheme.onPrimaryContainer
+        : scheme.onSurfaceVariant;
+
+    return Padding(
+      padding: const EdgeInsets.only(right: 6),
+      child: InkWell(
+        onTap: isNew ? onTap : null,
+        borderRadius: BorderRadius.circular(6),
+        child: Container(
+          height: 32,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          decoration: BoxDecoration(
+            color: bgColor,
+            borderRadius: BorderRadius.circular(6),
+            border: isActive
+                ? Border.all(color: scheme.primary, width: 1.5)
+                : Border.all(color: scheme.outlineVariant),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (isNew) ...[
+                Icon(Icons.add, size: 16, color: textColor),
+                const SizedBox(width: 6),
+                Text('Novo projeto', style: TextStyle(fontSize: 12, color: textColor)),
+              ] else ...[
+                Flexible(
+                  child: Text(
+                    name ?? 'Projeto',
+                    style: TextStyle(fontSize: 12, color: textColor, fontWeight: isActive ? FontWeight.w600 : FontWeight.normal),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                if (onClose != null) ...[
+                  const SizedBox(width: 6),
+                  GestureDetector(
+                    onTap: onClose,
+                    behavior: HitTestBehavior.opaque,
+                    child: Icon(Icons.close, size: 14, color: textColor),
+                  ),
+                ],
+              ],
+            ],
+          ),
+        ),
       ),
     );
   }
