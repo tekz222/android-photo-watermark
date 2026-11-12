@@ -110,6 +110,8 @@ class WatermarkRequest {
     this.bottomGradient = false,
     this.topGradientHeight,
     this.bottomGradientHeight,
+    this.gradientColor = 0xFF000000,
+    this.gradientOpacity = 1.0,
   });
 
   final ImageSrc photo;
@@ -150,10 +152,10 @@ class WatermarkRequest {
   final int? maxDim;
   final int quality;
 
-  /// If true, draw a black-to-transparent gradient from the top edge.
+  /// If true, draw a gradient from the top edge.
   final bool topGradient;
 
-  /// If true, draw a black-to-transparent gradient from the bottom edge.
+  /// If true, draw a gradient from the bottom edge.
   final bool bottomGradient;
 
   /// Height of the top gradient as a fraction of the shortest side.
@@ -163,6 +165,12 @@ class WatermarkRequest {
   /// Height of the bottom gradient as a fraction of the shortest side.
   /// Defaults to [bottomHeight] if not specified.
   final double? bottomGradientHeight;
+
+  /// Color of the gradient (ARGB). Default is black. Used for both top and bottom.
+  final int gradientColor;
+
+  /// Opacity of the gradient (0.0 to 1.0). Default is 1.0. Used for both top and bottom.
+  final double gradientOpacity;
 }
 
 /// Composites the logos and texts onto the photo and returns encoded bytes.
@@ -209,13 +217,23 @@ Uint8List renderWatermark(WatermarkRequest r, {DecodedCache? cache}) {
   // Draw top gradient if enabled.
   if (r.topGradient) {
     final gradHeight = ((r.topGradientHeight ?? r.topLeftHeight) * shortest).round().clamp(1, photo.height);
-    _drawGradient(photo, top: 0, height: gradHeight, fromTop: true);
+    final color = r.gradientColor;
+    final opacity = r.gradientOpacity.clamp(0.0, 1.0);
+    final rColor = (color >> 16) & 0xFF;
+    final gColor = (color >> 8) & 0xFF;
+    final bColor = color & 0xFF;
+    _drawGradient(photo, top: 0, height: gradHeight, fromTop: true, colorR: rColor, colorG: gColor, colorB: bColor, opacity: opacity);
   }
 
   // Draw bottom gradient if enabled.
   if (r.bottomGradient) {
     final gradHeight = ((r.bottomGradientHeight ?? r.bottomHeight) * shortest).round().clamp(1, photo.height);
-    _drawGradient(photo, top: photo.height - gradHeight, height: gradHeight, fromTop: false);
+    final color = r.gradientColor;
+    final opacity = r.gradientOpacity.clamp(0.0, 1.0);
+    final rColor = (color >> 16) & 0xFF;
+    final gColor = (color >> 8) & 0xFF;
+    final bColor = color & 0xFF;
+    _drawGradient(photo, top: photo.height - gradHeight, height: gradHeight, fromTop: false, colorR: rColor, colorG: gColor, colorB: bColor, opacity: opacity);
   }
 
   // Decode each distinct source only once per render.
@@ -359,32 +377,39 @@ img.Image _withOpacity(img.Image src, double opacity) {
   return out;
 }
 
-/// Draws a black-to-transparent linear gradient on [dst].
+/// Draws a gradient-to-transparent linear gradient on [dst].
 /// - [top]: starting Y coordinate of the gradient band.
 /// - [height]: height of the gradient band in pixels.
-/// - [fromTop]: if true, gradient goes from opaque black at top edge to transparent at bottom of band;
-///   if false, gradient goes from transparent at top of band to opaque black at bottom edge.
+/// - [fromTop]: if true, gradient goes from opaque at edge to transparent inward;
+///   if false, gradient goes from transparent inward to opaque at edge.
+/// - [colorR], [colorG], [colorB]: gradient color components (0-255).
+/// - [opacity]: overall opacity multiplier (0.0 to 1.0).
 void _drawGradient(
   img.Image dst, {
   required int top,
   required int height,
   required bool fromTop,
+  required int colorR,
+  required int colorG,
+  required int colorB,
+  required double opacity,
 }) {
   if (height <= 0) return;
   final w = dst.width;
   final h = dst.height;
   final endY = (top + height).clamp(0, h);
+  final opacityAlpha = (opacity * 255).round().clamp(0, 255);
   for (int y = top.clamp(0, h); y < endY; y++) {
     // Linear interpolation: 0.0 at transparent edge, 1.0 at opaque edge.
     final t = fromTop ? 1.0 - (y - top) / height : (y - top) / height;
-    final alpha = (t * 255).round().clamp(0, 255);
+    final alpha = (t * opacityAlpha).round().clamp(0, 255);
     if (alpha == 0) continue;
     for (int x = 0; x < w; x++) {
       final p = dst.getPixel(x, y);
-      // Blend black with alpha over existing pixel.
-      final newR = (p.r * (255 - alpha) + 0 * alpha) ~/ 255;
-      final newG = (p.g * (255 - alpha) + 0 * alpha) ~/ 255;
-      final newB = (p.b * (255 - alpha) + 0 * alpha) ~/ 255;
+      // Blend gradient color with alpha over existing pixel.
+      final newR = (p.r * (255 - alpha) + colorR * alpha) ~/ 255;
+      final newG = (p.g * (255 - alpha) + colorG * alpha) ~/ 255;
+      final newB = (p.b * (255 - alpha) + colorB * alpha) ~/ 255;
       final newA = p.a + alpha - (p.a * alpha) ~/ 255;
       dst.setPixelRgba(x, y, newR, newG, newB, newA.clamp(0, 255));
     }

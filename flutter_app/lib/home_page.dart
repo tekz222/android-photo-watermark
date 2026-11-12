@@ -108,6 +108,8 @@ class _HomePageState extends State<HomePage> {
   bool _topGradient = false; // gradient from top edge down to top row
   double _topGradientHeight = 22; // height of top gradient (percent of shortest side)
   double _bottomGradientHeight = 22; // height of bottom gradient (percent of shortest side)
+  int _gradientColor = 0xFF000000; // gradient color (ARGB) - shared by both
+  double _gradientOpacity = 1.0; // gradient opacity (0.0-1.0) - shared by both
 
   // Text overlays (always centered horizontally on the photo).
   final List<TextItem> _texts = [];
@@ -314,6 +316,8 @@ class _HomePageState extends State<HomePage> {
         'topGradient': _topGradient,
         'topGradientHeight': _topGradientHeight,
         'bottomGradientHeight': _bottomGradientHeight,
+        'gradientColor': _gradientColor,
+        'gradientOpacity': _gradientOpacity,
         'bottom': _bottomLogos.map(logo).toList(),
         'top': _topLeftLogos.map(logo).toList(),
         'corner': _cornerLogo == null ? null : logo(_cornerLogo!),
@@ -354,6 +358,8 @@ class _HomePageState extends State<HomePage> {
         'topGradient': _topGradient,
         'topGradientHeight': _topGradientHeight,
         'bottomGradientHeight': _bottomGradientHeight,
+        'gradientColor': _gradientColor,
+        'gradientOpacity': _gradientOpacity,
         'bottom': _bottomLogos.map(logo).toList(),
         'top': _topLeftLogos.map(logo).toList(),
         'corner': _cornerLogo == null ? null : logo(_cornerLogo!),
@@ -554,6 +560,8 @@ class _HomePageState extends State<HomePage> {
         _topGradient = settings['topGradient'] as bool? ?? false;
         _topGradientHeight = (settings['topGradientHeight'] as num?)?.toDouble() ?? 22;
         _bottomGradientHeight = (settings['bottomGradientHeight'] as num?)?.toDouble() ?? 22;
+        _gradientColor = (settings['gradientColor'] as num?)?.toInt() ?? 0xFF000000;
+        _gradientOpacity = (settings['gradientOpacity'] as num?)?.toDouble() ?? 1.0;
       });
 
       if (_textTemplate != null) {
@@ -639,6 +647,8 @@ class _HomePageState extends State<HomePage> {
         _topGradient = d['topGradient'] as bool? ?? false;
         _topGradientHeight = num_('topGradientHeight', 22);
         _bottomGradientHeight = num_('bottomGradientHeight', 22);
+        _gradientColor = (d['gradientColor'] as num?)?.toInt() ?? 0xFF000000;
+        _gradientOpacity = (d['gradientOpacity'] as num?)?.toDouble() ?? 1.0;
         _bottomLogos
           ..clear()
           ..addAll(bottom);
@@ -985,6 +995,8 @@ class _HomePageState extends State<HomePage> {
       bottomGradient: _bottomGradient,
       topGradientHeight: _topGradient ? _topGradientHeight / 100 : null,
       bottomGradientHeight: _bottomGradient ? _bottomGradientHeight / 100 : null,
+      gradientColor: _gradientColor,
+      gradientOpacity: _gradientOpacity,
     );
   }
 
@@ -1015,6 +1027,8 @@ class _HomePageState extends State<HomePage> {
       bottomGradient: _bottomGradient,
       topGradientHeight: _topGradient ? _topGradientHeight / 100 : null,
       bottomGradientHeight: _bottomGradient ? _bottomGradientHeight / 100 : null,
+      gradientColor: _gradientColor,
+      gradientOpacity: _gradientOpacity,
     );
   }
 
@@ -1862,6 +1876,12 @@ class _HomePageState extends State<HomePage> {
               if (_bottomGradient)
                 _slider('Altura do gradiente inferior', _bottomGradientHeight, 1, 50,
                     (v) => setState(() => _bottomGradientHeight = v)),
+              if (_bottomGradient || _topGradient) ...[
+                _colorPicker('Cor do gradiente', _gradientColor,
+                    (c) => setState(() => _gradientColor = c)),
+                _slider('Opacidade do gradiente', (_gradientOpacity * 100).round().toDouble(), 0, 100,
+                    (v) => setState(() => _gradientOpacity = v / 100)),
+              ],
             ],
           ),
           _logoSection(
@@ -1950,14 +1970,17 @@ class _HomePageState extends State<HomePage> {
                   itemCount: _photoPaths.length,
                   separatorBuilder: (_, __) => const SizedBox(width: 6),
                   itemBuilder: (context, i) {
+                    final sel = i == _previewIndex;
                     return _thumb(
                       size: 60,
                       enabled: _controlsEnabled,
+                      selected: sel,
                       child: Image.file(
                         File(_photoPaths[i]),
                         fit: BoxFit.cover,
                         cacheWidth: 160,
                       ),
+                      onTap: () => _selectPreview(i),
                       onRemove: () {
                         final path = _photoPaths[i];
                         _previewToken++; // discard any in-flight render of it
@@ -2503,6 +2526,11 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  /// Simplified color picker for gradients - shows color swatches and opens panel
+  Widget _colorPicker(String label, int selected, ValueChanged<int> onPick) {
+    return _colorField('gradient:$label', label, selected, onPick);
+  }
+
   // ---- Right pane (preview) ----
 
   void _selectPreview(int i) {
@@ -3033,8 +3061,10 @@ class _HomePageState extends State<HomePage> {
     required VoidCallback onRemove,
     VoidCallback? onTap,
     bool enabled = true,
+    bool selected = false,
     double size = 60,
   }) {
+    final scheme = Theme.of(context).colorScheme;
     return SizedBox(
       width: size,
       height: size,
@@ -3048,7 +3078,13 @@ class _HomePageState extends State<HomePage> {
               child: Container(
                 width: size,
                 height: size,
-                color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                decoration: BoxDecoration(
+                  color: scheme.surfaceContainerHighest,
+                  border: Border.all(
+                    color: selected ? scheme.primary : scheme.outlineVariant,
+                    width: selected ? 2 : 1,
+                  ),
+                ),
                 child: child,
               ),
             ),
