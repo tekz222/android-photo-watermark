@@ -407,24 +407,27 @@ class _HomePageState extends State<HomePage> {
         }
       }
 
-      // 3. Add logos (bottom)
+      // 3. Add logos (bottom) - use original file names from sourceKey
       for (var i = 0; i < _bottomLogos.length; i++) {
         final l = _bottomLogos[i];
         final ext = l.sourceKey.split('.').last.toLowerCase();
-        archive.addFile(ArchiveFile('logos/bottom_$i.$ext', l.bytes.length, l.bytes));
+        // Sanitize the filename for archive use
+        final safeName = l.sourceKey.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+        archive.addFile(ArchiveFile('logos/bottom/$safeName', l.bytes.length, l.bytes));
       }
 
-      // 4. Add logos (top-left)
+      // 4. Add logos (top-left) - use original file names from sourceKey
       for (var i = 0; i < _topLeftLogos.length; i++) {
         final l = _topLeftLogos[i];
         final ext = l.sourceKey.split('.').last.toLowerCase();
-        archive.addFile(ArchiveFile('logos/top_$i.$ext', l.bytes.length, l.bytes));
+        final safeName = l.sourceKey.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+        archive.addFile(ArchiveFile('logos/top/$safeName', l.bytes.length, l.bytes));
       }
 
-      // 5. Add corner logo
+      // 5. Add corner logo - use original file name
       if (_cornerLogo != null) {
-        final ext = _cornerLogo!.sourceKey.split('.').last.toLowerCase();
-        archive.addFile(ArchiveFile('logos/corner.$ext', _cornerLogo!.bytes.length, _cornerLogo!.bytes));
+        final safeName = _cornerLogo!.sourceKey.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+        archive.addFile(ArchiveFile('logos/corner/$safeName', _cornerLogo!.bytes.length, _cornerLogo!.bytes));
       }
 
       // 6. Add text images
@@ -531,7 +534,7 @@ class _HomePageState extends State<HomePage> {
         }
       }
 
-      // Extract logos
+      // Extract logos - map archive paths to their content
       final logoFiles = <String, List<int>>{};
       for (final file in archive.files) {
         if (file.name.startsWith('logos/') && file.isFile) {
@@ -539,28 +542,52 @@ class _HomePageState extends State<HomePage> {
         }
       }
 
-      // Load bottom logos (sorted by name)
-      final bottomKeys = logoFiles.keys.where((k) => k.startsWith('logos/bottom_')).toList()..sort();
-      for (var i = 0; i < bottomKeys.length; i++) {
-        final bytes = Uint8List.fromList(logoFiles[bottomKeys[i]]!);
-        final path = await _copyBytesToApp(bytes, 'logos');
-        _bottomLogos.add(LogoItem(_nextLogoId++, path, 'bottom_$i', bytes, _imageSig(bytes), const <String>{}, const <String>{}));
+      // Helper to find logo file in archive by original name
+      Uint8List? findLogoBytes(String subdir, String originalName) {
+        final safeName = originalName.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+        // Try exact match first
+        final exactKey = 'logos/$subdir/$safeName';
+        if (logoFiles.containsKey(exactKey)) return Uint8List.fromList(logoFiles[exactKey]!);
+        // Fallback: case-insensitive match
+        for (final entry in logoFiles.entries) {
+          if (entry.key.toLowerCase().endsWith('/$safeName'.toLowerCase())) {
+            return Uint8List.fromList(entry.value);
+          }
+        }
+        return null;
       }
 
-      // Load top logos
-      final topKeys = logoFiles.keys.where((k) => k.startsWith('logos/top_')).toList()..sort();
-      for (var i = 0; i < topKeys.length; i++) {
-        final bytes = Uint8List.fromList(logoFiles[topKeys[i]]!);
+      // Load bottom logos - use original names from settings
+      final bottomLogosJson = settings['bottom'] as List? ?? [];
+      for (final m in bottomLogosJson) {
+        if (m is! Map) continue;
+        final originalName = m['name'] as String? ?? '';
+        final bytes = findLogoBytes('bottom', originalName);
+        if (bytes == null) continue;
         final path = await _copyBytesToApp(bytes, 'logos');
-        _topLeftLogos.add(LogoItem(_nextLogoId++, path, 'top_$i', bytes, _imageSig(bytes), const <String>{}, const <String>{}));
+        _bottomLogos.add(LogoItem(_nextLogoId++, path, originalName, bytes, _imageSig(bytes), const <String>{}, const <String>{}));
       }
 
-      // Load corner logo
-      final cornerKey = logoFiles.keys.firstWhere((k) => k.startsWith('logos/corner.'), orElse: () => '');
-      if (cornerKey.isNotEmpty) {
-        final bytes = Uint8List.fromList(logoFiles[cornerKey]!);
+      // Load top logos - use original names from settings
+      final topLogosJson = settings['top'] as List? ?? [];
+      for (final m in topLogosJson) {
+        if (m is! Map) continue;
+        final originalName = m['name'] as String? ?? '';
+        final bytes = findLogoBytes('top', originalName);
+        if (bytes == null) continue;
         final path = await _copyBytesToApp(bytes, 'logos');
-        _cornerLogo = LogoItem(_nextLogoId++, path, 'corner', bytes, _imageSig(bytes), const <String>{}, const <String>{});
+        _topLeftLogos.add(LogoItem(_nextLogoId++, path, originalName, bytes, _imageSig(bytes), const <String>{}, const <String>{}));
+      }
+
+      // Load corner logo - use original name from settings
+      final cornerJson = settings['corner'];
+      if (cornerJson is Map) {
+        final originalName = cornerJson['name'] as String? ?? 'corner';
+        final bytes = findLogoBytes('corner', originalName);
+        if (bytes != null) {
+          final path = await _copyBytesToApp(bytes, 'logos');
+          _cornerLogo = LogoItem(_nextLogoId++, path, originalName, bytes, _imageSig(bytes), const <String>{}, const <String>{});
+        }
       }
 
       // Extract text images
@@ -2514,9 +2541,12 @@ class _HomePageState extends State<HomePage> {
 
     void handlePick(int color) {
       onPick(color);
-      // Add to recent colors for this key (avoid duplicates, keep max 8)
-      final updated = [color, ...recent.where((c) => c != color)].take(8).toList();
-      setState(() => _recentColors[key] = updated);
+      // Add to recent colors for this key (avoid duplicates, keep max 8).
+      // Don't add base swatches (white/black) to recent - they're always shown.
+      if (!_baseSwatches.contains(color)) {
+        final updated = [color, ...recent.where((c) => c != color)].take(8).toList();
+        setState(() => _recentColors[key] = updated);
+      }
     }
 
     return Column(
