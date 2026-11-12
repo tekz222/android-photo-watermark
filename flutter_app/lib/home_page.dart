@@ -388,6 +388,8 @@ class _HomePageState extends State<HomePage> {
         _logoSpacing = num_('spacing', 0);
         _bottomGradient = d['bottomGradient'] as bool? ?? false;
         _topGradient = d['topGradient'] as bool? ?? false;
+        _topGradientHeight = num_('topGradientHeight', 22);
+        _bottomGradientHeight = num_('bottomGradientHeight', 22);
         _bottomLogos
           ..clear()
           ..addAll(bottom);
@@ -1593,6 +1595,9 @@ class _HomePageState extends State<HomePage> {
                         },
                 ),
               ),
+              if (_bottomGradient)
+                _slider('Altura do gradiente inferior', _bottomGradientHeight, 1, 50,
+                    (v) => setState(() => _bottomGradientHeight = v)),
             ],
           ),
           _logoSection(
@@ -1626,6 +1631,9 @@ class _HomePageState extends State<HomePage> {
                         },
                 ),
               ),
+              if (_topGradient)
+                _slider('Altura do gradiente superior', _topGradientHeight, 1, 50,
+                    (v) => setState(() => _topGradientHeight = v)),
             ],
           ),
           _cornerSection(),

@@ -106,6 +106,10 @@ class WatermarkRequest {
     this.png = false,
     this.maxDim,
     this.quality = 95,
+    this.topGradient = false,
+    this.bottomGradient = false,
+    this.topGradientHeight,
+    this.bottomGradientHeight,
   });
 
   final ImageSrc photo;
@@ -145,6 +149,20 @@ class WatermarkRequest {
   /// resolution.
   final int? maxDim;
   final int quality;
+
+  /// If true, draw a black-to-transparent gradient from the top edge.
+  final bool topGradient;
+
+  /// If true, draw a black-to-transparent gradient from the bottom edge.
+  final bool bottomGradient;
+
+  /// Height of the top gradient as a fraction of the shortest side.
+  /// Defaults to [topLeftHeight] if not specified.
+  final double? topGradientHeight;
+
+  /// Height of the bottom gradient as a fraction of the shortest side.
+  /// Defaults to [bottomHeight] if not specified.
+  final double? bottomGradientHeight;
 }
 
 /// Composites the logos and texts onto the photo and returns encoded bytes.
@@ -187,6 +205,18 @@ Uint8List renderWatermark(WatermarkRequest r, {DecodedCache? cache}) {
 
   final shortest =
       (photo.width < photo.height ? photo.width : photo.height).toDouble();
+
+  // Draw top gradient if enabled.
+  if (r.topGradient) {
+    final gradHeight = ((r.topGradientHeight ?? r.topLeftHeight) * shortest).round().clamp(1, photo.height);
+    _drawGradient(photo, top: 0, height: gradHeight, fromTop: true);
+  }
+
+  // Draw bottom gradient if enabled.
+  if (r.bottomGradient) {
+    final gradHeight = ((r.bottomGradientHeight ?? r.bottomHeight) * shortest).round().clamp(1, photo.height);
+    _drawGradient(photo, top: photo.height - gradHeight, height: gradHeight, fromTop: false);
+  }
 
   // Decode each distinct source only once per render.
   final local = <String, img.Image?>{};
@@ -327,6 +357,38 @@ img.Image _withOpacity(img.Image src, double opacity) {
     p.a = p.a * opacity;
   }
   return out;
+}
+
+/// Draws a black-to-transparent linear gradient on [dst].
+/// - [top]: starting Y coordinate of the gradient band.
+/// - [height]: height of the gradient band in pixels.
+/// - [fromTop]: if true, gradient goes from opaque black at top edge to transparent at bottom of band;
+///   if false, gradient goes from transparent at top of band to opaque black at bottom edge.
+void _drawGradient(
+  img.Image dst, {
+  required int top,
+  required int height,
+  required bool fromTop,
+}) {
+  if (height <= 0) return;
+  final w = dst.width;
+  final h = dst.height;
+  final endY = (top + height).clamp(0, h);
+  for (int y = top.clamp(0, h); y < endY; y++) {
+    // Linear interpolation: 0.0 at transparent edge, 1.0 at opaque edge.
+    final t = fromTop ? 1.0 - (y - top) / height : (y - top) / height;
+    final alpha = (t * 255).round().clamp(0, 255);
+    if (alpha == 0) continue;
+    for (int x = 0; x < w; x++) {
+      final p = dst.getPixel(x, y);
+      // Blend black with alpha over existing pixel.
+      final newR = (p.r * (255 - alpha) + 0 * alpha) ~/ 255;
+      final newG = (p.g * (255 - alpha) + 0 * alpha) ~/ 255;
+      final newB = (p.b * (255 - alpha) + 0 * alpha) ~/ 255;
+      final newA = p.a + alpha - (p.a * alpha) ~/ 255;
+      dst.setPixelRgba(x, y, newR, newG, newB, newA.clamp(0, 255));
+    }
+  }
 }
 
 /// Downscales an image for the live preview so re-rendering on every change
