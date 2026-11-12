@@ -24,6 +24,9 @@ enum Placement { bottom, topLeft, topRight }
 /// Where a picture attached to a text sits relative to the text.
 enum TextImagePos { top, bottom, left, right, both, inside }
 
+/// Export mode for project files.
+enum ExportMode { settingsOnly, full }
+
 /// An editable text overlay. Always centered horizontally on the photo; the
 /// user picks the vertical position ([topPct]) and the size ([heightPct]),
 /// both as percentages of the photo. Mutable on purpose: the editor changes

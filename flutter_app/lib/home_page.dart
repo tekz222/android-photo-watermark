@@ -343,6 +343,27 @@ class _HomePageState extends State<HomePage> {
       _snack('Nada para exportar.');
       return;
     }
+
+    // Show dialog to choose export mode
+    final ExportMode? mode = await showDialog<ExportMode>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: const Text('Exportar projeto'),
+        children: [
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(ctx, ExportMode.settingsOnly),
+            child: const Text('Apenas configurações (logos + textos, sem fotos)'),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(ctx, ExportMode.full),
+            child: const Text('Tudo (fotos + logos + textos)'),
+          ),
+        ],
+      ),
+    );
+
+    if (mode == null) return; // User cancelled
+
     try {
       final archive = Archive();
 
@@ -371,16 +392,19 @@ class _HomePageState extends State<HomePage> {
         'corner': _cornerLogo == null ? null : logo(_cornerLogo!),
         'textTemplate': _textTemplate,
         'texts': [for (final t in _texts) await _textToJson(t)],
-        'photoCount': _photoPaths.length,
+        'photoCount': mode == ExportMode.full ? _photoPaths.length : 0,
+        'exportMode': mode.index, // 0 = settingsOnly, 1 = full
       };
       final settingsBytes = utf8.encode(jsonEncode(settings));
       archive.addFile(ArchiveFile('settings.json', settingsBytes.length, settingsBytes));
 
-      // 2. Add photos
-      for (var i = 0; i < _photoPaths.length; i++) {
-        final bytes = await File(_photoPaths[i]).readAsBytes();
-        final ext = _photoPaths[i].split('.').last.toLowerCase();
-        archive.addFile(ArchiveFile('photos/photo_$i.$ext', bytes.length, bytes));
+      // 2. Add photos (only for full export)
+      if (mode == ExportMode.full) {
+        for (var i = 0; i < _photoPaths.length; i++) {
+          final bytes = await File(_photoPaths[i]).readAsBytes();
+          final ext = _photoPaths[i].split('.').last.toLowerCase();
+          archive.addFile(ArchiveFile('photos/photo_$i.$ext', bytes.length, bytes));
+        }
       }
 
       // 3. Add logos (bottom)
@@ -468,16 +492,21 @@ class _HomePageState extends State<HomePage> {
       if (settingsFile == null) throw StateError('settings.json não encontrado no arquivo');
       final settings = jsonDecode(utf8.decode(settingsFile.content as List<int>)) as Map<String, dynamic>;
 
-      // Clear current project
+      // Check export mode (default to full for backward compatibility)
+      final exportMode = ExportMode.values[(settings['exportMode'] as int?) ?? 1];
+
+      // Clear current project (but keep photos if settingsOnly import)
       _previewToken++;
       setState(() {
-        _photoPaths.clear();
+        if (exportMode == ExportMode.full) {
+          _photoPaths.clear();
+          _savedPaths.clear();
+          _currentAlbum = null;
+          _lastResult = null;
+        }
         _bottomLogos.clear();
         _topLeftLogos.clear();
         _cornerLogo = null;
-        _savedPaths.clear();
-        _currentAlbum = null;
-        _lastResult = null;
         _previews.clear();
         _renderedVersion.clear();
         _previewFailed.clear();
@@ -492,11 +521,13 @@ class _HomePageState extends State<HomePage> {
       });
       _worker.clearCache();
 
-      // Extract photos
-      for (final file in archive.files) {
-        if (file.name.startsWith('photos/') && file.isFile) {
-          final path = await _copyBytesToApp(Uint8List.fromList(file.content as List<int>), 'photos');
-          _photoPaths.add(path);
+      // Extract photos (only for full export)
+      if (exportMode == ExportMode.full) {
+        for (final file in archive.files) {
+          if (file.name.startsWith('photos/') && file.isFile) {
+            final path = await _copyBytesToApp(Uint8List.fromList(file.content as List<int>), 'photos');
+            _photoPaths.add(path);
+          }
         }
       }
 
