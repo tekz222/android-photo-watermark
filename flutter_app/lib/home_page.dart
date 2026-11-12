@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:archive/archive.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart' show PointerScrollEvent;
 import 'package:flutter/material.dart';
@@ -124,6 +125,10 @@ class _HomePageState extends State<HomePage> {
   final Set<String> _savedPaths = {}; // photo paths already saved this project
   String? _currentAlbum; // album reused for the whole project
   _ProcessResult? _lastResult; // persistent result banner
+
+  // Persisted directory preferences.
+  String? _exportDir; // last chosen export directory for .jcv files
+  String? _saveDir; // last chosen save directory for watermarked photos
 
   // Preview state. Renders live in a long-lived worker isolate that caches the
   // decoded sources, so a change only composites.
@@ -322,6 +327,8 @@ class _HomePageState extends State<HomePage> {
         'top': _topLeftLogos.map(logo).toList(),
         'corner': _cornerLogo == null ? null : logo(_cornerLogo!),
         'textTemplate': _textTemplate,
+        'exportDir': _exportDir,
+        'saveDir': _saveDir,
       };
       final p = await SharedPreferences.getInstance();
       await p.setString('settings', jsonEncode(data));
@@ -337,7 +344,6 @@ class _HomePageState extends State<HomePage> {
       return;
     }
     try {
-      final dir = await getApplicationDocumentsDirectory();
       final archive = Archive();
 
       // 1. Add settings JSON
@@ -408,13 +414,18 @@ class _HomePageState extends State<HomePage> {
       final zipBytes = ZipEncoder().encode(archive);
       if (zipBytes == null) throw StateError('Failed to create zip');
 
-      final downloadsDir = Directory('/storage/emulated/0/Download');
-      String savePath;
-      if (downloadsDir.existsSync()) {
-        savePath = '${downloadsDir.path}/JCV_Watermarker_${DateTime.now().millisecondsSinceEpoch}.jcv';
-      } else {
-        savePath = '${dir.path}/JCV_Watermarker_${DateTime.now().millisecondsSinceEpoch}.jcv';
-      }
+      // Pick directory for export
+      String? selectedDir = _exportDir;
+      final pickedDir = await FilePicker.getDirectoryPath(
+        dialogTitle: 'Escolha onde salvar o projeto .jcv',
+        initialDirectory: selectedDir ?? (await getApplicationDocumentsDirectory()).path,
+      );
+      if (pickedDir == null) return; // User cancelled
+      selectedDir = pickedDir;
+      _exportDir = selectedDir;
+      await _writeSettings(); // Persist the chosen directory
+
+      final savePath = '$selectedDir/JCV_Watermarker_${DateTime.now().millisecondsSinceEpoch}.jcv';
       await File(savePath).writeAsBytes(zipBytes);
 
       if (!mounted) return;
@@ -428,19 +439,18 @@ class _HomePageState extends State<HomePage> {
   /// Imports a .jcv project file, restoring everything.
   Future<void> _importProject() async {
     try {
-      final picked = await _picker.pickMultipleMedia(); // Use pickMultipleMedia to allow file picking
-      if (picked.isEmpty) return;
+      // Use file_picker to allow picking .jcv files
+      final List<PlatformFile>? files = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['jcv'],
+        dialogTitle: 'Selecione o arquivo do projeto (.jcv)',
+      );
+      if (files == null || files.isEmpty) return;
 
-      // Pick first file that looks like a .jcv
-      XFile? projectFile;
-      for (final x in picked) {
-        if (x.name.toLowerCase().endsWith('.jcv')) {
-          projectFile = x;
-          break;
-        }
-      }
-      if (projectFile == null) {
-        _snack('Selecione um arquivo .jcv');
+      final PlatformFile projectFile = files.first;
+      final String? path = projectFile.path;
+      if (path == null) {
+        _snack('Erro ao ler o arquivo selecionado');
         return;
       }
 
@@ -450,7 +460,7 @@ class _HomePageState extends State<HomePage> {
         _importTotal = 1;
       });
 
-      final bytes = await projectFile.readAsBytes();
+      final bytes = await File(path).readAsBytes();
       final archive = ZipDecoder().decodeBytes(bytes);
 
       // Parse settings
@@ -483,13 +493,10 @@ class _HomePageState extends State<HomePage> {
       _worker.clearCache();
 
       // Extract photos
-      int photoIdx = 0;
       for (final file in archive.files) {
         if (file.name.startsWith('photos/') && file.isFile) {
-          final ext = file.name.split('.').last;
           final path = await _copyBytesToApp(Uint8List.fromList(file.content as List<int>), 'photos');
           _photoPaths.add(path);
-          photoIdx++;
         }
       }
 
@@ -649,6 +656,8 @@ class _HomePageState extends State<HomePage> {
         _bottomGradientHeight = num_('bottomGradientHeight', 22);
         _gradientColor = (d['gradientColor'] as num?)?.toInt() ?? 0xFF000000;
         _gradientOpacity = (d['gradientOpacity'] as num?)?.toDouble() ?? 1.0;
+        _exportDir = d['exportDir'] as String?;
+        _saveDir = d['saveDir'] as String?;
         _bottomLogos
           ..clear()
           ..addAll(bottom);
@@ -1506,6 +1515,18 @@ class _HomePageState extends State<HomePage> {
   Future<void> _saveAll() async {
     if (_processing || !_hasAnyContent) return;
     if (_unsavedPaths.isEmpty) return; // everything is already saved
+
+    // Ask for save directory if not already chosen
+    if (_saveDir == null) {
+      final pickedDir = await FilePicker.getDirectoryPath(
+        dialogTitle: 'Escolha onde salvar as fotos com marca d\'água',
+        initialDirectory: (await getApplicationDocumentsDirectory()).path,
+      );
+      if (pickedDir == null) return; // User cancelled
+      _saveDir = pickedDir;
+      await _writeSettings(); // Persist the chosen directory
+    }
+
     // Keep the device awake so a long save isn't interrupted by auto-lock.
     try {
       await WakelockPlus.enable();
@@ -1590,17 +1611,21 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
-  /// Where photos are saved: Pictures\JCV Watermarker\<album> (falls back to
-  /// the app documents folder if the Pictures folder can't be found).
+  /// Where photos are saved: uses the user-selected save directory if available,
+  /// otherwise falls back to Pictures\JCV Watermarker\<album>.
   Future<Directory> _albumDir(String album) async {
     Directory base;
-    final userProfile = Platform.environment['USERPROFILE'];
-    if (userProfile != null &&
-        Directory('$userProfile${Platform.pathSeparator}Pictures')
-            .existsSync()) {
-      base = Directory('$userProfile${Platform.pathSeparator}Pictures');
+    if (_saveDir != null) {
+      base = Directory(_saveDir!);
     } else {
-      base = await getApplicationDocumentsDirectory();
+      final userProfile = Platform.environment['USERPROFILE'];
+      if (userProfile != null &&
+          Directory('$userProfile${Platform.pathSeparator}Pictures')
+              .existsSync()) {
+        base = Directory('$userProfile${Platform.pathSeparator}Pictures');
+      } else {
+        base = await getApplicationDocumentsDirectory();
+      }
     }
     final dir = Directory(
         '${base.path}${Platform.pathSeparator}JCV Watermarker'
@@ -1975,6 +2000,7 @@ class _HomePageState extends State<HomePage> {
                       size: 60,
                       enabled: _controlsEnabled,
                       selected: sel,
+                      number: i + 1,
                       child: Image.file(
                         File(_photoPaths[i]),
                         fit: BoxFit.cover,
@@ -2434,31 +2460,34 @@ class _HomePageState extends State<HomePage> {
 
   // ---- Colors ----
 
-  static const List<int> _swatches = [
-    0xFFFFFFFF,
-    0xFF000000,
-    0xFFE53935,
-    0xFFFB8C00,
-    0xFFFDD835,
-    0xFF43A047,
-    0xFF1E88E5,
-    0xFF8E24AA,
-    0xFFEC407A,
-    0xFF05B2AE,
+  static const List<int> _baseSwatches = [
+    0xFFFFFFFF, // white
+    0xFF000000, // black
   ];
 
   static String _hex(int argb) =>
       (argb & 0xFFFFFF).toRadixString(16).padLeft(6, '0').toUpperCase();
 
+  // Recently used colors per color field key (e.g. "text:fill", "text:outline", "gradient")
+  final Map<String, List<int>> _recentColors = {};
+
   String? _openColor; // which color field has its panel open ("id:fill")
 
-  /// Label + quick swatches + the current hex value, which opens an inline
-  /// panel (color square, hue bar, hex field) that applies live while you
-  /// drag. No dialog, nothing covers the preview.
+  /// Label + base swatches (white/black) + recent colors + color panel button.
+  /// When a new color is picked via the panel, it's added to recent colors for that key.
   Widget _colorField(
       String key, String label, int selected, ValueChanged<int> onPick) {
     final scheme = Theme.of(context).colorScheme;
     final open = _openColor == key;
+    final recent = _recentColors[key] ?? const [];
+
+    void handlePick(int color) {
+      onPick(color);
+      // Add to recent colors for this key (avoid duplicates, keep max 8)
+      final updated = [color, ...recent.where((c) => c != color)].take(8).toList();
+      setState(() => _recentColors[key] = updated);
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -2469,13 +2498,36 @@ class _HomePageState extends State<HomePage> {
           runSpacing: 5,
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
-            for (final c in _swatches)
+            // Base swatches: white and black
+            for (final c in _baseSwatches)
               MouseRegion(
                 cursor: SystemMouseCursors.click,
                 child: GestureDetector(
                   onTap: (!_controlsEnabled || c == selected)
                       ? null
-                      : () => onPick(c),
+                      : () => handlePick(c),
+                  child: Container(
+                    width: 22,
+                    height: 22,
+                    decoration: BoxDecoration(
+                      color: Color(c),
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(
+                        color: selected == c ? scheme.primary : scheme.outline,
+                        width: selected == c ? 2 : 1,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            // Recent colors for this field
+            for (final c in recent)
+              MouseRegion(
+                cursor: SystemMouseCursors.click,
+                child: GestureDetector(
+                  onTap: (!_controlsEnabled || c == selected)
+                      ? null
+                      : () => handlePick(c),
                   child: Container(
                     width: 22,
                     height: 22,
@@ -2519,7 +2571,7 @@ class _HomePageState extends State<HomePage> {
             key: ValueKey('panel:$key'),
             color: selected,
             enabled: _controlsEnabled,
-            onChanged: onPick,
+            onChanged: handlePick,
           ),
         ],
       ],
@@ -2669,11 +2721,31 @@ class _HomePageState extends State<HomePage> {
                           width: sel ? 2 : 1,
                         ),
                       ),
-                      child: r != null
-                          ? Image.memory(r.bytes,
-                              fit: BoxFit.cover, gaplessPlayback: true)
-                          : Image.file(File(paths[i]),
-                              fit: BoxFit.cover, cacheWidth: 200),
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          r != null
+                              ? Image.memory(r.bytes,
+                                  fit: BoxFit.cover, gaplessPlayback: true)
+                              : Image.file(File(paths[i]),
+                                  fit: BoxFit.cover, cacheWidth: 200),
+                          Positioned(
+                            top: 2,
+                            left: 2,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                              decoration: BoxDecoration(
+                                color: Colors.black54,
+                                borderRadius: BorderRadius.circular(3),
+                              ),
+                              child: Text(
+                                '${i + 1}',
+                                style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 );
@@ -3063,6 +3135,7 @@ class _HomePageState extends State<HomePage> {
     bool enabled = true,
     bool selected = false,
     double size = 60,
+    int? number,
   }) {
     final scheme = Theme.of(context).colorScheme;
     return SizedBox(
@@ -3089,6 +3162,26 @@ class _HomePageState extends State<HomePage> {
               ),
             ),
           ),
+          if (number != null)
+            Positioned(
+              top: 2,
+              left: 2,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                decoration: BoxDecoration(
+                  color: Colors.black87,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  '$number',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
           if (enabled)
             Positioned(
               top: 2,
