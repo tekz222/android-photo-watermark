@@ -175,7 +175,7 @@ class _HomePageState extends State<HomePage> {
   bool get _hasAnyContent => _hasAnyLogo || _texts.any(_textHasContent);
   static bool _textHasContent(TextItem t) => t.text.trim().isNotEmpty || t.imageBytes != null;
   List<String> get _unsavedPaths => _photoPaths.where((p) => !_savedPaths.contains(p)).toList();
-  bool get _controlsEnabled => !_processing && _photoPaths.isNotEmpty;
+  bool get _controlsEnabled => !_processing && (_photoPaths.isNotEmpty || _hasAnyContent);
   bool get _canProcess => !_processing && _hasAnyContent && _unsavedPaths.isNotEmpty;
   bool get _allSaved => _photoPaths.isNotEmpty && _hasAnyContent && _unsavedPaths.isEmpty;
 
@@ -1716,7 +1716,7 @@ class _HomePageState extends State<HomePage> {
           TextButton.icon(
             onPressed: (!_processing &&
                     (_photoPaths.isNotEmpty || _savedPaths.isNotEmpty))
-                ? _confirmNewProject
+                ? _newProject
                 : null,
             icon: const Icon(Icons.add_box_outlined, size: 18),
             label: const Text('Novo projeto'),
@@ -1813,7 +1813,7 @@ class _HomePageState extends State<HomePage> {
             ),
           _ProjectTab(
             isNew: true,
-            onTap: _confirmNewProject,
+            onTap: _newProject,
           ),
         ],
       ),
@@ -2057,8 +2057,7 @@ class _HomePageState extends State<HomePage> {
           Row(
             children: [
               OutlinedButton.icon(
-                onPressed:
-                    (_photoPaths.isEmpty || !_controlsEnabled) ? null : onAdd,
+                onPressed: !_controlsEnabled ? null : onAdd,
                 icon: const Icon(Icons.image_outlined, size: 18),
                 label: const Text('Adicionar logos'),
               ),
@@ -2069,8 +2068,8 @@ class _HomePageState extends State<HomePage> {
           ),
           const SizedBox(height: 6),
           Text(
-            _photoPaths.isEmpty
-                ? 'Adicione as fotos primeiro; depois envie as logos.'
+            _photoPaths.isEmpty && !_hasAnyContent
+                ? 'Adicione fotos ou logos/textos para começar.'
                 : hint,
             style: small,
           ),
@@ -2182,9 +2181,7 @@ class _HomePageState extends State<HomePage> {
                 const SizedBox(width: 10),
               ],
               OutlinedButton.icon(
-                onPressed: (_photoPaths.isEmpty || !_controlsEnabled)
-                    ? null
-                    : _pickCornerLogo,
+                onPressed: !_controlsEnabled ? null : _pickCornerLogo,
                 icon: const Icon(Icons.image_outlined, size: 18),
                 label: Text(_cornerLogo == null ? 'Adicionar' : 'Trocar'),
               ),
@@ -2215,9 +2212,7 @@ class _HomePageState extends State<HomePage> {
           Row(
             children: [
               OutlinedButton.icon(
-                onPressed: (_photoPaths.isEmpty || !_controlsEnabled)
-                    ? null
-                    : _addText,
+                onPressed: !_controlsEnabled ? null : _addText,
                 icon: const Icon(Icons.title, size: 18),
                 label: const Text('Adicionar texto'),
               ),
@@ -2228,8 +2223,8 @@ class _HomePageState extends State<HomePage> {
           ),
           const SizedBox(height: 6),
           Text(
-            _photoPaths.isEmpty
-                ? 'Adicione as fotos primeiro; depois crie os textos.'
+            _photoPaths.isEmpty && !_hasAnyContent
+                ? 'Adicione fotos ou logos/textos para começar.'
                 : 'Sempre centralizado na horizontal. Fonte do computador, '
                     'qualquer cor, contorno, arco-íris, curvatura e uma '
                     'imagem junto ao texto.',
@@ -2994,7 +2989,7 @@ class _HomePageState extends State<HomePage> {
           ),
           const SizedBox(width: 8),
           FilledButton(
-            onPressed: _confirmNewProject,
+            onPressed: _newProject,
             child: const Text('Novo projeto'),
           ),
         ],
@@ -3002,31 +2997,10 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Future<void> _confirmNewProject() async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Novo projeto?'),
-        content: const Text(
-            'Cria um novo projeto com as mesmas configurações (logos, textos, ajustes). '
-            'O projeto atual continua salvo e acessível nas abas acima.'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancelar')),
-          FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Criar')),
-        ],
-      ),
-    );
-    if (ok == true) _newProject();
-  }
-
   Future<void> _newProject() async {
     _previewToken++; // invalidate any in-flight preview render
     await _flushSettings(); // Save current project first
-    final newProject = await _projectManager.addProject();
+    await _projectManager.addProject();
     // Switch to the new project (it's already the active one after addProject)
     _worker.clearCache();
     _kickPreview();
@@ -3209,7 +3183,7 @@ class _ProjectTab extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(right: 6),
       child: InkWell(
-        onTap: isNew ? onTap : null,
+        onTap: onTap,
         borderRadius: BorderRadius.circular(6),
         child: Container(
           height: 32,
