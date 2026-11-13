@@ -2075,77 +2075,40 @@ class _HomePageState extends State<HomePage> {
           ),
           if (items.isNotEmpty) ...[
             const SizedBox(height: 8),
-            ReorderableListView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              buildDefaultDragHandles: false,
-              itemCount: items.length,
+            _DraggableLogoList(
+              items: items,
+              placement: placement,
+              controlsEnabled: _controlsEnabled,
+              processing: _processing,
               onReorder: (oldIndex, newIndex) {
-                if (!_controlsEnabled) return;
                 setState(() {
                   if (newIndex > oldIndex) newIndex -= 1;
                   items.insert(newIndex, items.removeAt(oldIndex));
                 });
                 _schedulePreview();
               },
-              itemBuilder: (context, i) {
-                final item = items[i];
-                return ListTile(
-                  key: ValueKey(item.id),
-                  dense: true,
-                  contentPadding: EdgeInsets.zero,
-                  minLeadingWidth: 36,
-                  leading: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: _processing
-                        ? null
-                        : () => _openImagesFullscreen(
-                            items.map((e) => e.bytes).toList(), i),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(4),
-                      child: Container(
-                        width: 36,
-                        height: 36,
-                        color: Theme.of(context)
-                            .colorScheme
-                            .surfaceContainerHighest,
-                        child: Image.memory(item.bytes, fit: BoxFit.contain),
-                      ),
-                    ),
-                  ),
-                  title: Text('${i + 1}. ${item.sourceKey}',
-                      maxLines: 1, overflow: TextOverflow.ellipsis),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      IconButton(
-                        icon: const Icon(Icons.close, size: 18),
-                        tooltip: 'Remover',
-                        onPressed: !_controlsEnabled
-                            ? null
-                            : () {
-                                setState(() => items.removeAt(i));
-                                _schedulePreview();
-                              },
-                      ),
-                      if (_controlsEnabled && items.length > 1)
-                        ReorderableDragStartListener(
-                          index: i,
-                          child: const MouseRegion(
-                            cursor: SystemMouseCursors.grab,
-                            child: Padding(
-                              padding: EdgeInsets.symmetric(horizontal: 6),
-                              child: Icon(Icons.drag_handle, size: 20),
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                );
+              onRemove: (index) {
+                setState(() => items.removeAt(index));
+                _schedulePreview();
               },
+              onMoveToOther: (item, fromPlacement) {
+                setState(() {
+                  items.remove(item);
+                  if (fromPlacement == Placement.bottom) {
+                    _topLeftLogos.add(item);
+                  } else {
+                    _bottomLogos.add(item);
+                  }
+                });
+                _schedulePreview();
+              },
+              onAcceptFromOther: (item) {
+                setState(() => items.add(item));
+                _schedulePreview();
+              },
+              onOpenFullscreen: (index) => _openImagesFullscreen(
+                items.map((e) => e.bytes).toList(), index),
             ),
-            if (items.length > 1)
-              Text('Arraste pela alça para reordenar.', style: small),
             ...sliders,
           ],
         ],
@@ -3145,6 +3108,209 @@ class _HomePageState extends State<HomePage> {
                   padding: const EdgeInsets.all(2),
                   child:
                       const Icon(Icons.close, size: 14, color: Colors.white),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A draggable logo list that supports reordering within the list
+/// and dragging items to the other logo list (bottom ↔ top).
+class _DraggableLogoList extends StatelessWidget {
+  const _DraggableLogoList({
+    required this.items,
+    required this.placement,
+    required this.controlsEnabled,
+    required this.processing,
+    required this.onReorder,
+    required this.onRemove,
+    required this.onMoveToOther,
+    required this.onAcceptFromOther,
+    required this.onOpenFullscreen,
+  });
+
+  final List<LogoItem> items;
+  final Placement placement;
+  final bool controlsEnabled;
+  final bool processing;
+  final void Function(int oldIndex, int newIndex) onReorder;
+  final void Function(int index) onRemove;
+  final void Function(LogoItem item, Placement fromPlacement) onMoveToOther;
+  final void Function(LogoItem item) onAcceptFromOther;
+  final void Function(int index) onOpenFullscreen;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
+    return DragTarget<LogoItem>(
+      builder: (context, candidateData, rejectedData) {
+        final isDragOver = candidateData.isNotEmpty;
+        return Container(
+          decoration: BoxDecoration(
+            color: isDragOver ? scheme.primaryContainer.withValues(alpha: 0.3) : Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
+            border: isDragOver
+                ? Border.all(color: scheme.primary, width: 2, style: BorderStyle.solid)
+                : Border.all(color: scheme.outlineVariant, width: 1),
+          ),
+          child: ReorderableListView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            buildDefaultDragHandles: false,
+            itemCount: items.length,
+            onReorder: controlsEnabled ? onReorder : null,
+            itemBuilder: (context, i) {
+              final item = items[i];
+              return _DraggableLogoTile(
+                key: ValueKey(item.id),
+                item: item,
+                index: i,
+                placement: placement,
+                controlsEnabled: controlsEnabled,
+                processing: processing,
+                isDragOver: isDragOver,
+                onRemove: () => onRemove(i),
+                onMoveToOther: () => onMoveToOther(item, placement),
+                onOpenFullscreen: () => onOpenFullscreen(i),
+              );
+            },
+          ),
+        );
+      },
+      onAcceptWithDetails: (details) {
+        if (!controlsEnabled) return;
+        onAcceptFromOther(details.data);
+      },
+    );
+  }
+}
+
+/// Individual draggable logo tile.
+class _DraggableLogoTile extends StatelessWidget {
+  const _DraggableLogoTile({
+    super.key,
+    required this.item,
+    required this.index,
+    required this.placement,
+    required this.controlsEnabled,
+    required this.processing,
+    required this.isDragOver,
+    required this.onRemove,
+    required this.onMoveToOther,
+    required this.onOpenFullscreen,
+  });
+
+  final LogoItem item;
+  final int index;
+  final Placement placement;
+  final bool controlsEnabled;
+  final bool processing;
+  final bool isDragOver;
+  final VoidCallback onRemove;
+  final VoidCallback onMoveToOther;
+  final VoidCallback onOpenFullscreen;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final otherLabel = placement == Placement.bottom ? 'Mover para o topo' : 'Mover para a base';
+
+    return Draggable<LogoItem>(
+      data: item,
+      feedback: Material(
+        elevation: 8,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          width: 300,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainer,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: scheme.outline),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: Container(
+                  width: 32,
+                  height: 32,
+                  color: scheme.surfaceContainerHighest,
+                  child: Image.memory(item.bytes, fit: BoxFit.contain),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Flexible(
+                child: Text(
+                  item.sourceKey,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 13, color: scheme.onSurface),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      childWhenDragging: Opacity(
+        opacity: 0.4,
+        child: _buildTileContent(context, otherLabel),
+      ),
+      child: _buildTileContent(context, otherLabel),
+    );
+  }
+
+  Widget _buildTileContent(BuildContext context, String otherLabel) {
+    final scheme = Theme.of(context).colorScheme;
+    return ListTile(
+      key: ValueKey(item.id),
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      minLeadingWidth: 36,
+      leading: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: processing ? null : onOpenFullscreen,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: Container(
+            width: 36,
+            height: 36,
+            color: scheme.surfaceContainerHighest,
+            child: Image.memory(item.bytes, fit: BoxFit.contain),
+          ),
+        ),
+      ),
+      title: Text('${index + 1}. ${item.sourceKey}',
+          maxLines: 1, overflow: TextOverflow.ellipsis),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (controlsEnabled) ...[
+            IconButton(
+              icon: const Icon(Icons.swap_vert, size: 18),
+              tooltip: otherLabel,
+              onPressed: onMoveToOther,
+            ),
+            const SizedBox(width: 4),
+          ],
+          IconButton(
+            icon: const Icon(Icons.close, size: 18),
+            tooltip: 'Remover',
+            onPressed: controlsEnabled ? onRemove : null,
+          ),
+          if (controlsEnabled)
+            ReorderableDragStartListener(
+              index: index,
+              child: const MouseRegion(
+                cursor: SystemMouseCursors.grab,
+                child: Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 6),
+                  child: Icon(Icons.drag_handle, size: 20),
                 ),
               ),
             ),
