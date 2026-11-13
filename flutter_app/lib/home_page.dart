@@ -2827,42 +2827,48 @@ class _HomePageState extends State<HomePage> {
               itemBuilder: (context, i) {
                 final sel = i == idx;
                 final r = _hasAnyContent ? _previews[paths[i]] : null;
+                final aspect = r?.aspect ?? 1.0;
+                // Limit width so tall images don't overflow the 72px height
+                final thumbWidth = (72.0 * aspect).clamp(48.0, 120.0);
                 return Padding(
                   padding: const EdgeInsets.only(right: 8),
                   child: GestureDetector(
                     onTap: () => _selectPreview(i),
                     child: Container(
-                      width: 60,
+                      width: thumbWidth,
                       decoration: BoxDecoration(
                         border: Border.all(
                           color: sel ? scheme.primary : scheme.outlineVariant,
                           width: sel ? 2 : 1,
                         ),
                       ),
-                      child: Stack(
-                        fit: StackFit.expand,
-                        children: [
-                          r != null
-                              ? Image.memory(r.bytes,
-                                  fit: BoxFit.cover, gaplessPlayback: true)
-                              : Image.file(File(paths[i]),
-                                  fit: BoxFit.cover, cacheWidth: 200),
-                          Positioned(
-                            top: 2,
-                            left: 2,
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                              decoration: BoxDecoration(
-                                color: Colors.black54,
-                                borderRadius: BorderRadius.circular(3),
-                              ),
-                              child: Text(
-                                '${i + 1}',
-                                style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                      child: AspectRatio(
+                        aspectRatio: aspect,
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            r != null
+                                ? Image.memory(r.bytes,
+                                    fit: BoxFit.cover, gaplessPlayback: true)
+                                : Image.file(File(paths[i]),
+                                    fit: BoxFit.cover, cacheWidth: 200),
+                            Positioned(
+                              top: 2,
+                              left: 2,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                                decoration: BoxDecoration(
+                                  color: Colors.black54,
+                                  borderRadius: BorderRadius.circular(3),
+                                ),
+                                child: Text(
+                                  '${i + 1}',
+                                  style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                                ),
                               ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
                   ),
