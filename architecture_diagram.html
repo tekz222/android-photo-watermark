@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>JCV Watermarker - Architecture Diagram</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            core: '#0288d1',
+            ui: '#7b1fa2',
+            cli: '#ef6c00',
+            desktop: '#2e7d32',
+            mobile: '#2e7d32',
+            web: '#2e7d32',
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    .node-core { background: linear-gradient(135deg, #e1f5fe 0%, #b3e5fc 100%); border-color: #0288d1; }
+    .node-ui { background: linear-gradient(135deg, #f3e5f5 0%, #e1bee7 100%); border-color: #7b1fa2; }
+    .node-cli { background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%); border-color: #ef6c00; }
+    .node-app { background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%); border-color: #2e7d32; }
+    .arrow { stroke: #666; stroke-width: 2; marker-end: url(#arrowhead); }
+    @media (prefers-color-scheme: dark) {
+      .node-core { background: linear-gradient(135deg, #01579b 0%, #0277bd 100%); color: white; border-color: #4fc3f7; }
+      .node-ui { background: linear-gradient(135deg, #4a148c 0%, #6a1b9a 100%); color: white; border-color: #ce93d8; }
+      .node-cli { background: linear-gradient(135deg, #e65100 0%, #ef6c00 100%); color: white; border-color: #ffb74d; }
+      .node-app { background: linear-gradient(135deg, #1b5e20 0%, #2e7d32 100%); color: white; border-color: #81c784; }
+      .arrow { stroke: #aaa; }
+      body { background: #1a1a2e; }
+    }
+  </style>
+</head>
+<body class="min-h-screen p-8 font-sans">
+  <div class="max-w-7xl mx-auto">
+    <header class="mb-10 text-center">
+      <h1 class="text-3xl font-bold mb-2">JCV Watermarker — Multi-Project Architecture</h1>
+      <p class="text-gray-600 dark:text-gray-400">Monorepo structure with shared core, UI toolkit, and platform apps</p>
+    </header>
+
+    <!-- Legend -->
+    <div class="flex flex-wrap justify-center gap-4 mb-8 p-4 rounded-lg bg-gray-50 dark:bg-gray-800">
+      <div class="flex items-center gap-2">
+        <div class="w-4 h-4 rounded border-2 border-core/50 bg-core/10"></div>
+        <span class="text-sm font-medium">Core (Pure Dart)</span>
+      </div>
+      <div class="flex items-center gap-2">
+        <div class="w-4 h-4 rounded border-2 border-ui/50 bg-ui/10"></div>
+        <span class="text-sm font-medium">UI Toolkit (Flutter)</span>
+      </div>
+      <div class="flex items-center gap-2">
+        <div class="w-4 h-4 rounded border-2 border-cli/50 bg-cli/10"></div>
+        <span class="text-sm font-medium">CLI (Optional)</span>
+      </div>
+      <div class="flex items-center gap-2">
+        <div class="w-4 h-4 rounded border-2 border-desktop/50 bg-desktop/10"></div>
+        <span class="text-sm font-medium">Platform Apps</span>
+      </div>
+    </div>
+
+    <!-- Main Diagram -->
+    <div class="relative min-h-[600px]">
+      <svg class="absolute inset-0 pointer-events-none" style="z-index: 1;">
+        <defs>
+          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#666" />
+          </marker>
+        </defs>
+        <!-- Core -> UI -->
+        <path class="arrow" d="M 400 280 L 400 380" />
+        <!-- Core -> CLI -->
+        <path class="arrow" d="M 200 280 L 100 280" />
+        <!-- UI -> Desktop -->
+        <path class="arrow" d="M 600 460 L 600 560" />
+        <!-- UI -> Mobile -->
+        <path class="arrow" d="M 680 460 L 800 560" />
+        <!-- UI -> Web -->
+        <path class="arrow" d="M 760 460 L 900 560" />
+        <!-- Core -> Desktop -->
+        <path class="arrow" d="M 520 280 L 550 420" />
+        <!-- Core -> Mobile -->
+        <path class="arrow" d="M 580 280 L 700 420" />
+        <!-- Core -> Web -->
+        <path class="arrow" d="M 640 280 L 850 420" />
+      </svg>
+
+      <!-- Layer 1: Core -->
+      <div class="absolute top-20 left-1/2 -translate-x-1/2 z-10">
+        <div class="node-core rounded-xl border-2 p-6 w-96 text-center shadow-lg">
+          <div class="flex items-center justify-center gap-2 mb-3">
+            <svg class="w-8 h-8 text-core" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z"/></svg>
+            <h2 class="text-xl font-bold">watermark_core</h2>
+          </div>
+          <p class="text-sm mb-4 opacity-80">Pure Dart • Zero Flutter deps • Reusable anywhere</p>
+          <div class="grid grid-cols-2 gap-2 text-sm text-left">
+            <div class="p-2 rounded bg-white/20 dark:bg-black/20">
+              <div class="font-semibold">models/</div>
+              <div class="text-xs opacity-70">LogoItem, TextItem, Placement...</div>
+            </div>
+            <div class="p-2 rounded bg-white/20 dark:bg-black/20">
+              <div class="font-semibold">engine/</div>
+              <div class="text-xs opacity-70">renderWatermark, gradients, text</div>
+            </div>
+            <div class="p-2 rounded bg-white/20 dark:bg-black/20">
+              <div class="font-semibold">format/</div>
+              <div class="text-xs opacity-70">.jcv import/export, versioning</div>
+            </div>
+            <div class="p-2 rounded bg-white/20 dark:bg-black/20">
+              <div class="font-semibold">persistence/</div>
+              <div class="text-xs opacity-70">Settings, history storage</div>
+            </div>
+            <div class="p-2 rounded bg-white/20 dark:bg-black/20 col-span-2">
+              <div class="font-semibold">utils/</div>
+              <div class="text-xs opacity-70">Image sig, dedup, color utils</div>
+            </div>
+          </div>
+          <div class="mt-4 pt-4 border-t border-white/30 dark:border-black/30 text-xs opacity-70">
+            deps: image, archive, path_provider, shared_preferences
+          </div>
+        </div>
+      </div>
+
+      <!-- Layer 2: UI Toolkit -->
+      <div class="absolute top-80 left-1/2 -translate-x-1/2 z-10">
+        <div class="node-ui rounded-xl border-2 p-6 w-96 text-center shadow-lg">
+          <div class="flex items-center justify-center gap-2 mb-3">
+            <svg class="w-8 h-8 text-ui" fill="currentColor" viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 14c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm4-7H8v-2h8v2zm0-4H8V7h8v2z"/></svg>
+            <h2 class="text-xl font-bold">watermark_ui</h2>
+          </div>
+          <p class="text-sm mb-4 opacity-80">Flutter widgets • Theme • State (Riverpod) • Shared across platforms</p>
+          <div class="grid grid-cols-3 gap-2 text-sm text-left">
+            <div class="p-2 rounded bg-white/20 dark:bg-black/20">
+              <div class="font-semibold">theme/</div>
+              <div class="text-xs opacity-70">AppTheme, colors, typography</div>
+            </div>
+            <div class="p-2 rounded bg-white/20 dark:bg-black/20">
+              <div class="font-semibold">widgets/</div>
+              <div class="text-xs opacity-70">Sidebar, Preview, ColorPicker...</div>
+            </div>
+            <div class="p-2 rounded bg-white/20 dark:bg-black/20">
+              <div class="font-semibold">providers/</div>
+              <div class="text-xs opacity-70">Project, Preview, Settings state</div>
+            </div>
+          </div>
+          <div class="mt-4 pt-4 border-t border-white/30 dark:border-black/30 text-xs opacity-70">
+            deps: flutter, watermark_core, riverpod, provider
+          </div>
+        </div>
+      </div>
+
+      <!-- Layer 3: CLI (Optional) -->
+      <div class="absolute top-80 left-20 z-10">
+        <div class="node-cli rounded-xl border-2 p-4 w-56 text-center shadow-lg">
+          <div class="flex items-center justify-center gap-2 mb-2">
+            <svg class="w-6 h-6 text-cli" fill="currentColor" viewBox="0 0 24 24"><path d="M4 14h4v-4H4v4zm0 5h4v-4H4v4zM4 9h4V5H4v4zm5-5h12v14H9V4zm5 14h4v-4h-4v4zm0-5h4v-4h-4v4zm0-5h4V5h-4v4z"/></svg>
+            <h3 class="text-lg font-bold">watermark_cli</h3>
+          </div>
+          <p class="text-xs opacity-80">Headless batch processing</p>
+          <div class="text-xs opacity-70 mt-2">CI/CD • Servers • Automation</div>
+        </div>
+      </div>
+
+      <!-- Layer 4: Platform Apps -->
+      <div class="absolute top-170 left-1/2 -translate-x-1/2 z-10 flex gap-4">
+        <!-- Desktop -->
+        <div class="node-app rounded-xl border-2 p-4 w-64 text-center shadow-lg">
+          <div class="flex items-center justify-center gap-2 mb-2">
+            <svg class="w-6 h-6 text-desktop" fill="currentColor" viewBox="0 0 24 24"><path d="M21 2H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h7l-2 3v1h8v-1l-2-3h7c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H3V4h18v12z"/></svg>
+            <h3 class="text-lg font-bold">apps/desktop</h3>
+          </div>
+          <p class="text-xs opacity-80">Windows • macOS • Linux</p>
+          <div class="grid grid-cols-2 gap-1 mt-2 text-xs opacity-70">
+            <div>Native menus (macOS)</div>
+            <div>File associations</div>
+            <div>Jump lists (Win)</div>
+            <div>System tray</div>
+          </div>
+        </div>
+
+        <!-- Mobile -->
+        <div class="node-app rounded-xl border-2 p-4 w-64 text-center shadow-lg">
+          <div class="flex items-center justify-center gap-2 mb-2">
+            <svg class="w-6 h-6 text-desktop" fill="currentColor" viewBox="0 0 24 24"><path d="M17 1.01L7 1c-1.1 0-2 .9-2 2v18c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V3c0-1.1-.9-1.99-2-1.99zM17 19H7V5h10v14z"/></svg>
+            <h3 class="text-lg font-bold">apps/mobile</h3>
+          </div>
+          <p class="text-xs opacity-80">iOS • Android</p>
+          <div class="grid grid-cols-2 gap-1 mt-2 text-xs opacity-70">
+            <div>Touch-optimized UI</div>
+            <div>Bottom sheets</div>
+            <div>Pinch zoom</div>
+            <div>Platform pickers</div>
+          </div>
+        </div>
+
+        <!-- Web -->
+        <div class="node-app rounded-xl border-2 p-4 w-64 text-center shadow-lg">
+          <div class="flex items-center justify-center gap-2 mb-2">
+            <svg class="w-6 h-6 text-desktop" fill="currentColor" viewBox="0 0 24 24"><path d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/></svg>
+            <h3 class="text-lg font-bold">apps/web</h3>
+          </div>
+          <p class="text-xs opacity-80">PWA • WASM</p>
+          <div class="grid grid-cols-2 gap-1 mt-2 text-xs opacity-70">
+            <div>File System API</div>
+            <div>Drag & drop</div>
+            <div>Service Worker</div>
+            <div>Offline support</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Migration Phases -->
+    <section class="mt-24">
+      <h2 class="text-2xl font-bold text-center mb-8">Migration Roadmap</h2>
+      <div class="grid md:grid-cols-4 gap-4">
+        <div class="p-6 rounded-xl border-2 border-blue-500/30 bg-blue-500/10 dark:bg-blue-900/20">
+          <div class="flex items-center gap-2 mb-3">
+            <div class="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center text-white font-bold">1</div>
+            <h3 class="font-semibold">Extract Core</h3>
+          </div>
+          <ul class="text-sm space-y-1">
+            <li>• Move models, engine, format</li>
+            <li>• Add unit tests</li>
+            <li>• Update flutter_app deps</li>
+          </ul>
+          <div class="mt-3 text-xs opacity-60">Week 1-2</div>
+        </div>
+        <div class="p-6 rounded-xl border-2 border-purple-500/30 bg-purple-500/10 dark:bg-purple-900/20">
+          <div class="flex items-center gap-2 mb-3">
+            <div class="w-8 h-8 rounded-full bg-purple-500 flex items-center justify-center text-white font-bold">2</div>
+            <h3 class="font-semibold">Extract UI</h3>
+          </div>
+          <ul class="text-sm space-y-1">
+            <li>• Theme, widgets, providers</li>
+            <li>• Break home_page.dart</li>
+            <li>• Riverpod state mgmt</li>
+          </ul>
+          <div class="mt-3 text-xs opacity-60">Week 2-3</div>
+        </div>
+        <div class="p-6 rounded-xl border-2 border-green-500/30 bg-green-500/10 dark:bg-green-900/20">
+          <div class="flex items-center gap-2 mb-3">
+            <div class="w-8 h-8 rounded-full bg-green-500 flex items-center justify-center text-white font-bold">3</div>
+            <h3 class="font-semibold">Platform Apps</h3>
+          </div>
+          <ul class="text-sm space-y-1">
+            <li>• Desktop (Win/Mac/Linux)</li>
+            <li>• Mobile (iOS/Android)</li>
+            <li>• Web (PWA/WASM)</li>
+          </ul>
+          <div class="mt-3 text-xs opacity-60">Week 3-4</div>
+        </div>
+        <div class="p-6 rounded-xl border-2 border-orange-500/30 bg-orange-500/10 dark:bg-orange-900/20">
+          <div class="flex items-center gap-2 mb-3">
+            <div class="w-8 h-8 rounded-full bg-orange-500 flex items-center justify-center text-white font-bold">4</div>
+            <h3 class="font-semibold">Polish & Release</h3>
+          </div>
+          <ul class="text-sm space-y-1">
+            <li>• CI/CD all platforms</li>
+            <li>• Automated releases</li>
+            <li>• Docs & golden tests</li>
+          </ul>
+          <div class="mt-3 text-xs opacity-60">Week 4+</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Dependency Graph -->
+    <section class="mt-16">
+      <h2 class="text-2xl font-bold text-center mb-8">Dependency Graph</h2>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="border-b border-gray-300 dark:border-gray-600">
+              <th class="text-left p-3 font-semibold">Layer</th>
+              <th class="text-left p-3 font-semibold">Package/App</th>
+              <th class="text-left p-3 font-semibold">Platform</th>
+              <th class="text-left p-3 font-semibold">Key Dependencies</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="border-b border-gray-200 dark:border-gray-700 node-core">
+              <td class="p-3 font-medium">Core</td>
+              <td class="p-3 font-mono">watermark_core</td>
+              <td class="p-3">Any (Dart VM, WASM, Native)</td>
+              <td class="p-3">image, archive, path_provider, shared_preferences</td>
+            </tr>
+            <tr class="border-b border-gray-200 dark:border-gray-700 node-ui">
+              <td class="p-3 font-medium">UI Toolkit</td>
+              <td class="p-3 font-mono">watermark_ui</td>
+              <td class="p-3">Flutter (all platforms)</td>
+              <td class="p-3">flutter, watermark_core, riverpod</td>
+            </tr>
+            <tr class="border-b border-gray-200 dark:border-gray-700 node-cli">
+              <td class="p-3 font-medium">CLI</td>
+              <td class="p-3 font-mono">watermark_cli</td>
+              <td class="p-3">Dart VM</td>
+              <td class="p-3">watermark_core, args</td>
+            </tr>
+            <tr class="border-b border-gray-200 dark:border-gray-700 node-app">
+              <td class="p-3 font-medium">Desktop App</td>
+              <td class="p-3 font-mono">apps/desktop</td>
+              <td class="p-3">Windows, macOS, Linux</td>
+              <td class="p-3">watermark_ui, watermark_core</td>
+            </tr>
+            <tr class="border-b border-gray-200 dark:border-gray-700 node-app">
+              <td class="p-3 font-medium">Mobile App</td>
+              <td class="p-3 font-mono">apps/mobile</td>
+              <td class="p-3">iOS, Android</td>
+              <td class="p-3">watermark_ui, watermark_core</td>
+            </tr>
+            <tr class="node-app">
+              <td class="p-3 font-medium">Web App</td>
+              <td class="p-3 font-mono">apps/web</td>
+              <td class="p-3">Browser (WASM)</td>
+              <td class="p-3">watermark_ui, watermark_core</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Key Benefits -->
+    <section class="mt-16">
+      <h2 class="text-2xl font-bold text-center mb-8">Key Benefits</h2>
+      <div class="grid md:grid-cols-3 gap-4">
+        <div class="p-6 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
+          <h3 class="font-semibold mb-2">🔄 Code Reuse</h3>
+          <p class="text-sm">80%+ shared logic across 6 targets. Core engine written once, tested once, runs everywhere.</p>
+        </div>
+        <div class="p-6 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
+          <h3 class="font-semibold mb-2">🚀 Independent Releases</h3>
+          <p class="text-sm">Ship desktop v1.2 without blocking mobile. Each app versioned & released on its own schedule.</p>
+        </div>
+        <div class="p-6 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
+          <h3 class="font-semibold mb-2">👥 Team Scaling</h3>
+          <p class="text-sm">Separate teams per platform. Core team owns engine. Platform teams own native feel.</p>
+        </div>
+        <div class="p-6 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
+          <h3 class="font-semibold mb-2">🧪 Testability</h3>
+          <p class="text-sm">Pure Dart core = fast unit tests. UI toolkit = widget tests. Apps = integration tests.</p>
+        </div>
+        <div class="p-6 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
+          <h3 class="font-semibold mb-2">🔮 Future-Proof</h3>
+          <p class="text-sm">Add new platforms (tvOS, watchOS, Fuchsia) by creating new app consuming same packages.</p>
+        </div>
+        <div class="p-6 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
+          <h3 class="font-semibold mb-2">📦 Distribution</h3>
+          <p class="text-sm">CLI for automation, Web for zero-install, Desktop for power users, Mobile for on-the-go.</p>
+        </div>
+      </div>
+    </section>
+  </div>
+</body>
+</html>

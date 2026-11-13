@@ -1,0 +1,70 @@
+name: Build Windows app
+
+# Builds the Flutter app in flutter_app/ as a portable Windows .exe (zipped)
+# and publishes it to the 'windows-latest' release.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [claude/charming-planck-j4zlq6]
+    paths:
+      - 'flutter_app/**'
+      - '.github/workflows/flutter-build.yml'
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: flutter_app
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Scaffold Windows platform folder (keep our lib/ and pubspec)
+        run: |
+          cp -R lib /tmp/lib_backup
+          cp pubspec.yaml /tmp/pubspec_backup.yaml
+          flutter create --platforms=windows --org com.tekz --project-name photo_watermark .
+          rm -rf lib && cp -R /tmp/lib_backup lib
+          cp /tmp/pubspec_backup.yaml pubspec.yaml
+
+      - name: Set window title
+        run: sed -i 's/L"photo_watermark"/L"JCV Watermarker"/' windows/runner/main.cpp
+
+      - run: flutter pub get
+
+      - name: Generate the .exe icon
+        run: dart run flutter_launcher_icons
+
+      - name: Build Windows app (portable ZIP)
+        run: |
+          flutter build windows --release \
+            --build-name=1.0.${{ github.run_number }} \
+            --build-number=${{ github.run_number }} \
+            --dart-define=APP_BUILD=${{ github.run_number }}
+          cd build/windows/x64/runner
+          mv Release/photo_watermark.exe "Release/JCV Watermarker.exe"
+          mv Release "JCV Watermarker"
+          7z a ../../../JCV-Watermarker-Windows.zip "JCV Watermarker"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-app
+          path: flutter_app/build/JCV-Watermarker-Windows.zip
+
+      - name: Publish the ZIP to the GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: windows-latest
+          name: Latest Windows build
+          body: |
+            Extraia o ZIP e abra "JCV Watermarker.exe" (não precisa instalar):
+            https://github.com/${{ github.repository }}/releases/download/windows-latest/JCV-Watermarker-Windows.zip
+          files: flutter_app/build/JCV-Watermarker-Windows.zip
