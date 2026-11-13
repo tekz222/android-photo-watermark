@@ -3137,7 +3137,9 @@ class _HomePageState extends State<HomePage> {
   Future<void> _newProject() async {
     _previewToken++; // invalidate any in-flight preview render
     await _flushSettings(); // Save current project first
-    await _projectManager.addProject();
+    // Generate next project number: "Projeto 2", "Projeto 3", etc.
+    final nextNum = _projectManager.projects.length + 1;
+    await _projectManager.addProject(name: 'Projeto $nextNum');
     // Switch to the new project (it's already the active one after addProject)
     _worker.clearCache();
     _kickPreview();
