@@ -5,6 +5,8 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'package:path/path.dart' as p;
+
 import 'package:archive/archive.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
@@ -189,6 +191,29 @@ class _HomePageState extends State<HomePage> {
   bool get _controlsEnabled => !_processing && (_photoPaths.isNotEmpty || _hasAnyContent);
   bool get _canProcess => !_processing && _hasAnyContent && _unsavedPaths.isNotEmpty;
   bool get _allSaved => _photoPaths.isNotEmpty && _hasAnyContent && _unsavedPaths.isEmpty;
+
+  // Per-image settings getter/setter
+  ImageSettings _imageSettingsFor(String photoPath) =>
+      _p.imageSettings[photoPath] ?? ImageSettings();
+
+  /// Whether the current preview image has per-image settings enabled.
+  bool get _currentImageHasCustomSettings {
+    final paths = _filteredPhotoPaths;
+    if (paths.isEmpty) return false;
+    final idx = _previewIndex.clamp(0, paths.length - 1);
+    final path = paths[idx];
+    return _p.imageSettings[path]?.enabled ?? false;
+  }
+
+  void _setImageSettings(String photoPath, ImageSettings s) {
+    if (s.enabled) {
+      _p.imageSettings[photoPath] = s;
+    } else {
+      _p.imageSettings.remove(photoPath);
+    }
+    _saveProject();
+    _kickPreview();
+  }
 
   @override
   void initState() {
@@ -741,6 +766,47 @@ class _HomePageState extends State<HomePage> {
     if (_currentAlbum != null && !_processing) _saveAll();
   }
 
+  /// Handle files dropped from the OS (Windows Explorer, etc.)
+  Future<void> _handleDroppedFiles(List<String> paths) async {
+    if (_processing) return;
+    final validPaths = paths.where((p) {
+      final ext = p.split('.').last.toLowerCase();
+      return ['jpg', 'jpeg', 'png', 'heic', 'heif', 'webp'].contains(ext);
+    }).toList();
+    if (validPaths.isEmpty) return;
+
+    setState(() {
+      _importing = true;
+      _importDone = 0;
+      _importTotal = validPaths.length;
+    });
+
+    var done = 0;
+    final newPaths = <String>[];
+    try {
+      await Future.wait(validPaths.map((path) async {
+        try {
+          final bytes = await File(path).readAsBytes();
+          final newPath = await _copyBytesToApp(bytes, 'photos');
+          newPaths.add(newPath);
+        } catch (e) {
+          debugPrint('Failed to import dropped image: $e');
+        }
+        if (mounted) setState(() => _importDone = ++done);
+      }));
+    } finally {
+      if (mounted) {
+        setState(() {
+          // pickMultiImage returns most recent first; reverse to show oldest first
+          _photoPaths.addAll(newPaths.reversed.toList());
+          _importing = false;
+        });
+      }
+    }
+    _kickPreview();
+    if (_currentAlbum != null && !_processing) _saveAll();
+  }
+
   /// Normalized logo name for de-duplication: base filename, no extension,
   /// lowercased.
   String _logoName(String raw) {
@@ -993,11 +1059,12 @@ class _HomePageState extends State<HomePage> {
       bottomGradientHeight: _bottomGradient ? _bottomGradientHeight / 100 : null,
       gradientColor: _gradientColor,
       gradientOpacity: _gradientOpacity,
+      imageSettings: _imageSettingsFor(path),
     );
   }
 
   WatermarkRequest _request(Uint8List photoBytes,
-      {int? maxDim, int quality = 95, bool png = false}) {
+      {int? maxDim, int quality = 95, bool png = false, String? path}) {
     ImageSrc logo(LogoItem e) => ImageSrc('l:${e.id}', e.bytes);
     return WatermarkRequest(
       photo: ImageSrc('full', photoBytes),
@@ -1026,6 +1093,7 @@ class _HomePageState extends State<HomePage> {
       bottomGradientHeight: _bottomGradient ? _bottomGradientHeight / 100 : null,
       gradientColor: _gradientColor,
       gradientOpacity: _gradientOpacity,
+      imageSettings: path != null ? _imageSettingsFor(path) : null,
     );
   }
 
@@ -1589,10 +1657,12 @@ class _HomePageState extends State<HomePage> {
         // High-quality JPEG: same kind of file size as the original photo
         // (lossless PNG made 10 MB+ files).
         final out =
-            await compute(renderWatermark, _request(bytes, quality: 92));
-        final ts = DateTime.now().microsecondsSinceEpoch;
+            await compute(renderWatermark, _request(bytes, quality: 92, path: next));
+        final originalName = p.basename(next);
+        final ts = DateTime.now().millisecondsSinceEpoch;
+        final outputName = 'jcv_${ts}_$originalName';
         final dir = await _albumDir(album);
-        await File('${dir.path}${Platform.pathSeparator}watermarked_$ts.jpg')
+        await File('${dir.path}${Platform.pathSeparator}$outputName')
             .writeAsBytes(out);
         _savedPaths.add(next);
         saved++;
@@ -1906,6 +1976,7 @@ class _HomePageState extends State<HomePage> {
   Future<void> _switchProject(int index) async {
     if (index == _projectManager.activeIndex) return;
     await _flushSettings(); // Save current project before switching
+    _previewSearch = ''; // Clear search when switching projects
     await _projectManager.setActive(index);
     _previewToken++; // Invalidate preview
     _worker.cancelPending();
@@ -1964,16 +2035,20 @@ class _HomePageState extends State<HomePage> {
             sliders: [
               _alignmentChooser(),
               _slider('Tamanho (todas)', _logoSize, 5, 30,
-                  (v) => setState(() => _logoSize = v)),
+                  (v) => setState(() => _logoSize = v),
+                  enabled: !_currentImageHasCustomSettings),
               _slider('Espaço entre as logos (todas)', _logoSpacing, 0, 10,
-                  (v) => setState(() => _logoSpacing = v)),
+                  (v) => setState(() => _logoSpacing = v),
+                  enabled: !_currentImageHasCustomSettings),
               if (!_centered)
                 _slider('Distância da borda esquerda (todas)', _leftMargin, 0,
-                    15, (v) => setState(() => _leftMargin = v)),
+                    15, (v) => setState(() => _leftMargin = v),
+                    enabled: !_currentImageHasCustomSettings),
               _slider('Opacidade (todas)', _logoOpacity, 0, 100,
                   (v) => setState(() => _logoOpacity = v)),
               _slider('Distância da borda inferior', _bottomMargin, 0, 15,
-                  (v) => setState(() => _bottomMargin = v)),
+                  (v) => setState(() => _bottomMargin = v),
+                  enabled: !_currentImageHasCustomSettings),
               Padding(
                 padding: const EdgeInsets.only(top: 10),
                 child: FilterChip(
@@ -2007,15 +2082,19 @@ class _HomePageState extends State<HomePage> {
             onAdd: () => _pickLogos(_topLeftLogos),
             sliders: [
               _slider('Tamanho (todas)', _logoSize, 5, 30,
-                  (v) => setState(() => _logoSize = v)),
+                  (v) => setState(() => _logoSize = v),
+                  enabled: !_currentImageHasCustomSettings),
               _slider('Espaço entre as logos (todas)', _logoSpacing, 0, 10,
-                  (v) => setState(() => _logoSpacing = v)),
+                  (v) => setState(() => _logoSpacing = v),
+                  enabled: !_currentImageHasCustomSettings),
               _slider('Distância da borda esquerda (todas)', _leftMargin, 0,
-                  15, (v) => setState(() => _leftMargin = v)),
+                  15, (v) => setState(() => _leftMargin = v),
+                  enabled: !_currentImageHasCustomSettings),
               _slider('Opacidade (todas)', _logoOpacity, 0, 100,
                   (v) => setState(() => _logoOpacity = v)),
               _slider('Distância da borda superior', _topMargin, 0, 15,
-                  (v) => setState(() => _topMargin = v)),
+                  (v) => setState(() => _topMargin = v),
+                  enabled: !_currentImageHasCustomSettings),
               Padding(
                 padding: const EdgeInsets.only(top: 10),
                 child: FilterChip(
@@ -2035,6 +2114,7 @@ class _HomePageState extends State<HomePage> {
             ],
           ),
           _cornerSection(),
+          _imageSettingsSection(),
           _textsSection(),
           const SizedBox(height: 24),
         ],
@@ -2069,50 +2149,160 @@ class _HomePageState extends State<HomePage> {
                 Text('${_photoPaths.length} foto(s)', style: small),
             ],
           ),
+          // Drag-and-drop zone (shown when no photos or always as drop target)
+          DragTarget<String>(
+            builder: (context, candidateData, rejectedData) {
+              final isHovering = candidateData.isNotEmpty;
+              return AnimatedContainer(
+                duration: const Duration(milliseconds: 150),
+                curve: Curves.easeOut,
+                decoration: BoxDecoration(
+                  border: Border.all(
+                    color: isHovering
+                        ? Theme.of(context).colorScheme.primary
+                        : Theme.of(context).colorScheme.outlineVariant,
+                    width: isHovering ? 2 : 1,
+                    style: BorderStyle.solid,
+                  ),
+                  borderRadius: BorderRadius.circular(8),
+                  color: isHovering
+                      ? Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.3)
+                      : Colors.transparent,
+                ),
+                child: _photoPaths.isEmpty
+                    ? InkWell(
+                        onTap: _processing ? null : _pickPhotos,
+                        borderRadius: BorderRadius.circular(8),
+                        child: Container(
+                          height: 120,
+                          width: double.infinity,
+                          alignment: Alignment.center,
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.cloud_upload_outlined,
+                                size: 32,
+                                color: isHovering
+                                    ? Theme.of(context).colorScheme.primary
+                                    : Theme.of(context).colorScheme.outline,
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                isHovering
+                                    ? 'Solte as imagens aqui'
+                                    : 'Arraste fotos aqui ou clique para adicionar',
+                                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                  color: isHovering
+                                      ? Theme.of(context).colorScheme.primary
+                                      : Theme.of(context).colorScheme.outline,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      )
+                    : const SizedBox.shrink(), // When photos exist, the list below handles it
+              );
+            },
+            onWillAcceptWithDetails: (details) => true,
+            onAcceptWithDetails: (details) {
+              // Handle dropped files - details.data contains the file path
+              _handleDroppedFiles([details.data]);
+            },
+            onLeave: (_) {},
+          ),
           if (_photoPaths.isNotEmpty) ...[
             const SizedBox(height: 10),
-            SizedBox(
-              height: 60,
-              child: Scrollbar(
-                thumbVisibility: true,
-                trackVisibility: true,
-                thickness: 6,
-                radius: const Radius.circular(3),
-                child: ListView.separated(
-                  scrollDirection: Axis.horizontal,
-                  physics: const ClampingScrollPhysics(),
-                  itemCount: _photoPaths.length,
-                  separatorBuilder: (_, __) => const SizedBox(width: 6),
-                  itemBuilder: (context, i) {
-                    final sel = i == _previewIndex;
-                    return _thumb(
-                      size: 60,
-                      enabled: _controlsEnabled,
-                      selected: sel,
-                      number: i + 1,
-                      child: Image.file(
-                        File(_photoPaths[i]),
-                        fit: BoxFit.cover,
-                        cacheWidth: 160,
-                      ),
-                      onTap: () => _selectPreview(i),
-                      onRemove: () {
-                        final path = _photoPaths[i];
-                        _previewToken++; // discard any in-flight render of it
-                        setState(() {
-                          _photoPaths.removeAt(i);
-                          _previews.remove(path);
-                          _renderedVersion.remove(path);
-                          _previewFailed.remove(path);
-                        });
-                        _previewPhoto.remove(path);
-                        File(path).delete().ignore();
-                        _kickPreview();
-                      },
-                    );
-                  },
-                ),
-              ),
+            // Drag target wrapping the horizontal list for adding more photos
+            DragTarget<String>(
+              builder: (context, candidateData, rejectedData) {
+                // Inner DropTarget handles hover state
+                return Scrollbar(
+                  thumbVisibility: true,
+                  trackVisibility: true,
+                  thickness: 6,
+                  radius: const Radius.circular(3),
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    physics: const ClampingScrollPhysics(),
+                    itemCount: _photoPaths.length + 1, // +1 for drop zone at end
+                    separatorBuilder: (_, __) => const SizedBox(width: 6),
+                    itemBuilder: (context, i) {
+                      if (i == _photoPaths.length) {
+                        // Drop zone at the end of the list
+                        return DragTarget<String>(
+                          builder: (context, candidateData, rejectedData) {
+                            final hovering = candidateData.isNotEmpty;
+                            return AnimatedContainer(
+                              duration: const Duration(milliseconds: 150),
+                              width: 60,
+                              height: 60,
+                              decoration: BoxDecoration(
+                                border: Border.all(
+                                  color: hovering
+                                      ? Theme.of(context).colorScheme.primary
+                                      : Theme.of(context).colorScheme.outlineVariant,
+                                  width: hovering ? 2 : 1,
+                                  style: BorderStyle.solid,
+                                ),
+                                borderRadius: BorderRadius.circular(8),
+                                color: hovering
+                                    ? Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.3)
+                                    : Colors.transparent,
+                              ),
+                              alignment: Alignment.center,
+                              child: Icon(
+                                Icons.add,
+                                size: 24,
+                                color: hovering
+                                    ? Theme.of(context).colorScheme.primary
+                                    : Theme.of(context).colorScheme.outline,
+                              ),
+                            );
+                          },
+                          onWillAcceptWithDetails: (details) => true,
+                          onAcceptWithDetails: (details) {
+                            _handleDroppedFiles([details.data]);
+                          },
+                          onLeave: (_) {},
+                        );
+                      }
+                      final sel = i == _previewIndex;
+                      return _thumb(
+                        size: 60,
+                        enabled: _controlsEnabled,
+                        selected: sel,
+                        number: i + 1,
+                        child: Image.file(
+                          File(_photoPaths[i]),
+                          fit: BoxFit.cover,
+                          cacheWidth: 160,
+                        ),
+                        onTap: () => _selectPreview(i),
+                        onRemove: () {
+                          final path = _photoPaths[i];
+                          _previewToken++; // discard any in-flight render of it
+                          setState(() {
+                            _photoPaths.removeAt(i);
+                            _previews.remove(path);
+                            _renderedVersion.remove(path);
+                            _previewFailed.remove(path);
+                          });
+                          _previewPhoto.remove(path);
+                          File(path).delete().ignore();
+                          _kickPreview();
+                        },
+                      );
+                    },
+                  ),
+                );
+              },
+              onWillAcceptWithDetails: (details) => true,
+              onAcceptWithDetails: (details) {
+                _handleDroppedFiles([details.data]);
+              },
+              onLeave: (_) {},
             ),
           ],
         ],
@@ -2237,11 +2427,84 @@ class _HomePageState extends State<HomePage> {
           Text('Uma única logo no canto superior direito.', style: small),
           if (_cornerLogo != null) ...[
             _slider('Tamanho', _cornerHeight, 5, 40,
-                (v) => setState(() => _cornerHeight = v)),
+                (v) => setState(() => _cornerHeight = v),
+                enabled: !_currentImageHasCustomSettings),
             _slider('Distância do topo', _cornerMarginTop, 0, 30,
-                (v) => setState(() => _cornerMarginTop = v)),
+                (v) => setState(() => _cornerMarginTop = v),
+                enabled: !_currentImageHasCustomSettings),
             _slider('Distância da direita', _cornerMarginRight, 0, 30,
-                (v) => setState(() => _cornerMarginRight = v)),
+                (v) => setState(() => _cornerMarginRight = v),
+                enabled: !_currentImageHasCustomSettings),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// Per-image custom settings section.
+  /// Allows overriding logo size/margin for the currently selected image only.
+  Widget _imageSettingsSection() {
+    final scheme = Theme.of(context).colorScheme;
+    final small = Theme.of(context).textTheme.bodySmall;
+    final paths = _filteredPhotoPaths;
+    if (paths.isEmpty) return const SizedBox.shrink();
+
+    final idx = _previewIndex.clamp(0, paths.length - 1);
+    final path = paths[idx];
+    final settings = _imageSettingsFor(path);
+    final enabled = settings.enabled;
+
+    return _Section(
+      number: 5,
+      title: 'Configurações especiais da imagem',
+      icon: const Icon(Icons.tune_outlined, size: 18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Imagem: ${path.split('/').last.split('\\').last}', style: small),
+          const SizedBox(height: 8),
+          FilterChip(
+            label: const Text('Ativar configurações especiais para esta imagem'),
+            selected: enabled,
+            onSelected: !_controlsEnabled
+                ? null
+                : (s) {
+                    setState(() {
+                      _setImageSettings(path, settings.copyWith(enabled: s));
+                    });
+                  },
+            tooltip: 'Quando ativado, você pode alterar tamanho e distância das logos apenas para esta imagem. As configurações globais ficam desativadas.',
+          ),
+          if (enabled) ...[
+            const SizedBox(height: 12),
+            Text('Fileira da base (inferior)', style: small?.copyWith(fontWeight: FontWeight.w600)),
+            _slider('Tamanho das logos (base)', settings.bottomLogoSize ?? _logoSize, 5, 40,
+                (v) => _setImageSettings(path, settings.copyWith(bottomLogoSize: v))),
+            _slider('Distância da borda inferior', settings.bottomLogoMargin ?? _bottomMargin, 0, 30,
+                (v) => _setImageSettings(path, settings.copyWith(bottomLogoMargin: v))),
+            const SizedBox(height: 8),
+            Text('Fileira do topo (superior esquerda)', style: small?.copyWith(fontWeight: FontWeight.w600)),
+            _slider('Tamanho das logos (topo)', settings.topLeftLogoSize ?? _logoSize, 5, 40,
+                (v) => _setImageSettings(path, settings.copyWith(topLeftLogoSize: v))),
+            _slider('Distância da borda superior', settings.topLeftLogoMarginTop ?? _topMargin, 0, 30,
+                (v) => _setImageSettings(path, settings.copyWith(topLeftLogoMarginTop: v))),
+            _slider('Distância da borda esquerda', settings.topLeftLogoMarginLeft ?? _leftMargin, 0, 30,
+                (v) => _setImageSettings(path, settings.copyWith(topLeftLogoMarginLeft: v))),
+            const SizedBox(height: 8),
+            Text('Logo principal (canto superior direito)', style: small?.copyWith(fontWeight: FontWeight.w600)),
+            _slider('Tamanho', settings.cornerLogoSize ?? _cornerHeight, 5, 50,
+                (v) => _setImageSettings(path, settings.copyWith(cornerLogoSize: v))),
+            _slider('Distância do topo', settings.cornerLogoMarginTop ?? _cornerMarginTop, 0, 40,
+                (v) => _setImageSettings(path, settings.copyWith(cornerLogoMarginTop: v))),
+            _slider('Distância da direita', settings.cornerLogoMarginRight ?? _cornerMarginRight, 0, 40,
+                (v) => _setImageSettings(path, settings.copyWith(cornerLogoMarginRight: v))),
+          ],
+          if (!enabled && _hasAnyContent) ...[
+            const SizedBox(height: 8),
+            Text(
+              'Ative para personalizar tamanho e distâncias das logos apenas nesta imagem.',
+              style: small?.copyWith(color: scheme.outline),
+            ),
           ],
         ],
       ),
@@ -2718,25 +2981,64 @@ class _HomePageState extends State<HomePage> {
     final scheme = Theme.of(context).colorScheme;
     final small = Theme.of(context).textTheme.bodySmall;
     final paths = _filteredPhotoPaths;
+    final n = paths.length;
+
+    // Search bar - always visible so user can clear search when no matches
+    Widget searchBar = Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+      child: TextField(
+        decoration: InputDecoration(
+          hintText: 'Buscar por nome do arquivo…',
+          prefixIcon: const Icon(Icons.search, size: 20),
+          suffixIcon: _previewSearch.isNotEmpty
+              ? IconButton(
+                  icon: const Icon(Icons.clear, size: 20),
+                  onPressed: () => setState(() {
+                    _previewSearch = '';
+                    _previewIndex = 0;
+                  }),
+                  tooltip: 'Limpar busca',
+                )
+              : null,
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          isDense: true,
+        ),
+        onChanged: (v) => setState(() {
+          _previewSearch = v;
+          _previewIndex = 0; // Reset to first match
+        }),
+      ),
+    );
+
     if (paths.isEmpty) {
       return Container(
         color: scheme.surface,
-        child: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.image_outlined, size: 56, color: scheme.outline),
-              const SizedBox(height: 10),
-              Text(_previewSearch.isEmpty
-                  ? 'Adicione fotos para ver a pré-visualização.'
-                  : 'Nenhuma foto encontrada para "$_previewSearch"',
-                  style: TextStyle(color: scheme.outline)),
-            ],
-          ),
+        child: Column(
+          children: [
+            searchBar,
+            Expanded(
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.image_outlined, size: 56, color: scheme.outline),
+                    const SizedBox(height: 10),
+                    Text(_previewSearch.isEmpty
+                        ? 'Adicione fotos para ver a pré-visualização.'
+                        : 'Nenhuma foto encontrada para "$_previewSearch"',
+                        style: TextStyle(color: scheme.outline)),
+                  ],
+                ),
+              ),
+            ),
+          ],
         ),
       );
     }
-    final n = paths.length;
+
     // Clamp preview index to filtered list
     final idx = _previewIndex.clamp(0, n - 1);
     final path = paths[idx];
@@ -2764,32 +3066,7 @@ class _HomePageState extends State<HomePage> {
       color: scheme.surface,
       child: Column(
         children: [
-          // Search bar
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-            child: TextField(
-              decoration: InputDecoration(
-                hintText: 'Buscar por nome do arquivo…',
-                prefixIcon: const Icon(Icons.search, size: 20),
-                suffixIcon: _previewSearch.isNotEmpty
-                    ? IconButton(
-                        icon: const Icon(Icons.clear, size: 20),
-                        onPressed: () => setState(() => _previewSearch = ''),
-                        tooltip: 'Limpar busca',
-                      )
-                    : null,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                isDense: true,
-              ),
-              onChanged: (v) => setState(() {
-                _previewSearch = v;
-                _previewIndex = 0; // Reset to first match
-              }),
-            ),
-          ),
+          searchBar,
           Expanded(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
@@ -3049,7 +3326,7 @@ class _HomePageState extends State<HomePage> {
     try {
       final bytes = await File(path).readAsBytes();
       await _ensureTextPngs();
-      return await compute(renderWatermark, _request(bytes, quality: 95));
+      return await compute(renderWatermark, _request(bytes, quality: 95, path: path));
     } catch (_) {
       return null;
     }
@@ -3146,6 +3423,7 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _newProject() async {
     _previewToken++; // invalidate any in-flight preview render
+    _previewSearch = ''; // Clear search when creating new project
     await _flushSettings(); // Save current project first
     // Generate next project number: "Projeto 2", "Projeto 3", etc.
     final nextNum = _projectManager.projects.length + 1;
@@ -3186,8 +3464,9 @@ class _HomePageState extends State<HomePage> {
 
   Widget _slider(String label, double value, double min, double max,
       ValueChanged<double> onChanged,
-      {String unit = '%'}) {
+      {String unit = '%', bool enabled = true}) {
     final small = Theme.of(context).textTheme.bodySmall;
+    final active = _controlsEnabled && enabled;
     return Padding(
       padding: const EdgeInsets.only(top: 6),
       child: Column(
@@ -3201,7 +3480,7 @@ class _HomePageState extends State<HomePage> {
                 min: min,
                 max: max,
                 unit: unit,
-                enabled: _controlsEnabled,
+                enabled: active,
                 onSubmitted: (v) {
                   onChanged(v);
                   _schedulePreview();
@@ -3215,7 +3494,7 @@ class _HomePageState extends State<HomePage> {
               value: value.clamp(min, max),
               min: min,
               max: max,
-              onChanged: !_controlsEnabled
+              onChanged: !active
                   ? null
                   : (v) {
                       onChanged(v);

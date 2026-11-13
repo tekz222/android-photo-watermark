@@ -27,6 +27,86 @@ enum TextImagePos { top, bottom, left, right, both, inside }
 /// Export mode for project files.
 enum ExportMode { settingsOnly, full }
 
+/// Per-image custom logo settings. When enabled for an image, these override
+/// the global logo size/margin settings for that specific image only.
+class ImageSettings {
+  ImageSettings({
+    this.enabled = false,
+    this.bottomLogoSize,
+    this.bottomLogoMargin,
+    this.topLeftLogoSize,
+    this.topLeftLogoMarginTop,
+    this.topLeftLogoMarginLeft,
+    this.cornerLogoSize,
+    this.cornerLogoMarginTop,
+    this.cornerLogoMarginRight,
+  });
+
+  /// Whether custom settings are enabled for this image.
+  final bool enabled;
+
+  // Bottom row (base)
+  final double? bottomLogoSize;    // fraction of shortest side (default: logoSize)
+  final double? bottomLogoMargin;  // fraction of shortest side (default: bottomMargin)
+
+  // Top-left row
+  final double? topLeftLogoSize;       // fraction of shortest side (default: logoSize)
+  final double? topLeftLogoMarginTop;  // fraction of shortest side (default: topMargin)
+  final double? topLeftLogoMarginLeft; // fraction of shortest side (default: leftMargin)
+
+  // Corner logo (top-right)
+  final double? cornerLogoSize;        // fraction of shortest side (default: cornerHeight)
+  final double? cornerLogoMarginTop;   // fraction of shortest side (default: cornerMarginTop)
+  final double? cornerLogoMarginRight; // fraction of shortest side (default: cornerMarginRight)
+
+  Map<String, dynamic> toJson() => {
+    'enabled': enabled,
+    'bottomLogoSize': bottomLogoSize,
+    'bottomLogoMargin': bottomLogoMargin,
+    'topLeftLogoSize': topLeftLogoSize,
+    'topLeftLogoMarginTop': topLeftLogoMarginTop,
+    'topLeftLogoMarginLeft': topLeftLogoMarginLeft,
+    'cornerLogoSize': cornerLogoSize,
+    'cornerLogoMarginTop': cornerLogoMarginTop,
+    'cornerLogoMarginRight': cornerLogoMarginRight,
+  };
+
+  static ImageSettings fromJson(Map<String, dynamic> json) => ImageSettings(
+    enabled: json['enabled'] as bool? ?? false,
+    bottomLogoSize: (json['bottomLogoSize'] as num?)?.toDouble(),
+    bottomLogoMargin: (json['bottomLogoMargin'] as num?)?.toDouble(),
+    topLeftLogoSize: (json['topLeftLogoSize'] as num?)?.toDouble(),
+    topLeftLogoMarginTop: (json['topLeftLogoMarginTop'] as num?)?.toDouble(),
+    topLeftLogoMarginLeft: (json['topLeftLogoMarginLeft'] as num?)?.toDouble(),
+    cornerLogoSize: (json['cornerLogoSize'] as num?)?.toDouble(),
+    cornerLogoMarginTop: (json['cornerLogoMarginTop'] as num?)?.toDouble(),
+    cornerLogoMarginRight: (json['cornerLogoMarginRight'] as num?)?.toDouble(),
+  );
+
+  /// Returns a copy with the given fields updated.
+  ImageSettings copyWith({
+    bool? enabled,
+    double? bottomLogoSize,
+    double? bottomLogoMargin,
+    double? topLeftLogoSize,
+    double? topLeftLogoMarginTop,
+    double? topLeftLogoMarginLeft,
+    double? cornerLogoSize,
+    double? cornerLogoMarginTop,
+    double? cornerLogoMarginRight,
+  }) => ImageSettings(
+    enabled: enabled ?? this.enabled,
+    bottomLogoSize: bottomLogoSize ?? this.bottomLogoSize,
+    bottomLogoMargin: bottomLogoMargin ?? this.bottomLogoMargin,
+    topLeftLogoSize: topLeftLogoSize ?? this.topLeftLogoSize,
+    topLeftLogoMarginTop: topLeftLogoMarginTop ?? this.topLeftLogoMarginTop,
+    topLeftLogoMarginLeft: topLeftLogoMarginLeft ?? this.topLeftLogoMarginLeft,
+    cornerLogoSize: cornerLogoSize ?? this.cornerLogoSize,
+    cornerLogoMarginTop: cornerLogoMarginTop ?? this.cornerLogoMarginTop,
+    cornerLogoMarginRight: cornerLogoMarginRight ?? this.cornerLogoMarginRight,
+  );
+}
+
 /// An editable text overlay. Always centered horizontally on the photo; the
 /// user picks the vertical position ([topPct]) and the size ([heightPct]),
 /// both as percentages of the photo. Mutable on purpose: the editor changes

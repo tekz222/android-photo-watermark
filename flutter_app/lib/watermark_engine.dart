@@ -2,6 +2,8 @@ import 'dart:typed_data';
 
 import 'package:image/image.dart' as img;
 
+import 'models.dart';
+
 /// Image bytes plus a stable key, so a long-lived renderer can keep the decoded
 /// image and skip decoding the next time the same source is used.
 class ImageSrc {
@@ -113,6 +115,7 @@ class WatermarkRequest {
     this.bottomGradientHeight,
     this.gradientColor = 0xFF000000,
     this.gradientOpacity = 1.0,
+    this.imageSettings,
   });
 
   final ImageSrc photo;
@@ -173,6 +176,49 @@ class WatermarkRequest {
 
   /// Opacity of the gradient (0.0 to 1.0). Default is 1.0. Used for both top and bottom.
   final double gradientOpacity;
+
+  /// Per-image custom settings that override global logo size/margin for this image.
+  final ImageSettings? imageSettings;
+
+  /// Returns the effective bottom logo size for this image (custom or global).
+  double effectiveBottomHeight() => imageSettings?.enabled == true && imageSettings?.bottomLogoSize != null
+      ? imageSettings!.bottomLogoSize!
+      : bottomHeight;
+
+  /// Returns the effective bottom logo margin for this image (custom or global).
+  double effectiveBottomMargin() => imageSettings?.enabled == true && imageSettings?.bottomLogoMargin != null
+      ? imageSettings!.bottomLogoMargin!
+      : bottomMargin;
+
+  /// Returns the effective top-left logo size for this image (custom or global).
+  double effectiveTopLeftHeight() => imageSettings?.enabled == true && imageSettings?.topLeftLogoSize != null
+      ? imageSettings!.topLeftLogoSize!
+      : topLeftHeight;
+
+  /// Returns the effective top-left logo top margin for this image (custom or global).
+  double effectiveTopLeftTop() => imageSettings?.enabled == true && imageSettings?.topLeftLogoMarginTop != null
+      ? imageSettings!.topLeftLogoMarginTop!
+      : topLeftTop;
+
+  /// Returns the effective top-left logo left margin for this image (custom or global).
+  double effectiveTopLeftLeft() => imageSettings?.enabled == true && imageSettings?.topLeftLogoMarginLeft != null
+      ? imageSettings!.topLeftLogoMarginLeft!
+      : topLeftLeft;
+
+  /// Returns the effective corner logo size for this image (custom or global).
+  double effectiveCornerHeight() => imageSettings?.enabled == true && imageSettings?.cornerLogoSize != null
+      ? imageSettings!.cornerLogoSize!
+      : cornerHeight;
+
+  /// Returns the effective corner logo top margin for this image (custom or global).
+  double effectiveCornerMarginTop() => imageSettings?.enabled == true && imageSettings?.cornerLogoMarginTop != null
+      ? imageSettings!.cornerLogoMarginTop!
+      : cornerMarginTop;
+
+  /// Returns the effective corner logo right margin for this image (custom or global).
+  double effectiveCornerMarginRight() => imageSettings?.enabled == true && imageSettings?.cornerLogoMarginRight != null
+      ? imageSettings!.cornerLogoMarginRight!
+      : cornerMarginRight;
 }
 
 /// Composites the logos and texts onto the photo and returns encoded bytes.
@@ -218,7 +264,7 @@ Uint8List renderWatermark(WatermarkRequest r, {DecodedCache? cache}) {
 
   // Draw top gradient if enabled.
   if (r.topGradient) {
-    final gradHeight = ((r.topGradientHeight ?? r.topLeftHeight) * shortest).round().clamp(1, photo.height);
+    final gradHeight = ((r.topGradientHeight ?? r.effectiveTopLeftHeight()) * shortest).round().clamp(1, photo.height);
     final color = r.gradientColor;
     final opacity = r.gradientOpacity.clamp(0.0, 1.0);
     final rColor = (color >> 16) & 0xFF;
@@ -229,7 +275,7 @@ Uint8List renderWatermark(WatermarkRequest r, {DecodedCache? cache}) {
 
   // Draw bottom gradient if enabled.
   if (r.bottomGradient) {
-    final gradHeight = ((r.bottomGradientHeight ?? r.bottomHeight) * shortest).round().clamp(1, photo.height);
+    final gradHeight = ((r.bottomGradientHeight ?? r.effectiveBottomHeight()) * shortest).round().clamp(1, photo.height);
     final color = r.gradientColor;
     final opacity = r.gradientOpacity.clamp(0.0, 1.0);
     final rColor = (color >> 16) & 0xFF;
@@ -246,30 +292,30 @@ Uint8List renderWatermark(WatermarkRequest r, {DecodedCache? cache}) {
 
   // Top-left / top row (lowest layer). Always anchored to the left; only the
   // bottom row honors the "centered" option.
-  final topH = shortest * r.topLeftHeight;
+  final topH = shortest * r.effectiveTopLeftHeight();
   _drawRow(
     photo,
     r.topLeftLogos,
     decode,
     height: topH,
-    startX: shortest * r.topLeftLeft,
-    top: shortest * r.topLeftTop,
+    startX: shortest * r.effectiveTopLeftLeft(),
+    top: shortest * r.effectiveTopLeftTop(),
     opacity: r.rowOpacity,
     gap: gap,
   );
 
   // Bottom row.
-  final bottomH = shortest * r.bottomHeight;
+  final bottomH = shortest * r.effectiveBottomHeight();
   final bottomStartX = r.centered
       ? (photo.width - _rowWidth(r.bottomLogos, decode, bottomH, gap)) / 2
-      : shortest * r.bottomLeft;
+      : shortest * r.effectiveBottomMargin();
   _drawRow(
     photo,
     r.bottomLogos,
     decode,
     height: bottomH,
     startX: bottomStartX,
-    top: photo.height - shortest * r.bottomMargin - bottomH,
+    top: photo.height - shortest * r.effectiveBottomMargin() - bottomH,
     opacity: r.rowOpacity,
     gap: gap,
   );
@@ -279,10 +325,10 @@ Uint8List renderWatermark(WatermarkRequest r, {DecodedCache? cache}) {
   if (corner != null) {
     final logo = decode(corner);
     if (logo != null) {
-      final h = (shortest * r.cornerHeight).round().clamp(1, photo.height);
+      final h = (shortest * r.effectiveCornerHeight()).round().clamp(1, photo.height);
       final resized = _resize(logo, height: h);
-      final marginTop = shortest * r.cornerMarginTop;
-      final marginRight = shortest * r.cornerMarginRight;
+      final marginTop = shortest * r.effectiveCornerMarginTop();
+      final marginRight = shortest * r.effectiveCornerMarginRight();
       final x = (photo.width - marginRight - resized.width).round();
       final y = marginTop.round();
       img.compositeImage(photo, resized, dstX: x, dstY: y);

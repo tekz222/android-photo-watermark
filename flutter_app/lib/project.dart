@@ -41,6 +41,7 @@ class Project {
     this.bottomGradientHeight = 22.0,
     this.gradientColor = 0xFF000000,
     this.gradientOpacity = 1.0,
+    this.imageSettings = const {},
     this.savedPaths = const {},
     this.currentAlbum,
     this.lastResult,
@@ -88,6 +89,9 @@ class Project {
   double bottomGradientHeight;
   int gradientColor;
   double gradientOpacity;
+
+  // Per-image custom settings (key = photo path)
+  final Map<String, ImageSettings> imageSettings;
 
   // Save state
   final Set<String> savedPaths;
@@ -226,6 +230,7 @@ class Project {
       'bottomGradientHeight': bottomGradientHeight,
       'gradientColor': gradientColor,
       'gradientOpacity': gradientOpacity,
+      'imageSettings': imageSettings.map((k, v) => MapEntry(k, v.toJson())),
       'savedPaths': savedPaths.toList(),
       'currentAlbum': currentAlbum,
       'lastResult': lastResult != null ? {
@@ -309,6 +314,9 @@ class Project {
       bottomGradientHeight: (json['bottomGradientHeight'] as num?)?.toDouble() ?? 22.0,
       gradientColor: (json['gradientColor'] as num?)?.toInt() ?? 0xFF000000,
       gradientOpacity: (json['gradientOpacity'] as num?)?.toDouble() ?? 1.0,
+      imageSettings: (json['imageSettings'] as Map?)?.map((k, v) =>
+          MapEntry(k as String, ImageSettings.fromJson(v as Map<String, dynamic>)))
+          ?? {},
       savedPaths: Set<String>.from(json['savedPaths'] as List? ?? []),
       currentAlbum: json['currentAlbum'] as String?,
       lastResult: lastResult,
@@ -504,30 +512,82 @@ class ProjectManager {
 
   Future<void> _load() async {
     final prefs = await SharedPreferences.getInstance();
-    final projectsJson = prefs.getStringList('projects') ?? [];
-    final loaded = <Project>[];
-    for (final jsonStr in projectsJson) {
-      try {
-        final json = jsonDecode(jsonStr) as Map<String, dynamic>;
-        final project = await Project.fromJson(json);
-        loaded.add(project);
-      } catch (_) {
-        // Skip corrupted project
-      }
-    }
-    if (loaded.isNotEmpty) {
-      _projects.addAll(loaded);
-      _activeIndex = (prefs.getInt('activeProjectIndex') ?? 0).clamp(0, _projects.length - 1);
-    }
+    // Load global settings only (export/save directories)
     _exportDir = prefs.getString('exportDir');
     _saveDir = prefs.getString('saveDir');
+
+    // Load last-used SETTINGS from the active project (but not the project list itself)
+    final settingsJson = prefs.getString('lastProjectSettings');
+    if (settingsJson != null) {
+      try {
+        final json = jsonDecode(settingsJson) as Map<String, dynamic>;
+        final project = await Project.fromJson(json);
+        // Keep only settings: logos, texts, gradients, sliders. Discard photos & save state.
+        _projects.add(Project(
+          id: Project.generateId(),
+          name: 'Projeto 1',
+          photoPaths: [], // No photos on restart
+          bottomLogos: project.bottomLogos,
+          topLeftLogos: project.topLeftLogos,
+          cornerLogo: project.cornerLogo,
+          texts: project.texts,
+          textImagePath: project.textImagePath,
+          logoSize: project.logoSize,
+          leftMargin: project.leftMargin,
+          logoOpacity: project.logoOpacity,
+          bottomMargin: project.bottomMargin,
+          topMargin: project.topMargin,
+          cornerHeight: project.cornerHeight,
+          cornerMarginTop: project.cornerMarginTop,
+          cornerMarginRight: project.cornerMarginRight,
+          centered: project.centered,
+          logoSpacing: project.logoSpacing,
+          bottomGradient: project.bottomGradient,
+          topGradient: project.topGradient,
+          topGradientHeight: project.topGradientHeight,
+          bottomGradientHeight: project.bottomGradientHeight,
+          gradientColor: project.gradientColor,
+          gradientOpacity: project.gradientOpacity,
+          imageSettings: {}, // No per-image settings on restart
+          savedPaths: {},
+          currentAlbum: null,
+          lastResult: null,
+          processing: false,
+          cancelRequested: false,
+          done: 0,
+          total: 0,
+          previewIndex: 0,
+          previewVersion: 0,
+          previewToken: 0,
+          textTemplate: project.textTemplate,
+          textSrc: {},
+          textRatio: {},
+          textSigCache: {},
+          previews: {},
+          renderedVersion: {},
+          previewFailed: {},
+          previewPhoto: {},
+          previewLogo: {},
+        ));
+        _activeIndex = 0;
+      } catch (_) {
+        // If settings corrupted, create fresh project
+        _projects.add(Project(id: Project.generateId(), name: 'Projeto 1'));
+        _activeIndex = 0;
+      }
+    } else {
+      // First launch: create fresh project
+      _projects.add(Project(id: Project.generateId(), name: 'Projeto 1'));
+      _activeIndex = 0;
+    }
   }
 
   Future<void> save() async {
     final prefs = await SharedPreferences.getInstance();
-    final projectsJson = _projects.map((p) => jsonEncode(p.toJson())).toList();
-    await prefs.setStringList('projects', projectsJson);
-    await prefs.setInt('activeProjectIndex', _activeIndex);
+    // Save only the ACTIVE project's SETTINGS (not the project list)
+    final activeProject = _projects[_activeIndex];
+    await prefs.setString('lastProjectSettings', jsonEncode(activeProject.toJson()));
+    // Save global directories
     if (_exportDir != null) await prefs.setString('exportDir', _exportDir!);
     if (_saveDir != null) await prefs.setString('saveDir', _saveDir!);
   }
