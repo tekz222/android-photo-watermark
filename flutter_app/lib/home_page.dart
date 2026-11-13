@@ -701,17 +701,30 @@ class _HomePageState extends State<HomePage> {
     // Copy in parallel so importing many photos is fast; bump a counter as each
     // finishes so the UI can show "Carregando fotos… X de Y".
     var done = 0;
-    final paths = await Future.wait(picked.map((x) async {
-      final bytes = await x.readAsBytes();
-      final path = await _copyBytesToApp(bytes, 'photos');
-      if (mounted) setState(() => _importDone = ++done);
-      return path;
-    }));
-    setState(() {
-      // pickMultiImage returns most recent first; reverse to show oldest first
-      _photoPaths.addAll(paths.reversed.toList());
-      _importing = false;
-    });
+    final paths = <String>[];
+    try {
+      // Use forEach to handle individual failures without aborting all
+      await Future.wait(picked.map((x) async {
+        try {
+          final bytes = await x.readAsBytes();
+          final path = await _copyBytesToApp(bytes, 'photos');
+          paths.add(path);
+        } catch (e) {
+          // One bad image shouldn't block the rest
+          debugPrint('Failed to import image: $e');
+        }
+        if (mounted) setState(() => _importDone = ++done);
+      }));
+    } finally {
+      // ALWAYS reset importing flag, even on error
+      if (mounted) {
+        setState(() {
+          // pickMultiImage returns most recent first; reverse to show oldest first
+          _photoPaths.addAll(paths.reversed.toList());
+          _importing = false;
+        });
+      }
+    }
     _kickPreview();
     // If this project was already saved, the new photos go straight into the
     // same album (only the unsaved ones get processed).
@@ -802,16 +815,19 @@ class _HomePageState extends State<HomePage> {
     if (x == null) return;
     final bytes = await x.readAsBytes();
     setState(() => _importing = true);
-    final path = await _copyBytesToApp(bytes, 'logos');
-    final fp = Project.imageSig(bytes);
-    _previewToken++; // stop any running preview loop while the logo changes
-    _worker.cancelPending();
-    setState(() {
-      _cornerLogo = LogoItem(Project.nextLogoId(), path, x.name, bytes, fp,
-          const <String>{}, const <String>{});
-      _importing = false;
-    });
-    _schedulePreview();
+    try {
+      final path = await _copyBytesToApp(bytes, 'logos');
+      final fp = Project.imageSig(bytes);
+      _previewToken++; // stop any running preview loop while the logo changes
+      _worker.cancelPending();
+      setState(() {
+        _cornerLogo = LogoItem(Project.nextLogoId(), path, x.name, bytes, fp,
+            const <String>{}, const <String>{});
+      });
+      _schedulePreview();
+    } finally {
+      if (mounted) setState(() => _importing = false);
+    }
   }
 
   // ---- Preview ----
