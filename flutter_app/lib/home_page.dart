@@ -699,7 +699,8 @@ class _HomePageState extends State<HomePage> {
       return path;
     }));
     setState(() {
-      _photoPaths.addAll(paths);
+      // pickMultiImage returns most recent first; reverse to show oldest first
+      _photoPaths.addAll(paths.reversed.toList());
       _importing = false;
     });
     _kickPreview();
