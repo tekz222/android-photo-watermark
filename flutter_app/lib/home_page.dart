@@ -2727,11 +2727,9 @@ class _HomePageState extends State<HomePage> {
                   Positioned.fill(
                     child: Center(
                       child: MouseRegion(
-                        cursor: _processing
-                            ? SystemMouseCursors.basic
-                            : SystemMouseCursors.zoomIn,
+                        cursor: SystemMouseCursors.zoomIn,
                         child: GestureDetector(
-                          onTap: _processing ? null : () => _openFullscreen(idx),
+                          onTap: () => _openFullscreen(idx),
                           child: picture,
                         ),
                       ),
