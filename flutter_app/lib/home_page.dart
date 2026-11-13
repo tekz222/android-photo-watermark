@@ -79,6 +79,7 @@ class _HomePageState extends State<HomePage> {
   Timer? _debounce;
   final ScrollController _thumbCtl = ScrollController();
   List<Map<String, dynamic>> _history = [];
+  String _previewSearch = ''; // Search query for filtering photos
   late final AppLifecycleListener _lifecycle;
 
   // Preview worker (shared across projects)
@@ -87,6 +88,14 @@ class _HomePageState extends State<HomePage> {
   // Getters delegating to active project
   Project get _p => _projectManager.activeProject;
   List<String> get _photoPaths => _p.photoPaths;
+
+  /// Filtered photo paths based on search query (filename match, case-insensitive)
+  List<String> get _filteredPhotoPaths {
+    if (_previewSearch.isEmpty) return _photoPaths;
+    final query = _previewSearch.toLowerCase();
+    return _photoPaths.where((p) => p.split('/').last.split('\\').last.toLowerCase().contains(query)).toList();
+  }
+
   List<LogoItem> get _bottomLogos => _p.bottomLogos;
   List<LogoItem> get _topLeftLogos => _p.topLeftLogos;
   LogoItem? get _cornerLogo => _p.cornerLogo;
@@ -2660,12 +2669,19 @@ class _HomePageState extends State<HomePage> {
 
   // ---- Right pane (preview) ----
 
-  void _selectPreview(int i) {
-    setState(() => _previewIndex = i);
+  void _selectPreview(int filteredIndex) {
+    // Map filtered index to original photoPaths index
+    final filteredPaths = _filteredPhotoPaths;
+    if (filteredIndex >= 0 && filteredIndex < filteredPaths.length) {
+      final originalIndex = _photoPaths.indexOf(filteredPaths[filteredIndex]);
+      if (originalIndex >= 0) {
+        setState(() => _previewIndex = originalIndex);
+      }
+    }
     _kickPreview();
     // Keep the selected thumbnail in view.
     if (_thumbCtl.hasClients) {
-      final target = (i * 68.0 - _thumbCtl.position.viewportDimension / 2 + 30)
+      final target = (filteredIndex * 68.0 - _thumbCtl.position.viewportDimension / 2 + 30)
           .clamp(0.0, _thumbCtl.position.maxScrollExtent);
       _thumbCtl.animateTo(target,
           duration: const Duration(milliseconds: 200), curve: Curves.easeOut);
@@ -2675,7 +2691,7 @@ class _HomePageState extends State<HomePage> {
   Widget _previewPane() {
     final scheme = Theme.of(context).colorScheme;
     final small = Theme.of(context).textTheme.bodySmall;
-    final paths = _photoPaths;
+    final paths = _filteredPhotoPaths;
     if (paths.isEmpty) {
       return Container(
         color: scheme.surface,
@@ -2685,7 +2701,9 @@ class _HomePageState extends State<HomePage> {
             children: [
               Icon(Icons.image_outlined, size: 56, color: scheme.outline),
               const SizedBox(height: 10),
-              Text('Adicione fotos para ver a pré-visualização.',
+              Text(_previewSearch.isEmpty
+                  ? 'Adicione fotos para ver a pré-visualização.'
+                  : 'Nenhuma foto encontrada para "$_previewSearch"',
                   style: TextStyle(color: scheme.outline)),
             ],
           ),
@@ -2693,6 +2711,7 @@ class _HomePageState extends State<HomePage> {
       );
     }
     final n = paths.length;
+    // Clamp preview index to filtered list
     final idx = _previewIndex.clamp(0, n - 1);
     final path = paths[idx];
     final render = _hasAnyContent ? _previews[path] : null;
@@ -2719,9 +2738,35 @@ class _HomePageState extends State<HomePage> {
       color: scheme.surface,
       child: Column(
         children: [
+          // Search bar
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+            child: TextField(
+              decoration: InputDecoration(
+                hintText: 'Buscar por nome do arquivo…',
+                prefixIcon: const Icon(Icons.search, size: 20),
+                suffixIcon: _previewSearch.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.clear, size: 20),
+                        onPressed: () => setState(() => _previewSearch = ''),
+                        tooltip: 'Limpar busca',
+                      )
+                    : null,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                isDense: true,
+              ),
+              onChanged: (v) => setState(() {
+                _previewSearch = v;
+                _previewIndex = 0; // Reset to first match
+              }),
+            ),
+          ),
           Expanded(
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
               child: Stack(
                 children: [
                   Positioned.fill(
@@ -2947,9 +2992,10 @@ class _HomePageState extends State<HomePage> {
   // ---- Fullscreen ----
 
   void _openFullscreen(int index) {
-    // Show ALL preview photos (so you can move to ones not rendered yet) and
-    // render each at high resolution on demand, so zoom stays sharp.
-    final paths = List<String>.of(_photoPaths);
+    // Use filtered paths if searching, otherwise all photos
+    final paths = _previewSearch.isEmpty
+        ? List<String>.of(_photoPaths)
+        : _filteredPhotoPaths;
     if (paths.isEmpty) return;
     final placeholders = [for (final p in paths) _previews[p]?.bytes];
     Navigator.of(context).push(
