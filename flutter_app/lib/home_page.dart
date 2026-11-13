@@ -56,7 +56,8 @@ class _EndPic {
 }
 
 class HomePage extends StatefulWidget {
-  const HomePage({super.key});
+  const HomePage({super.key, this.initialProjectId});
+  final String? initialProjectId;
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -65,7 +66,6 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   final ImagePicker _picker = ImagePicker();
   final ProjectManager _projectManager = ProjectManager();
-  late final Project _initialProject; // For "Novo Projeto" to copy settings from
 
   // Global UI state (not per-project)
   int _fileSeq = 0;
@@ -208,8 +208,14 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _initializeProjects() async {
     await _projectManager.initialize();
-    // Store initial project for "Novo Projeto" to copy settings from
-    _initialProject = _projectManager.activeProject;
+    // If a specific project ID was passed, switch to that project
+    if (widget.initialProjectId != null) {
+      final index = _projectManager.projects
+          .indexWhere((p) => p.id == widget.initialProjectId);
+      if (index >= 0) {
+        await _projectManager.setActive(index);
+      }
+    }
     _kickPreview();
   }
 
@@ -1811,7 +1817,7 @@ class _HomePageState extends State<HomePage> {
           TextButton.icon(
             onPressed: !_processing ? _importProject : null,
             icon: const Icon(Icons.upload_outlined, size: 18),
-            label: const Text('Importar projeto'),
+            label: const Text('Importar projeto ou logos'),
           ),
           const SizedBox(width: 4),
           MenuAnchor(
