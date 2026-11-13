@@ -40,6 +40,9 @@ class TextItem {
     this.italic = false,
     this.color = 0xFFFFFFFF,
     this.rainbow = false,
+    this.gradientColors = const [0xFFFFFFFF, 0xFF000000],
+    this.gradientStops = const [0.0, 1.0],
+    this.gradientAngle = 0.0, // 0 = horizontal, 90 = vertical
     this.outline = true,
     this.outlineColor = 0xFF000000,
     this.outlineWidth = 8, // stroke width as % of the font size
@@ -59,8 +62,11 @@ class TextItem {
   String fontFamily;
   bool bold;
   bool italic;
-  int color; // ARGB
-  bool rainbow; // rainbow gradient fill (overrides [color])
+  int color; // ARGB (used when rainbow=false and gradientColors not set)
+  bool rainbow; // rainbow gradient fill (overrides [color] and [gradientColors])
+  List<int> gradientColors; // ARGB colors for custom gradient (2-3 colors)
+  List<double> gradientStops; // gradient stops (0.0 to 1.0), same length as gradientColors
+  double gradientAngle; // gradient angle in degrees (0 = left-to-right, 90 = top-to-bottom)
   bool outline;
   int outlineColor; // ARGB
   double outlineWidth;
@@ -76,4 +82,6 @@ class TextItem {
   TextImagePos imagePos;
   double imageSize;
   double imageGap;
+
+  bool get useCustomGradient => !rainbow && gradientColors.length >= 2;
 }

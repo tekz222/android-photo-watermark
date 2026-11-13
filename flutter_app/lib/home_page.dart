@@ -1255,6 +1255,21 @@ class _HomePageState extends State<HomePage> {
         if (t.rainbow) {
           fill.shader = ui.Gradient.linear(Offset(o.dx, 0),
               Offset(o.dx + math.max(textW, 1.0), 0), kRainbow, kRainbowStops);
+        } else if (t.useCustomGradient) {
+          final colors = t.gradientColors.map(Color.new).toList();
+          final stops = t.gradientStops;
+          final angleRad = t.gradientAngle * math.pi / 180;
+          final w = math.max(textW, 1.0);
+          final h = textH;
+          final centerX = o.dx + w / 2;
+          final centerY = o.dy + h / 2;
+          final radius = math.sqrt(w * w + h * h) / 2;
+          final startX = centerX - radius * math.cos(angleRad);
+          final startY = centerY - radius * math.sin(angleRad);
+          final endX = centerX + radius * math.cos(angleRad);
+          final endY = centerY + radius * math.sin(angleRad);
+          fill.shader = ui.Gradient.linear(
+              Offset(startX, startY), Offset(endX, endY), colors, stops);
         } else {
           fill.color = Color(t.color);
         }
@@ -1423,10 +1438,30 @@ class _HomePageState extends State<HomePage> {
         }
 
         if (t.outline) pass((_) => _outlinePaint(t, m.strokeW));
-        pass((gi) => Paint()
-          ..color = t.rainbow
-              ? _rainbowAt(n <= 1 ? 0.5 : gi / (n - 1))
-              : Color(t.color));
+        pass((gi) {
+          final fill = Paint();
+          if (t.rainbow) {
+            fill.color = _rainbowAt(n <= 1 ? 0.5 : gi / (n - 1));
+          } else if (t.useCustomGradient) {
+            final colors = t.gradientColors.map(Color.new).toList();
+            final stops = t.gradientStops;
+            final angleRad = t.gradientAngle * math.pi / 180;
+            final w = m.measure.width;
+            final h = m.measure.height;
+            final centerX = 0.0;
+            final centerY = 0.0;
+            final radius = math.sqrt(w * w + h * h) / 2;
+            final startX = centerX - radius * math.cos(angleRad);
+            final startY = centerY - radius * math.sin(angleRad);
+            final endX = centerX + radius * math.cos(angleRad);
+            final endY = centerY + radius * math.sin(angleRad);
+            fill.shader = ui.Gradient.linear(
+              Offset(startX, startY), Offset(endX, endY), colors, stops);
+          } else {
+            fill.color = Color(t.color);
+          }
+          return fill;
+        });
       },
     );
   }
@@ -2319,7 +2354,15 @@ class _HomePageState extends State<HomePage> {
               toggle('Negrito', t.bold, (s) => t.bold = s),
               toggle('Itálico', t.italic, (s) => t.italic = s),
               toggle('Contorno', t.outline, (s) => t.outline = s),
-              toggle('Arco-íris', t.rainbow, (s) => t.rainbow = s),
+              toggle('Arco-íris', t.rainbow, (s) => update(() => t.rainbow = s)),
+              toggle('Gradiente', t.useCustomGradient,
+                  (s) => update(() {
+                        t.rainbow = false;
+                        if (s && t.gradientColors.length < 2) {
+                          t.gradientColors = [0xFFFFFFFF, 0xFF000000];
+                          t.gradientStops = [0.0, 1.0];
+                        }
+                      })),
             ],
           ),
           const SizedBox(height: 10),
@@ -2391,8 +2434,58 @@ class _HomePageState extends State<HomePage> {
           ],
           if (!t.rainbow) ...[
             const SizedBox(height: 8),
-            _colorField('${t.id}:fill', 'Cor do texto', t.color,
-                (c) => update(() => t.color = c)),
+            if (t.useCustomGradient) ...[
+              _colorField('${t.id}:grad1', 'Cor 1 (início)', t.gradientColors[0],
+                  (c) => update(() {
+                        t.gradientColors[0] = c;
+                        _textSigCache.remove(t.id);
+                      })),
+              _colorField('${t.id}:grad2', 'Cor 2 (fim)', t.gradientColors[1],
+                  (c) => update(() {
+                        t.gradientColors[1] = c;
+                        _textSigCache.remove(t.id);
+                      })),
+              if (t.gradientColors.length > 2)
+                _colorField('${t.id}:grad3', 'Cor 3 (meio)', t.gradientColors[2],
+                    (c) => update(() {
+                          t.gradientColors[2] = c;
+                          _textSigCache.remove(t.id);
+                        })),
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  OutlinedButton.icon(
+                    icon: const Icon(Icons.add, size: 16),
+                    label: const Text('Adicionar cor'),
+                    onPressed: !_controlsEnabled || t.gradientColors.length >= 3
+                        ? null
+                        : () => update(() {
+                              t.gradientColors.add(0xFFFFFFFF);
+                              t.gradientStops.add(1.0);
+                              _textSigCache.remove(t.id);
+                            }),
+                  ),
+                  if (t.gradientColors.length > 2) ...[
+                    const SizedBox(width: 8),
+                    OutlinedButton.icon(
+                      icon: const Icon(Icons.remove, size: 16),
+                      label: const Text('Remover cor'),
+                      onPressed: !_controlsEnabled ? null : () => update(() {
+                        t.gradientColors.removeLast();
+                        t.gradientStops.removeLast();
+                        _textSigCache.remove(t.id);
+                      }),
+                    ),
+                  ],
+                ],
+              ),
+              const SizedBox(height: 4),
+              _slider('Ângulo do gradiente', t.gradientAngle, -180, 180,
+                  (v) => update(() => t.gradientAngle = v), unit: '°'),
+            ] else ...[
+              _colorField('${t.id}:fill', 'Cor do texto', t.color,
+                  (c) => update(() => t.color = c)),
+            ],
           ],
           if (t.outline) ...[
             const SizedBox(height: 8),
