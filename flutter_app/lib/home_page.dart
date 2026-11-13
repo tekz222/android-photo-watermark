@@ -444,7 +444,11 @@ class _HomePageState extends State<HomePage> {
       _exportDir = selectedDir;
       await _writeSettings(); // Persist the chosen directory
 
-      final savePath = '$selectedDir/JCV_Watermarker_${DateTime.now().millisecondsSinceEpoch}.jcv';
+      final now = DateTime.now();
+      final dateStr = '${now.year.toString().padLeft(4, '0')}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+      final timeStr = '${now.hour.toString().padLeft(2, '0')}-${now.minute.toString().padLeft(2, '0')}-${now.second.toString().padLeft(2, '0')}';
+      final modePrefix = mode == ExportMode.settingsOnly ? 'configs_' : '';
+      final savePath = '$selectedDir/JCV_Watermarker_${modePrefix}${dateStr}_${timeStr}.jcv';
       await File(savePath).writeAsBytes(zipBytes);
 
       if (!mounted) return;
