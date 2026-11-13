@@ -31,7 +31,8 @@ class Project {
     this.bottomMargin = 2.0,
     this.topMargin = 2.0,
     this.cornerHeight = 22.0,
-    this.cornerMargin = 2.0,
+    this.cornerMarginTop = 2.0,
+    this.cornerMarginRight = 2.0,
     this.centered = false,
     this.logoSpacing = 0.0,
     this.bottomGradient = false,
@@ -77,7 +78,8 @@ class Project {
   double bottomMargin;
   double topMargin;
   double cornerHeight;
-  double cornerMargin;
+  double cornerMarginTop;
+  double cornerMarginRight;
   bool centered;
   double logoSpacing;
   bool bottomGradient;
@@ -161,7 +163,8 @@ class Project {
       bottomMargin: bottomMargin,
       topMargin: topMargin,
       cornerHeight: cornerHeight,
-      cornerMargin: cornerMargin,
+      cornerMarginTop: cornerMarginTop,
+      cornerMarginRight: cornerMarginRight,
       centered: centered,
       logoSpacing: logoSpacing,
       bottomGradient: bottomGradient,
@@ -210,7 +213,8 @@ class Project {
       'bottomMargin': bottomMargin,
       'topMargin': topMargin,
       'cornerHeight': cornerHeight,
-      'cornerMargin': cornerMargin,
+      'cornerMarginTop': cornerMarginTop,
+      'cornerMarginRight': cornerMarginRight,
       'centered': centered,
       'logoSpacing': logoSpacing,
       'bottomGradient': bottomGradient,
@@ -292,7 +296,8 @@ class Project {
       bottomMargin: (json['bottomMargin'] as num?)?.toDouble() ?? 2.0,
       topMargin: (json['topMargin'] as num?)?.toDouble() ?? 2.0,
       cornerHeight: (json['cornerHeight'] as num?)?.toDouble() ?? 22.0,
-      cornerMargin: (json['cornerMargin'] as num?)?.toDouble() ?? 2.0,
+      cornerMarginTop: (json['cornerMarginTop'] as num?)?.toDouble() ?? 2.0,
+      cornerMarginRight: (json['cornerMarginRight'] as num?)?.toDouble() ?? 2.0,
       centered: json['centered'] as bool? ?? false,
       logoSpacing: (json['logoSpacing'] as num?)?.toDouble() ?? 0.0,
       bottomGradient: json['bottomGradient'] as bool? ?? false,

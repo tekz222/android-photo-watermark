@@ -112,8 +112,10 @@ class _HomePageState extends State<HomePage> {
   set _topMargin(double v) => _p.topMargin = v;
   double get _cornerHeight => _p.cornerHeight;
   set _cornerHeight(double v) => _p.cornerHeight = v;
-  double get _cornerMargin => _p.cornerMargin;
-  set _cornerMargin(double v) => _p.cornerMargin = v;
+  double get _cornerMarginTop => _p.cornerMarginTop;
+  set _cornerMarginTop(double v) => _p.cornerMarginTop = v;
+  double get _cornerMarginRight => _p.cornerMarginRight;
+  set _cornerMarginRight(double v) => _p.cornerMarginRight = v;
   bool get _centered => _p.centered;
   set _centered(bool v) => _p.centered = v;
   double get _logoSpacing => _p.logoSpacing;
@@ -358,7 +360,8 @@ class _HomePageState extends State<HomePage> {
         'bottomMargin': _bottomMargin,
         'topMargin': _topMargin,
         'cornerHeight': _cornerHeight,
-        'cornerMargin': _cornerMargin,
+        'cornerMarginTop': _cornerMarginTop,
+        'cornerMarginRight': _cornerMarginRight,
         'centered': _centered,
         'spacing': _logoSpacing,
         'bottomGradient': _bottomGradient,
@@ -598,7 +601,14 @@ class _HomePageState extends State<HomePage> {
         _bottomMargin = (settings['bottomMargin'] as num?)?.toDouble() ?? 2.0;
         _topMargin = (settings['topMargin'] as num?)?.toDouble() ?? 2.0;
         _cornerHeight = (settings['cornerHeight'] as num?)?.toDouble() ?? 22.0;
-        _cornerMargin = (settings['cornerMargin'] as num?)?.toDouble() ?? 2.0;
+        _cornerMarginTop = (settings['cornerMarginTop'] as num?)?.toDouble() ?? 2.0;
+        _cornerMarginRight = (settings['cornerMarginRight'] as num?)?.toDouble() ?? 2.0;
+        // Backward compatibility: if old cornerMargin exists, use it for both
+        if (settings['cornerMargin'] != null) {
+          final old = (settings['cornerMargin'] as num).toDouble();
+          _cornerMarginTop = old;
+          _cornerMarginRight = old;
+        }
         _centered = settings['centered'] as bool? ?? false;
         _logoSpacing = (settings['spacing'] as num?)?.toDouble() ?? 0.0;
         _bottomGradient = settings['bottomGradient'] as bool? ?? false;
@@ -934,7 +944,8 @@ class _HomePageState extends State<HomePage> {
       topLeftTop: _topMargin / 100,
       topLeftLeft: _leftMargin / 100,
       cornerHeight: _cornerHeight / 100,
-      cornerMargin: _cornerMargin / 100,
+      cornerMarginTop: _cornerMarginTop / 100,
+      cornerMarginRight: _cornerMarginRight / 100,
       rowOpacity: _logoOpacity / 100,
       centered: _centered,
       spacing: _logoSpacing / 100,
@@ -964,7 +975,8 @@ class _HomePageState extends State<HomePage> {
       topLeftTop: _topMargin / 100,
       topLeftLeft: _leftMargin / 100,
       cornerHeight: _cornerHeight / 100,
-      cornerMargin: _cornerMargin / 100,
+      cornerMarginTop: _cornerMarginTop / 100,
+      cornerMarginRight: _cornerMarginRight / 100,
       rowOpacity: _logoOpacity / 100,
       centered: _centered,
       spacing: _logoSpacing / 100,
@@ -2155,8 +2167,10 @@ class _HomePageState extends State<HomePage> {
           if (_cornerLogo != null) ...[
             _slider('Tamanho', _cornerHeight, 5, 40,
                 (v) => setState(() => _cornerHeight = v)),
-            _slider('Distância do canto', _cornerMargin, 0, 15,
-                (v) => setState(() => _cornerMargin = v)),
+            _slider('Distância do topo', _cornerMarginTop, 0, 30,
+                (v) => setState(() => _cornerMarginTop = v)),
+            _slider('Distância da direita', _cornerMarginRight, 0, 30,
+                (v) => setState(() => _cornerMarginRight = v)),
           ],
         ],
       ),

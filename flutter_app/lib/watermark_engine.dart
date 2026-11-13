@@ -98,7 +98,8 @@ class WatermarkRequest {
     required this.topLeftTop,
     required this.topLeftLeft,
     required this.cornerHeight,
-    required this.cornerMargin,
+    required this.cornerMarginTop,
+    required this.cornerMarginRight,
     this.rowOpacity = 1.0,
     this.centered = false,
     this.spacing = 0.0,
@@ -129,7 +130,8 @@ class WatermarkRequest {
   final double topLeftTop;
   final double topLeftLeft;
   final double cornerHeight;
-  final double cornerMargin;
+  final double cornerMarginTop;
+  final double cornerMarginRight;
 
   /// Opacity (0..1) applied to the bottom and top rows (not the corner logo).
   final double rowOpacity;
@@ -279,9 +281,10 @@ Uint8List renderWatermark(WatermarkRequest r, {DecodedCache? cache}) {
     if (logo != null) {
       final h = (shortest * r.cornerHeight).round().clamp(1, photo.height);
       final resized = _resize(logo, height: h);
-      final margin = shortest * r.cornerMargin;
-      final x = (photo.width - margin - resized.width).round();
-      final y = margin.round();
+      final marginTop = shortest * r.cornerMarginTop;
+      final marginRight = shortest * r.cornerMarginRight;
+      final x = (photo.width - marginRight - resized.width).round();
+      final y = marginTop.round();
       img.compositeImage(photo, resized, dstX: x, dstY: y);
     }
   }
