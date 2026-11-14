@@ -16,6 +16,26 @@ class LogoItem {
   final int phash;
   final Set<String> phones;
   final Set<String> texts;
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'path': path,
+    'sourceKey': sourceKey,
+    'bytes': bytes, // Note: bytes not serialized in project (too large), path used instead
+    'phash': phash,
+    'phones': phones.toList(),
+    'texts': texts.toList(),
+  };
+
+  static LogoItem fromJson(Map<String, dynamic> json) => LogoItem(
+    json['id'] as int,
+    json['path'] as String,
+    json['sourceKey'] as String,
+    Uint8List.fromList((json['bytes'] as List? ?? []).cast<int>()), // bytes loaded from path at runtime
+    json['phash'] as int? ?? 0,
+    (json['phones'] as List? ?? []).cast<String>().toSet(),
+    (json['texts'] as List? ?? []).cast<String>().toSet(),
+  );
 }
 
 /// Where a step's logos are placed, used to draw the little frame glyphs.
@@ -23,6 +43,96 @@ enum Placement { bottom, topLeft, topRight }
 
 /// Where a picture attached to a text sits relative to the text.
 enum TextImagePos { top, bottom, left, right, both, inside }
+
+/// How two logo sets are assigned to photos.
+enum LogoSetMode { single, splitHalf, alternating }
+
+/// A complete logo set (bottom row, top-left row). Corner logo is shared globally.
+class LogoSet {
+  LogoSet({
+    required this.bottomLogos,
+    required this.topLeftLogos,
+    // Bottom row: extra logos above leftmost and rightmost
+    this.bottomLeftTopLogo,
+    this.bottomRightTopLogo,
+    // Top-left row: extra logo below leftmost
+    this.topLeftBottomLogo,
+    // Margin for extra bottom logos (fraction of shortest side)
+    this.bottomLeftTopMargin = 2.0,
+    this.bottomRightTopMargin = 2.0,
+    // Margin for extra top logo (fraction of shortest side)
+    this.topLeftBottomMargin = 2.0,
+  });
+
+  final List<LogoItem> bottomLogos;
+  final List<LogoItem> topLeftLogos;
+
+  // Extra logos for bottom row (placed above the main row)
+  final LogoItem? bottomLeftTopLogo;   // Above leftmost bottom logo
+  final LogoItem? bottomRightTopLogo;  // Above rightmost bottom logo
+
+  // Extra logo for top-left row (placed below the main row)
+  final LogoItem? topLeftBottomLogo;   // Below leftmost top-left logo
+
+  // Margins for extra logos (distance from main row)
+  final double bottomLeftTopMargin;
+  final double bottomRightTopMargin;
+  final double topLeftBottomMargin;
+
+  Map<String, dynamic> toJson() => {
+    'bottomLogos': bottomLogos.map((e) => e.toJson()).toList(),
+    'topLeftLogos': topLeftLogos.map((e) => e.toJson()).toList(),
+    'bottomLeftTopLogo': bottomLeftTopLogo?.toJson(),
+    'bottomRightTopLogo': bottomRightTopLogo?.toJson(),
+    'topLeftBottomLogo': topLeftBottomLogo?.toJson(),
+    'bottomLeftTopMargin': bottomLeftTopMargin,
+    'bottomRightTopMargin': bottomRightTopMargin,
+    'topLeftBottomMargin': topLeftBottomMargin,
+  };
+
+  static LogoSet fromJson(Map<String, dynamic> json) => LogoSet(
+    bottomLogos: (json['bottomLogos'] as List? ?? [])
+        .map((e) => LogoItem.fromJson(e)).toList(),
+    topLeftLogos: (json['topLeftLogos'] as List? ?? [])
+        .map((e) => LogoItem.fromJson(e)).toList(),
+    bottomLeftTopLogo: json['bottomLeftTopLogo'] != null
+        ? LogoItem.fromJson(json['bottomLeftTopLogo'] as Map<String, dynamic>)
+        : null,
+    bottomRightTopLogo: json['bottomRightTopLogo'] != null
+        ? LogoItem.fromJson(json['bottomRightTopLogo'] as Map<String, dynamic>)
+        : null,
+    topLeftBottomLogo: json['topLeftBottomLogo'] != null
+        ? LogoItem.fromJson(json['topLeftBottomLogo'] as Map<String, dynamic>)
+        : null,
+    bottomLeftTopMargin: (json['bottomLeftTopMargin'] as num?)?.toDouble() ?? 2.0,
+    bottomRightTopMargin: (json['bottomRightTopMargin'] as num?)?.toDouble() ?? 2.0,
+    topLeftBottomMargin: (json['topLeftBottomMargin'] as num?)?.toDouble() ?? 2.0,
+  );
+
+  LogoSet copyWith({
+    List<LogoItem>? bottomLogos,
+    List<LogoItem>? topLeftLogos,
+    LogoItem? bottomLeftTopLogo,
+    LogoItem? bottomRightTopLogo,
+    LogoItem? topLeftBottomLogo,
+    double? bottomLeftTopMargin,
+    double? bottomRightTopMargin,
+    double? topLeftBottomMargin,
+    // Use special sentinel to clear optional logos
+    bool clearBottomLeftTopLogo = false,
+    bool clearBottomRightTopLogo = false,
+    bool clearTopLeftBottomLogo = false,
+  }) => LogoSet(
+    bottomLogos: bottomLogos ?? this.bottomLogos,
+    topLeftLogos: topLeftLogos ?? this.topLeftLogos,
+    bottomLeftTopLogo: clearBottomLeftTopLogo ? null : (bottomLeftTopLogo ?? this.bottomLeftTopLogo),
+    bottomRightTopLogo: clearBottomRightTopLogo ? null : (bottomRightTopLogo ?? this.bottomRightTopLogo),
+    topLeftBottomLogo: clearTopLeftBottomLogo ? null : (topLeftBottomLogo ?? this.topLeftBottomLogo),
+    bottomLeftTopMargin: bottomLeftTopMargin ?? this.bottomLeftTopMargin,
+    bottomRightTopMargin: bottomRightTopMargin ?? this.bottomRightTopMargin,
+    topLeftBottomMargin: topLeftBottomMargin ?? this.topLeftBottomMargin,
+  );
+}
 
 /// Export mode for project files.
 enum ExportMode { settingsOnly, full }
@@ -32,14 +142,34 @@ enum ExportMode { settingsOnly, full }
 class ImageSettings {
   ImageSettings({
     this.enabled = false,
+    // Logo size overrides
     this.bottomLogoSize,
-    this.bottomLogoMargin,
     this.topLeftLogoSize,
+    this.cornerLogoSize,
+    // Margin overrides
+    this.bottomLogoMargin,
     this.topLeftLogoMarginTop,
     this.topLeftLogoMarginLeft,
-    this.cornerLogoSize,
     this.cornerLogoMarginTop,
     this.cornerLogoMarginRight,
+    // Spacing override
+    this.logoSpacing,
+    // Gradient height overrides
+    this.topGradientHeight,
+    this.bottomGradientHeight,
+    // Boolean flags for logo size override groups
+    this.useGlobalLogoSize = false,
+    this.useBottomLogoSize = false,
+    this.useTopLeftLogoSize = false,
+    this.useCornerLogoSize = false,
+    // Boolean flags for spacing override groups
+    this.useGlobalSpacing = false,
+    this.useBottomSpacing = false,
+    this.useTopLeftSpacing = false,
+    // Boolean flags for gradient height override groups
+    this.useGlobalGradientHeight = false,
+    this.useTopGradientHeight = false,
+    this.useBottomGradientHeight = false,
   });
 
   /// Whether custom settings are enabled for this image.
@@ -59,6 +189,39 @@ class ImageSettings {
   final double? cornerLogoMarginTop;   // fraction of shortest side (default: cornerMarginTop)
   final double? cornerLogoMarginRight; // fraction of shortest side (default: cornerMarginRight)
 
+  // Spacing between logos in a row
+  final double? logoSpacing; // fraction of shortest side (default: logoSpacing)
+
+  // Gradient heights
+  final double? topGradientHeight;    // fraction of shortest side (default: topGradientHeight)
+  final double? bottomGradientHeight; // fraction of shortest side (default: bottomGradientHeight)
+
+  // Boolean flags for logo size override groups
+  /// If true, use global [logoSize] for all sections (bottom, top-left, corner).
+  final bool useGlobalLogoSize;
+  /// If true, use per-image [bottomLogoSize] for bottom row.
+  final bool useBottomLogoSize;
+  /// If true, use per-image [topLeftLogoSize] for top-left row.
+  final bool useTopLeftLogoSize;
+  /// If true, use per-image [cornerLogoSize] for corner logo.
+  final bool useCornerLogoSize;
+
+  // Boolean flags for spacing override groups
+  /// If true, use global [logoSpacing] for all sections.
+  final bool useGlobalSpacing;
+  /// If true, use per-image [logoSpacing] for bottom row.
+  final bool useBottomSpacing;
+  /// If true, use per-image [logoSpacing] for top-left row.
+  final bool useTopLeftSpacing;
+
+  // Boolean flags for gradient height override groups
+  /// If true, use global [topGradientHeight]/[bottomGradientHeight] for both gradients.
+  final bool useGlobalGradientHeight;
+  /// If true, use per-image [topGradientHeight] for top gradient.
+  final bool useTopGradientHeight;
+  /// If true, use per-image [bottomGradientHeight] for bottom gradient.
+  final bool useBottomGradientHeight;
+
   Map<String, dynamic> toJson() => {
     'enabled': enabled,
     'bottomLogoSize': bottomLogoSize,
@@ -69,6 +232,19 @@ class ImageSettings {
     'cornerLogoSize': cornerLogoSize,
     'cornerLogoMarginTop': cornerLogoMarginTop,
     'cornerLogoMarginRight': cornerLogoMarginRight,
+    'logoSpacing': logoSpacing,
+    'topGradientHeight': topGradientHeight,
+    'bottomGradientHeight': bottomGradientHeight,
+    'useGlobalLogoSize': useGlobalLogoSize,
+    'useBottomLogoSize': useBottomLogoSize,
+    'useTopLeftLogoSize': useTopLeftLogoSize,
+    'useCornerLogoSize': useCornerLogoSize,
+    'useGlobalSpacing': useGlobalSpacing,
+    'useBottomSpacing': useBottomSpacing,
+    'useTopLeftSpacing': useTopLeftSpacing,
+    'useGlobalGradientHeight': useGlobalGradientHeight,
+    'useTopGradientHeight': useTopGradientHeight,
+    'useBottomGradientHeight': useBottomGradientHeight,
   };
 
   static ImageSettings fromJson(Map<String, dynamic> json) => ImageSettings(
@@ -81,6 +257,19 @@ class ImageSettings {
     cornerLogoSize: (json['cornerLogoSize'] as num?)?.toDouble(),
     cornerLogoMarginTop: (json['cornerLogoMarginTop'] as num?)?.toDouble(),
     cornerLogoMarginRight: (json['cornerLogoMarginRight'] as num?)?.toDouble(),
+    logoSpacing: (json['logoSpacing'] as num?)?.toDouble(),
+    topGradientHeight: (json['topGradientHeight'] as num?)?.toDouble(),
+    bottomGradientHeight: (json['bottomGradientHeight'] as num?)?.toDouble(),
+    useGlobalLogoSize: json['useGlobalLogoSize'] as bool? ?? false,
+    useBottomLogoSize: json['useBottomLogoSize'] as bool? ?? false,
+    useTopLeftLogoSize: json['useTopLeftLogoSize'] as bool? ?? false,
+    useCornerLogoSize: json['useCornerLogoSize'] as bool? ?? false,
+    useGlobalSpacing: json['useGlobalSpacing'] as bool? ?? false,
+    useBottomSpacing: json['useBottomSpacing'] as bool? ?? false,
+    useTopLeftSpacing: json['useTopLeftSpacing'] as bool? ?? false,
+    useGlobalGradientHeight: json['useGlobalGradientHeight'] as bool? ?? false,
+    useTopGradientHeight: json['useTopGradientHeight'] as bool? ?? false,
+    useBottomGradientHeight: json['useBottomGradientHeight'] as bool? ?? false,
   );
 
   /// Returns a copy with the given fields updated.
@@ -94,6 +283,19 @@ class ImageSettings {
     double? cornerLogoSize,
     double? cornerLogoMarginTop,
     double? cornerLogoMarginRight,
+    double? logoSpacing,
+    double? topGradientHeight,
+    double? bottomGradientHeight,
+    bool? useGlobalLogoSize,
+    bool? useBottomLogoSize,
+    bool? useTopLeftLogoSize,
+    bool? useCornerLogoSize,
+    bool? useGlobalSpacing,
+    bool? useBottomSpacing,
+    bool? useTopLeftSpacing,
+    bool? useGlobalGradientHeight,
+    bool? useTopGradientHeight,
+    bool? useBottomGradientHeight,
   }) => ImageSettings(
     enabled: enabled ?? this.enabled,
     bottomLogoSize: bottomLogoSize ?? this.bottomLogoSize,
@@ -104,6 +306,19 @@ class ImageSettings {
     cornerLogoSize: cornerLogoSize ?? this.cornerLogoSize,
     cornerLogoMarginTop: cornerLogoMarginTop ?? this.cornerLogoMarginTop,
     cornerLogoMarginRight: cornerLogoMarginRight ?? this.cornerLogoMarginRight,
+    logoSpacing: logoSpacing ?? this.logoSpacing,
+    topGradientHeight: topGradientHeight ?? this.topGradientHeight,
+    bottomGradientHeight: bottomGradientHeight ?? this.bottomGradientHeight,
+    useGlobalLogoSize: useGlobalLogoSize ?? this.useGlobalLogoSize,
+    useBottomLogoSize: useBottomLogoSize ?? this.useBottomLogoSize,
+    useTopLeftLogoSize: useTopLeftLogoSize ?? this.useTopLeftLogoSize,
+    useCornerLogoSize: useCornerLogoSize ?? this.useCornerLogoSize,
+    useGlobalSpacing: useGlobalSpacing ?? this.useGlobalSpacing,
+    useBottomSpacing: useBottomSpacing ?? this.useBottomSpacing,
+    useTopLeftSpacing: useTopLeftSpacing ?? this.useTopLeftSpacing,
+    useGlobalGradientHeight: useGlobalGradientHeight ?? this.useGlobalGradientHeight,
+    useTopGradientHeight: useTopGradientHeight ?? this.useTopGradientHeight,
+    useBottomGradientHeight: useBottomGradientHeight ?? this.useBottomGradientHeight,
   );
 }
 
@@ -135,6 +350,7 @@ class TextItem {
     this.imagePos = TextImagePos.left,
     this.imageSize = 100, // picture height as % of the text height
     this.imageGap = 15, // gap between picture and text as % of the text height
+    this.customFontPath,
   });
 
   final int id;
@@ -162,6 +378,10 @@ class TextItem {
   TextImagePos imagePos;
   double imageSize;
   double imageGap;
+
+  /// Path to a custom font file (.ttf/.otf) loaded by the user.
+  /// If set, this font will be used instead of [fontFamily].
+  String? customFontPath;
 
   bool get useCustomGradient => !rainbow && gradientColors.length >= 2;
 }

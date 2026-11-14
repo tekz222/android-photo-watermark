@@ -61,6 +61,10 @@ class Project {
     this.previewFailed = const {},
     this.previewPhoto = const {},
     this.previewLogo = const {},
+    // New: dual logo sets
+    this.logoSetMode = LogoSetMode.single,
+    this.logoSetA,
+    this.logoSetB,
   }) : textJob = Future<void>.value();
 
   final String id;
@@ -98,6 +102,11 @@ class Project {
   String? currentAlbum;
   ProcessResult? lastResult;
   bool processing;
+
+  // Dual logo sets
+  LogoSetMode logoSetMode;
+  LogoSet? logoSetA;
+  LogoSet? logoSetB;
   bool cancelRequested;
   int done;
   int total;
@@ -180,6 +189,10 @@ class Project {
       bottomGradientHeight: bottomGradientHeight,
       gradientColor: gradientColor,
       gradientOpacity: gradientOpacity,
+      // New: dual logo sets
+      logoSetMode: logoSetMode,
+      logoSetA: logoSetA,
+      logoSetB: logoSetB,
       // Empty save state
       savedPaths: {},
       currentAlbum: null,
@@ -246,6 +259,10 @@ class Project {
       'previewVersion': previewVersion,
       'previewToken': previewToken,
       'textTemplate': textTemplate,
+      // New: dual logo sets
+      'logoSetMode': logoSetMode.index,
+      'logoSetA': logoSetA?.toJson(),
+      'logoSetB': logoSetB?.toJson(),
     };
   }
 
@@ -328,6 +345,15 @@ class Project {
       previewVersion: json['previewVersion'] as int? ?? 0,
       previewToken: json['previewToken'] as int? ?? 0,
       textTemplate: json['textTemplate'] as Map<String, dynamic>?,
+      // New: dual logo sets
+      logoSetMode: LogoSetMode.values[
+          (json['logoSetMode'] as int?)?.clamp(0, LogoSetMode.values.length - 1) ?? 0],
+      logoSetA: json['logoSetA'] != null
+          ? LogoSet.fromJson(json['logoSetA'] as Map<String, dynamic>)
+          : null,
+      logoSetB: json['logoSetB'] != null
+          ? LogoSet.fromJson(json['logoSetB'] as Map<String, dynamic>)
+          : null,
     );
   }
 
@@ -386,6 +412,7 @@ class Project {
     'imagePos': t.imagePos.index,
     'imageSize': t.imageSize,
     'imageGap': t.imageGap,
+    'customFontPath': t.customFontPath,
   };
 
   static Future<TextItem> _textFromJson(Map<String, dynamic> m) async {
@@ -416,6 +443,7 @@ class Project {
       imagePos: TextImagePos.values[(m['imagePos'] as num?)?.toInt() ?? 2],
       imageSize: (m['imageSize'] as num?)?.toDouble() ?? 100.0,
       imageGap: (m['imageGap'] as num?)?.toDouble() ?? 15.0,
+      customFontPath: m['customFontPath'] as String?,
     );
   }
 

@@ -116,6 +116,14 @@ class WatermarkRequest {
     this.gradientColor = 0xFF000000,
     this.gradientOpacity = 1.0,
     this.imageSettings,
+    // Extra logos for bottom row (above leftmost/rightmost)
+    this.bottomLeftTopLogo,
+    this.bottomRightTopLogo,
+    this.bottomLeftTopMargin = 2.0,
+    this.bottomRightTopMargin = 2.0,
+    // Extra logo for top-left row (below leftmost)
+    this.topLeftBottomLogo,
+    this.topLeftBottomMargin = 2.0,
   });
 
   final ImageSrc photo;
@@ -124,6 +132,16 @@ class WatermarkRequest {
   final List<ImageSrc> bottomLogos;
   final List<ImageSrc> topLeftLogos;
   final ImageSrc? cornerLogo;
+
+  // Extra logos for bottom row (placed above the main row)
+  final ImageSrc? bottomLeftTopLogo;   // Above leftmost bottom logo
+  final ImageSrc? bottomRightTopLogo;  // Above rightmost bottom logo
+  final double bottomLeftTopMargin;
+  final double bottomRightTopMargin;
+
+  // Extra logo for top-left row (placed below the main row)
+  final ImageSrc? topLeftBottomLogo;   // Below leftmost top-left logo
+  final double topLeftBottomMargin;
 
   // Fractions of the photo's shortest side.
   final double bottomHeight;
@@ -219,6 +237,51 @@ class WatermarkRequest {
   double effectiveCornerMarginRight() => imageSettings?.enabled == true && imageSettings?.cornerLogoMarginRight != null
       ? imageSettings!.cornerLogoMarginRight!
       : cornerMarginRight;
+
+  /// Returns the effective spacing for this image (custom or global).
+  double effectiveSpacing() => imageSettings?.enabled == true && imageSettings?.logoSpacing != null
+      ? imageSettings!.logoSpacing!
+      : spacing;
+
+  /// Returns the effective bottom row spacing for this image (custom or global).
+  double effectiveBottomSpacing() {
+    final s = imageSettings;
+    if (s?.enabled == true) {
+      if (s!.useGlobalSpacing && s.logoSpacing != null) return s.logoSpacing!;
+      if (s.useBottomSpacing && s.logoSpacing != null) return s.logoSpacing!;
+    }
+    return spacing;
+  }
+
+  /// Returns the effective top-left row spacing for this image (custom or global).
+  double effectiveTopLeftSpacing() {
+    final s = imageSettings;
+    if (s?.enabled == true) {
+      if (s!.useGlobalSpacing && s.logoSpacing != null) return s.logoSpacing!;
+      if (s.useTopLeftSpacing && s.logoSpacing != null) return s.logoSpacing!;
+    }
+    return spacing;
+  }
+
+  /// Returns the effective top gradient height for this image (custom or global).
+  double effectiveTopGradientHeight() {
+    final s = imageSettings;
+    if (s?.enabled == true) {
+      if (s!.useGlobalGradientHeight && s.topGradientHeight != null) return s.topGradientHeight!;
+      if (s.useTopGradientHeight && s.topGradientHeight != null) return s.topGradientHeight!;
+    }
+    return topGradientHeight ?? topLeftHeight;
+  }
+
+  /// Returns the effective bottom gradient height for this image (custom or global).
+  double effectiveBottomGradientHeight() {
+    final s = imageSettings;
+    if (s?.enabled == true) {
+      if (s!.useGlobalGradientHeight && s.bottomGradientHeight != null) return s.bottomGradientHeight!;
+      if (s.useBottomGradientHeight && s.bottomGradientHeight != null) return s.bottomGradientHeight!;
+    }
+    return bottomGradientHeight ?? bottomHeight;
+  }
 }
 
 /// Composites the logos and texts onto the photo and returns encoded bytes.
@@ -264,7 +327,7 @@ Uint8List renderWatermark(WatermarkRequest r, {DecodedCache? cache}) {
 
   // Draw top gradient if enabled.
   if (r.topGradient) {
-    final gradHeight = ((r.topGradientHeight ?? r.effectiveTopLeftHeight()) * shortest).round().clamp(1, photo.height);
+    final gradHeight = (r.effectiveTopGradientHeight() * shortest).round().clamp(1, photo.height);
     final color = r.gradientColor;
     final opacity = r.gradientOpacity.clamp(0.0, 1.0);
     final rColor = (color >> 16) & 0xFF;
@@ -275,7 +338,7 @@ Uint8List renderWatermark(WatermarkRequest r, {DecodedCache? cache}) {
 
   // Draw bottom gradient if enabled.
   if (r.bottomGradient) {
-    final gradHeight = ((r.bottomGradientHeight ?? r.effectiveBottomHeight()) * shortest).round().clamp(1, photo.height);
+    final gradHeight = (r.effectiveBottomGradientHeight() * shortest).round().clamp(1, photo.height);
     final color = r.gradientColor;
     final opacity = r.gradientOpacity.clamp(0.0, 1.0);
     final rColor = (color >> 16) & 0xFF;
@@ -288,37 +351,87 @@ Uint8List renderWatermark(WatermarkRequest r, {DecodedCache? cache}) {
   final local = <String, img.Image?>{};
   img.Image? decode(ImageSrc s) => local.putIfAbsent(s.key, () => load(s));
 
-  final gap = shortest * r.spacing;
+  // Per-row spacing (may differ if per-image settings override).
+  final topGap = shortest * r.effectiveTopLeftSpacing();
+  final bottomGap = shortest * r.effectiveBottomSpacing();
 
   // Top-left / top row (lowest layer). Always anchored to the left; only the
   // bottom row honors the "centered" option.
   final topH = shortest * r.effectiveTopLeftHeight();
+  final topRowTop = shortest * r.effectiveTopLeftTop();
+  final topRowStartX = shortest * r.effectiveTopLeftLeft();
   _drawRow(
     photo,
     r.topLeftLogos,
     decode,
     height: topH,
-    startX: shortest * r.effectiveTopLeftLeft(),
-    top: shortest * r.effectiveTopLeftTop(),
+    startX: topRowStartX,
+    top: topRowTop,
     opacity: r.rowOpacity,
-    gap: gap,
+    gap: topGap,
   );
+
+  // Extra logo for top-left row: below the leftmost logo.
+  if (r.topLeftBottomLogo != null && r.topLeftLogos.isNotEmpty) {
+    final logo = decode(r.topLeftBottomLogo!);
+    if (logo != null) {
+      final h = (shortest * r.effectiveTopLeftHeight()).round().clamp(1, photo.height);
+      final resized = _resize(logo, height: h);
+      final margin = (shortest * r.topLeftBottomMargin).round();
+      final x = topRowStartX.round();
+      final y = topRowTop + topH + margin;
+      if (y + h <= photo.height) img.compositeImage(photo, resized, dstX: x, dstY: y.toInt());
+    }
+  }
 
   // Bottom row.
   final bottomH = shortest * r.effectiveBottomHeight();
   final bottomStartX = r.centered
-      ? (photo.width - _rowWidth(r.bottomLogos, decode, bottomH, gap)) / 2
+      ? (photo.width - _rowWidth(r.bottomLogos, decode, bottomH, bottomGap)) / 2
       : shortest * r.effectiveBottomMargin();
+  final bottomRowTop = photo.height - shortest * r.effectiveBottomMargin() - bottomH;
   _drawRow(
     photo,
     r.bottomLogos,
     decode,
     height: bottomH,
     startX: bottomStartX,
-    top: photo.height - shortest * r.effectiveBottomMargin() - bottomH,
+    top: bottomRowTop,
     opacity: r.rowOpacity,
-    gap: gap,
+    gap: bottomGap,
   );
+
+  // Extra logos for bottom row: above leftmost and rightmost logos.
+  // These sit above the main bottom row, at the same X positions as the first/last logos.
+  if (r.bottomLeftTopLogo != null && r.bottomLogos.isNotEmpty) {
+    final logo = decode(r.bottomLeftTopLogo!);
+    if (logo != null) {
+      final h = (shortest * r.effectiveBottomHeight()).round().clamp(1, photo.height);
+      final resized = _resize(logo, height: h);
+      final margin = (shortest * r.bottomLeftTopMargin).round();
+      final x = bottomStartX.round();
+      final y = bottomRowTop - margin - h;
+      if (y >= 0) {
+        final dstY = y.clamp(0, photo.height - h).toInt();
+        img.compositeImage(photo, resized, dstX: x, dstY: dstY);
+      }
+    }
+  }
+  if (r.bottomRightTopLogo != null && r.bottomLogos.isNotEmpty) {
+    final logo = decode(r.bottomRightTopLogo!);
+    if (logo != null) {
+      final h = (shortest * r.effectiveBottomHeight()).round().clamp(1, photo.height);
+      final resized = _resize(logo, height: h);
+      final margin = (shortest * r.bottomRightTopMargin).round();
+      final rowWidth = _rowWidth(r.bottomLogos, decode, bottomH, bottomGap);
+      final x = (bottomStartX + rowWidth - resized.width).round();
+      final y = bottomRowTop - margin - h;
+      if (y >= 0) {
+        final dstY = y.clamp(0, photo.height - h).toInt();
+        img.compositeImage(photo, resized, dstX: x, dstY: dstY);
+      }
+    }
+  }
 
   // Top-right main logo.
   final corner = r.cornerLogo;

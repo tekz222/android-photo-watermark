@@ -12,7 +12,8 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart' show PointerScrollEvent;
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show LogicalKeyboardKey, rootBundle;
+import 'package:flutter/services.dart' show LogicalKeyboardKey, rootBundle, MethodChannel, ui;
+import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -98,8 +99,25 @@ class _HomePageState extends State<HomePage> {
     return _photoPaths.where((p) => p.split('/').last.split('\\').last.toLowerCase().contains(query)).toList();
   }
 
-  List<LogoItem> get _bottomLogos => _p.bottomLogos;
-  List<LogoItem> get _topLeftLogos => _p.topLeftLogos;
+  // Returns the bottom logos for the CURRENT mode.
+  // In single mode: prefers Set A if it exists (user edited via section 2), else project's bottomLogos.
+  // In dual-set mode: uses Set A's bottomLogos.
+  List<LogoItem> get _bottomLogos {
+    if (_logoSetMode == LogoSetMode.single) {
+      return _logoSetA?.bottomLogos ?? _p.bottomLogos;
+    }
+    return _logoSetA?.bottomLogos ?? [];
+  }
+
+  // Returns the top-left logos for the CURRENT mode.
+  // In single mode: prefers Set A if it exists, else project's topLeftLogos.
+  // In dual-set mode: uses Set A's topLeftLogos.
+  List<LogoItem> get _topLeftLogos {
+    if (_logoSetMode == LogoSetMode.single) {
+      return _logoSetA?.topLeftLogos ?? _p.topLeftLogos;
+    }
+    return _logoSetA?.topLeftLogos ?? [];
+  }
   LogoItem? get _cornerLogo => _p.cornerLogo;
   set _cornerLogo(LogoItem? v) => _p.cornerLogo = v;
   List<TextItem> get _texts => _p.texts;
@@ -195,6 +213,46 @@ class _HomePageState extends State<HomePage> {
   // Per-image settings getter/setter
   ImageSettings _imageSettingsFor(String photoPath) =>
       _p.imageSettings[photoPath] ?? ImageSettings();
+
+  // Dual logo sets getters/setters
+  LogoSetMode get _logoSetMode => _p.logoSetMode;
+  set _logoSetMode(LogoSetMode v) => _p.logoSetMode = v;
+  LogoSet? get _logoSetA => _p.logoSetA;
+  set _logoSetA(LogoSet? v) => _p.logoSetA = v;
+  LogoSet? get _logoSetB => _p.logoSetB;
+  set _logoSetB(LogoSet? v) => _p.logoSetB = v;
+
+  /// Returns the appropriate logo set for the given photo index based on [logoSetMode].
+  LogoSet? _logoSetForIndex(int index) {
+    switch (_logoSetMode) {
+      case LogoSetMode.single:
+        // Use legacy single set (bottomLogos, topLeftLogos, cornerLogo)
+        return null;
+      case LogoSetMode.splitHalf:
+        final half = (_photoPaths.length / 2).ceil();
+        return index < half ? _logoSetA : _logoSetB;
+      case LogoSetMode.alternating:
+        return index.isEven ? _logoSetA : _logoSetB;
+    }
+  }
+
+  /// Returns the bottom logos for the given photo index.
+  List<LogoItem> _bottomLogosFor(int index) {
+    final set = _logoSetForIndex(index);
+    if (set != null) return set.bottomLogos;
+    return _bottomLogos;
+  }
+
+  /// Returns the top-left logos for the given photo index.
+  List<LogoItem> _topLeftLogosFor(int index) {
+    final set = _logoSetForIndex(index);
+    if (set != null) return set.topLeftLogos;
+    return _topLeftLogos;
+  }
+
+  /// Returns the corner logo for the given photo index.
+  /// Always returns the global corner logo (shared across both sets).
+  LogoItem? _cornerLogoFor(int index) => _cornerLogo;
 
   /// Whether the current preview image has per-image settings enabled.
   bool get _currentImageHasCustomSettings {
@@ -297,6 +355,7 @@ class _HomePageState extends State<HomePage> {
       'imagePos': t.imagePos.index,
       'imageSize': t.imageSize,
       'imageGap': t.imageGap,
+      'customFontPath': t.customFontPath,
     };
   }
 
@@ -321,6 +380,7 @@ class _HomePageState extends State<HomePage> {
       imagePos: TextImagePos.values[posIndex],
       imageSize: (m['imageSize'] as num?)?.toDouble() ?? 100.0,
       imageGap: (m['imageGap'] as num?)?.toDouble() ?? 15.0,
+      customFontPath: m['customFontPath'] as String?,
     );
     final ip = m['imagePath'] as String?;
     if (ip != null && File(ip).existsSync()) {
@@ -766,6 +826,27 @@ class _HomePageState extends State<HomePage> {
     if (_currentAlbum != null && !_processing) _saveAll();
   }
 
+  /// Extract file paths from drag data (handles String paths, Uri file:// URIs, and Lists).
+  List<String> _extractPaths(Object data) {
+    final paths = <String>[];
+    if (data is String) {
+      // Could be a plain path or a file:// URI
+      if (data.startsWith('file://')) {
+        final uri = Uri.parse(data);
+        paths.add(uri.toFilePath(windows: true));
+      } else {
+        paths.add(data);
+      }
+    } else if (data is Uri) {
+      paths.add(data.toFilePath(windows: true));
+    } else if (data is List) {
+      for (final item in data) {
+        paths.addAll(_extractPaths(item));
+      }
+    }
+    return paths;
+  }
+
   /// Handle files dropped from the OS (Windows Explorer, etc.)
   Future<void> _handleDroppedFiles(List<String> paths) async {
     if (_processing) return;
@@ -886,6 +967,90 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  /// Creates a LogoItem from an image file path (copies to app storage).
+  Future<LogoItem> _makeLogoItem(String path) async {
+    final bytes = await File(path).readAsBytes();
+    final name = _logoName(p.basename(path));
+    final sig = Project.imageSig(bytes);
+    final appPath = await _copyBytesToApp(bytes, 'logos');
+    return LogoItem(Project.nextLogoId(), appPath, name, bytes, sig,
+        const <String>{}, const <String>{});
+  }
+
+  /// Calculates the optimal logo height (as % of shortest side) so that
+  /// all logos in [items] fit exactly from edge-to-edge, respecting the
+  /// configured margin and gap.
+  /// Returns null if calculation not possible (e.g., no photos loaded).
+  double? _calculateAutoArrangeSize({
+    required List<LogoItem> items,
+    required double leftMargin,
+    required double rightMargin,
+    required double gap,
+    required bool centered,
+  }) {
+    if (items.isEmpty || _photoPaths.isEmpty) return null;
+
+    // Get the current photo dimensions
+    final path = _photoPaths[_previewIndex.clamp(0, _photoPaths.length - 1)];
+    final bytes = File(path).readAsBytesSync();
+    final img.Image? decoded = img.decodeImage(bytes);
+    if (decoded == null) return null;
+
+    final photoWidth = decoded.width.toDouble();
+    final photoHeight = decoded.height.toDouble();
+    final shortestSide = math.min(photoWidth, photoHeight).toDouble();
+
+    // Sum of aspect ratios (width/height) for all logos
+    double totalAspectRatio = 0;
+    for (final item in items) {
+      final logoImg = img.decodeImage(item.bytes);
+      if (logoImg != null) {
+        totalAspectRatio += logoImg.width / logoImg.height;
+      }
+    }
+    if (totalAspectRatio == 0) return null;
+
+    // Available width for logos (respecting margins)
+    final availableWidth = photoWidth - (leftMargin + rightMargin) / 100.0 * shortestSide;
+    // Total gap space between logos
+    final totalGap = gap / 100.0 * shortestSide * (items.length - 1);
+
+    // Calculate logo height that fits all logos + gaps in available width
+    // height * totalAspectRatio + totalGap = availableWidth
+    // height = (availableWidth - totalGap) / totalAspectRatio
+    final logoHeightPx = (availableWidth - totalGap) / totalAspectRatio;
+
+    // Convert to percentage of shortest side
+    final logoHeightPct = (logoHeightPx / shortestSide) * 100.0;
+
+    // Clamp to reasonable bounds (1% to 80%)
+    return logoHeightPct.clamp(1.0, 80.0);
+  }
+
+  /// Auto-arrange the logo size for a row to fit edge-to-edge.
+  Future<void> _autoArrange({
+    required List<LogoItem> items,
+    required double leftMargin,
+    required double rightMargin,
+    required double gap,
+    required bool centered,
+    required ValueChanged<double> onSizeChanged,
+  }) async {
+    final size = _calculateAutoArrangeSize(
+      items: items,
+      leftMargin: leftMargin,
+      rightMargin: rightMargin,
+      gap: gap,
+      centered: centered,
+    );
+    if (size != null) {
+      onSizeChanged(size);
+      _snack('Tamanho ajustado automaticamente: ${size.toStringAsFixed(1)}%');
+    } else {
+      _snack('Não foi possível calcular (adicione fotos e logos primeiro)');
+    }
+  }
+
   Future<void> _pickCornerLogo() async {
     final x = await _picker.pickImage(source: ImageSource.gallery);
     if (x == null) return;
@@ -905,6 +1070,59 @@ class _HomePageState extends State<HomePage> {
       if (mounted) setState(() => _importing = false);
     }
   }
+
+  Future<void> _pickSaveDir() async {
+    final pickedDir = await FilePicker.getDirectoryPath(
+      dialogTitle: 'Escolha a pasta onde salvar as fotos com marca d\'água',
+      initialDirectory: _saveDir ?? (await getApplicationDocumentsDirectory()).path,
+    );
+    if (pickedDir == null) return; // User cancelled
+    setState(() => _saveDir = pickedDir);
+    await _writeSettings(); // Persist the chosen directory
+    _snack('Pasta de saída alterada para: $pickedDir');
+  }
+
+  Future<void> _pickCustomFont(TextItem t) async {
+    final List<PlatformFile>? files = await FilePicker.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['ttf', 'otf'],
+      dialogTitle: 'Selecione um arquivo de fonte (.ttf/.otf)',
+    );
+    if (files == null || files.isEmpty) return;
+
+    final file = files.first;
+    final path = file.path;
+    if (path == null) {
+      _snack('Erro ao ler o arquivo de fonte');
+      return;
+    }
+
+    // Copy font to app storage
+    final bytes = await File(path).readAsBytes();
+    final fontName = p.basename(path);
+    final appPath = await _copyBytesToApp(bytes, 'fonts');
+
+    // Load font on Windows via platform channel
+    if (Platform.isWindows) {
+      try {
+        await _fontChannel.invokeMethod('loadFont', {'path': appPath});
+      } catch (e) {
+        _snack('Erro ao carregar fonte: $e');
+        return;
+      }
+    }
+
+    // Update the text item to use the custom font
+    setState(() {
+      t.customFontPath = appPath;
+      t.fontFamily = fontName.replaceAll(RegExp(r'\.(ttf|otf)$', caseSensitive: false), '');
+    });
+    _schedulePreview();
+    _snack('Fonte personalizada carregada: ${t.fontFamily}');
+  }
+
+  // Platform channel for Windows font loading
+  static const MethodChannel _fontChannel = MethodChannel('jcv.watermarker/font');
 
   // ---- Preview ----
 
@@ -1028,17 +1246,21 @@ class _HomePageState extends State<HomePage> {
   /// logo copies (the saved image still uses the full-resolution originals).
   /// Keys are stable so the worker reuses its decoded images.
   WatermarkRequest _previewRequest(String path, Uint8List photoSmall) {
+    final index = _photoPaths.indexOf(path);
     ImageSrc logo(LogoItem e) {
       final small = _previewLogo[e.id];
       return small != null
           ? ImageSrc('ls:${e.id}', small)
           : ImageSrc('l:${e.id}', e.bytes);
     }
+    final bottomLogos = _bottomLogosFor(index);
+    final topLeftLogos = _topLeftLogosFor(index);
+    final cornerLogo = _cornerLogoFor(index);
     return WatermarkRequest(
       photo: ImageSrc('ps:$path', photoSmall),
-      bottomLogos: _bottomLogos.map(logo).toList(),
-      topLeftLogos: _topLeftLogos.map(logo).toList(),
-      cornerLogo: _cornerLogo == null ? null : logo(_cornerLogo!),
+      bottomLogos: bottomLogos.map(logo).toList(),
+      topLeftLogos: topLeftLogos.map(logo).toList(),
+      cornerLogo: cornerLogo == null ? null : logo(cornerLogo!),
       bottomHeight: _logoSize / 100,
       bottomMargin: _bottomMargin / 100,
       bottomLeft: _leftMargin / 100,
@@ -1064,13 +1286,18 @@ class _HomePageState extends State<HomePage> {
   }
 
   WatermarkRequest _request(Uint8List photoBytes,
-      {int? maxDim, int quality = 95, bool png = false, String? path}) {
+      {int? maxDim, int quality = 95, bool png = false, String? path, int? index}) {
     ImageSrc logo(LogoItem e) => ImageSrc('l:${e.id}', e.bytes);
+    final i = index ?? (_photoPaths.indexOf(path ?? ''));
+    final bottomLogos = _bottomLogosFor(i >= 0 ? i : 0);
+    final topLeftLogos = _topLeftLogosFor(i >= 0 ? i : 0);
+    final cornerLogo = _cornerLogoFor(i >= 0 ? i : 0);
+    final logoSet = _logoSetForIndex(i >= 0 ? i : 0);
     return WatermarkRequest(
       photo: ImageSrc('full', photoBytes),
-      bottomLogos: _bottomLogos.map(logo).toList(),
-      topLeftLogos: _topLeftLogos.map(logo).toList(),
-      cornerLogo: _cornerLogo == null ? null : logo(_cornerLogo!),
+      bottomLogos: bottomLogos.map(logo).toList(),
+      topLeftLogos: topLeftLogos.map(logo).toList(),
+      cornerLogo: cornerLogo == null ? null : logo(cornerLogo!),
       bottomHeight: _logoSize / 100,
       bottomMargin: _bottomMargin / 100,
       bottomLeft: _leftMargin / 100,
@@ -1094,6 +1321,13 @@ class _HomePageState extends State<HomePage> {
       gradientColor: _gradientColor,
       gradientOpacity: _gradientOpacity,
       imageSettings: path != null ? _imageSettingsFor(path) : null,
+      // Extra logos from LogoSet
+      bottomLeftTopLogo: logoSet?.bottomLeftTopLogo == null ? null : logo(logoSet!.bottomLeftTopLogo!),
+      bottomRightTopLogo: logoSet?.bottomRightTopLogo == null ? null : logo(logoSet!.bottomRightTopLogo!),
+      bottomLeftTopMargin: (logoSet?.bottomLeftTopMargin ?? 2.0) / 100,
+      bottomRightTopMargin: (logoSet?.bottomRightTopMargin ?? 2.0) / 100,
+      topLeftBottomLogo: logoSet?.topLeftBottomLogo == null ? null : logo(logoSet!.topLeftBottomLogo!),
+      topLeftBottomMargin: (logoSet?.topLeftBottomMargin ?? 2.0) / 100,
     );
   }
 
@@ -1644,9 +1878,12 @@ class _HomePageState extends State<HomePage> {
     var saved = 0, failed = 0;
     while (mounted) {
       String? next;
-      for (final path in _unsavedPaths) {
-        if (!processed.contains(path)) {
+      int nextIndex = -1;
+      for (int i = 0; i < _photoPaths.length; i++) {
+        final path = _photoPaths[i];
+        if (!_savedPaths.contains(path) && !processed.contains(path)) {
           next = path;
+          nextIndex = i;
           break;
         }
       }
@@ -1657,7 +1894,7 @@ class _HomePageState extends State<HomePage> {
         // High-quality JPEG: same kind of file size as the original photo
         // (lossless PNG made 10 MB+ files).
         final out =
-            await compute(renderWatermark, _request(bytes, quality: 92, path: next));
+            await compute(renderWatermark, _request(bytes, quality: 92, path: next, index: nextIndex));
         final originalName = p.basename(next);
         final ts = DateTime.now().millisecondsSinceEpoch;
         final outputName = 'jcv_${ts}_$originalName';
@@ -1881,13 +2118,13 @@ class _HomePageState extends State<HomePage> {
                 ? _exportProject
                 : null,
             icon: const Icon(Icons.download_outlined, size: 18),
-            label: const Text('Exportar projeto'),
+            label: const Text('Exportar'),
           ),
           const SizedBox(width: 4),
           TextButton.icon(
             onPressed: !_processing ? _importProject : null,
             icon: const Icon(Icons.upload_outlined, size: 18),
-            label: const Text('Importar projeto ou logos'),
+            label: const Text('Importar'),
           ),
           const SizedBox(width: 4),
           MenuAnchor(
@@ -1985,30 +2222,35 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _removeProject(int index) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Remover projeto?'),
-        content: Text(
-            'O projeto "${_projectManager.projects[index].name}" será removido. '
-            'As imagens já salvas nas pastas são mantidas.'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancelar')),
-          FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Remover')),
-        ],
-      ),
-    );
-    if (ok == true) {
-      await _projectManager.removeProject(index);
-      _previewToken++;
-      _worker.cancelPending();
-      _kickPreview();
-      if (mounted) setState(() {});
+    final project = _projectManager.projects[index];
+    final hasPhotos = project.photoPaths.isNotEmpty;
+
+    if (hasPhotos) {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Remover projeto?'),
+          content: Text(
+              'O projeto "${project.name}" será removido. '
+              'As imagens já salvas nas pastas são mantidas.'),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancelar')),
+            FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Remover')),
+          ],
+        ),
+      );
+      if (ok != true) return;
     }
+
+    await _projectManager.removeProject(index);
+    _previewToken++;
+    _worker.cancelPending();
+    _kickPreview();
+    if (mounted) setState(() {});
   }
 
   // ---- Left panel (settings) ----
@@ -2023,20 +2265,105 @@ class _HomePageState extends State<HomePage> {
           if (_lastResult != null) _resultBanner(),
           if (_currentAlbum != null && !_processing) _lockedBanner(),
           _photosSection(),
+          _logoSetsSection(),
           _logoSection(
-            number: 2,
+            number: 3,
+            title: 'Logos do canto superior esquerdo',
+            placement: Placement.topLeft,
+            items: _topLeftLogos,
+            otherItems: _bottomLogos,
+            hint: 'Fileira no topo, sempre da esquerda para a direita.',
+            onAdd: () => _pickLogos(_topLeftLogos),
+            sliders: [
+              Row(
+                children: [
+                  Expanded(
+                    child: _slider('Tamanho (todas)', _logoSize, 5, 30,
+                        (v) => setState(() => _logoSize = v),
+                        enabled: !_currentImageHasCustomSettings),
+                  ),
+                  if (!_controlsEnabled)
+                    const SizedBox(width: 8)
+                  else
+                    IconButton(
+                      icon: const Icon(Icons.auto_fix_high, size: 20),
+                      tooltip: 'Ajustar automaticamente (edge-to-edge)',
+                      onPressed: () => _autoArrange(
+                        items: _topLeftLogos,
+                        leftMargin: _leftMargin,
+                        rightMargin: _leftMargin, // top row uses left margin for both sides
+                        gap: _logoSpacing,
+                        centered: false,
+                        onSizeChanged: (v) => setState(() => _logoSize = v),
+                      ),
+                    ),
+                ],
+              ),
+              _slider('Espaço entre as logos (todas)', _logoSpacing, 0, 10,
+                  (v) => setState(() => _logoSpacing = v),
+                  enabled: !_currentImageHasCustomSettings),
+              _slider('Distância da borda esquerda (todas)', _leftMargin, 0,
+                  15, (v) => setState(() => _leftMargin = v),
+                  enabled: !_currentImageHasCustomSettings),
+              _slider('Opacidade (todas)', _logoOpacity, 0, 100,
+                  (v) => setState(() => _logoOpacity = v)),
+              _slider('Distância da borda superior', _topMargin, 0, 15,
+                  (v) => setState(() => _topMargin = v),
+                  enabled: !_currentImageHasCustomSettings),
+              Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: FilterChip(
+                  label: const Text('Gradiente superior'),
+                  selected: _topGradient,
+                  onSelected: !_controlsEnabled
+                      ? null
+                      : (s) {
+                          setState(() => _topGradient = s);
+                          _schedulePreview();
+                        },
+                ),
+              ),
+              if (_topGradient)
+                _slider('Altura do gradiente superior', _topGradientHeight, 1, 50,
+                    (v) => setState(() => _topGradientHeight = v)),
+            ],
+          ),
+          _logoSection(
+            number: 4,
             title: 'Logos da base',
             placement: Placement.bottom,
             items: _bottomLogos,
+            otherItems: _topLeftLogos,
             hint: 'Fileira na base, da esquerda para a direita ou centralizada. '
                 'Tamanho, espaço, opacidade e distância da esquerda valem para '
                 'as duas fileiras.',
             onAdd: () => _pickLogos(_bottomLogos),
             sliders: [
               _alignmentChooser(),
-              _slider('Tamanho (todas)', _logoSize, 5, 30,
-                  (v) => setState(() => _logoSize = v),
-                  enabled: !_currentImageHasCustomSettings),
+              Row(
+                children: [
+                  Expanded(
+                    child: _slider('Tamanho (todas)', _logoSize, 5, 30,
+                        (v) => setState(() => _logoSize = v),
+                        enabled: !_currentImageHasCustomSettings),
+                  ),
+                  if (!_controlsEnabled)
+                    const SizedBox(width: 8)
+                  else
+                    IconButton(
+                      icon: const Icon(Icons.auto_fix_high, size: 20),
+                      tooltip: 'Ajustar automaticamente (edge-to-edge)',
+                      onPressed: () => _autoArrange(
+                        items: _bottomLogos,
+                        leftMargin: _centered ? 0 : _leftMargin,
+                        rightMargin: _centered ? 0 : _leftMargin,
+                        gap: _logoSpacing,
+                        centered: _centered,
+                        onSizeChanged: (v) => setState(() => _logoSize = v),
+                      ),
+                    ),
+                ],
+              ),
               _slider('Espaço entre as logos (todas)', _logoSpacing, 0, 10,
                   (v) => setState(() => _logoSpacing = v),
                   enabled: !_currentImageHasCustomSettings),
@@ -2073,46 +2400,6 @@ class _HomePageState extends State<HomePage> {
               ],
             ],
           ),
-          _logoSection(
-            number: 3,
-            title: 'Logos do canto superior esquerdo',
-            placement: Placement.topLeft,
-            items: _topLeftLogos,
-            hint: 'Fileira no topo, sempre da esquerda para a direita.',
-            onAdd: () => _pickLogos(_topLeftLogos),
-            sliders: [
-              _slider('Tamanho (todas)', _logoSize, 5, 30,
-                  (v) => setState(() => _logoSize = v),
-                  enabled: !_currentImageHasCustomSettings),
-              _slider('Espaço entre as logos (todas)', _logoSpacing, 0, 10,
-                  (v) => setState(() => _logoSpacing = v),
-                  enabled: !_currentImageHasCustomSettings),
-              _slider('Distância da borda esquerda (todas)', _leftMargin, 0,
-                  15, (v) => setState(() => _leftMargin = v),
-                  enabled: !_currentImageHasCustomSettings),
-              _slider('Opacidade (todas)', _logoOpacity, 0, 100,
-                  (v) => setState(() => _logoOpacity = v)),
-              _slider('Distância da borda superior', _topMargin, 0, 15,
-                  (v) => setState(() => _topMargin = v),
-                  enabled: !_currentImageHasCustomSettings),
-              Padding(
-                padding: const EdgeInsets.only(top: 10),
-                child: FilterChip(
-                  label: const Text('Gradiente superior'),
-                  selected: _topGradient,
-                  onSelected: !_controlsEnabled
-                      ? null
-                      : (s) {
-                          setState(() => _topGradient = s);
-                          _schedulePreview();
-                        },
-                ),
-              ),
-              if (_topGradient)
-                _slider('Altura do gradiente superior', _topGradientHeight, 1, 50,
-                    (v) => setState(() => _topGradientHeight = v)),
-            ],
-          ),
           _cornerSection(),
           _imageSettingsSection(),
           _textsSection(),
@@ -2124,6 +2411,8 @@ class _HomePageState extends State<HomePage> {
 
   Widget _photosSection() {
     final small = Theme.of(context).textTheme.bodySmall;
+    final scheme = Theme.of(context).colorScheme;
+
     return _Section(
       number: 1,
       title: 'Fotos',
@@ -2149,123 +2438,100 @@ class _HomePageState extends State<HomePage> {
                 Text('${_photoPaths.length} foto(s)', style: small),
             ],
           ),
-          // Drag-and-drop zone (shown when no photos or always as drop target)
-          DragTarget<String>(
-            builder: (context, candidateData, rejectedData) {
-              final isHovering = candidateData.isNotEmpty;
-              return AnimatedContainer(
-                duration: const Duration(milliseconds: 150),
-                curve: Curves.easeOut,
-                decoration: BoxDecoration(
-                  border: Border.all(
-                    color: isHovering
-                        ? Theme.of(context).colorScheme.primary
-                        : Theme.of(context).colorScheme.outlineVariant,
-                    width: isHovering ? 2 : 1,
-                    style: BorderStyle.solid,
-                  ),
-                  borderRadius: BorderRadius.circular(8),
-                  color: isHovering
-                      ? Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.3)
-                      : Colors.transparent,
-                ),
-                child: _photoPaths.isEmpty
-                    ? InkWell(
-                        onTap: _processing ? null : _pickPhotos,
-                        borderRadius: BorderRadius.circular(8),
-                        child: Container(
-                          height: 120,
-                          width: double.infinity,
-                          alignment: Alignment.center,
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                Icons.cloud_upload_outlined,
-                                size: 32,
-                                color: isHovering
-                                    ? Theme.of(context).colorScheme.primary
-                                    : Theme.of(context).colorScheme.outline,
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                isHovering
-                                    ? 'Solte as imagens aqui'
-                                    : 'Arraste fotos aqui ou clique para adicionar',
-                                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                  color: isHovering
-                                      ? Theme.of(context).colorScheme.primary
-                                      : Theme.of(context).colorScheme.outline,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      )
-                    : const SizedBox.shrink(), // When photos exist, the list below handles it
-              );
-            },
-            onWillAcceptWithDetails: (details) => true,
-            onAcceptWithDetails: (details) {
-              // Handle dropped files - details.data contains the file path
-              _handleDroppedFiles([details.data]);
-            },
-            onLeave: (_) {},
-          ),
-          if (_photoPaths.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            // Drag target wrapping the horizontal list for adding more photos
-            DragTarget<String>(
+          const SizedBox(height: 8),
+          // Empty state drop zone - ONLY rendered when no photos exist.
+          // Using `if` (not ternary) so it's completely removed from tree when photos exist.
+          if (_photoPaths.isEmpty)
+            DragTarget<Object>(
               builder: (context, candidateData, rejectedData) {
-                // Inner DropTarget handles hover state
-                return Scrollbar(
-                  thumbVisibility: true,
-                  trackVisibility: true,
-                  thickness: 6,
-                  radius: const Radius.circular(3),
-                  child: ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    physics: const ClampingScrollPhysics(),
-                    itemCount: _photoPaths.length + 1, // +1 for drop zone at end
-                    separatorBuilder: (_, __) => const SizedBox(width: 6),
-                    itemBuilder: (context, i) {
+                final isHovering = candidateData.isNotEmpty;
+                return AnimatedContainer(
+                  duration: const Duration(milliseconds: 150),
+                  curve: Curves.easeOut,
+                  decoration: BoxDecoration(
+                    border: Border.all(
+                      color: isHovering ? scheme.primary : scheme.outlineVariant,
+                      width: isHovering ? 2 : 1,
+                    ),
+                    borderRadius: BorderRadius.circular(8),
+                    color: isHovering
+                        ? scheme.primaryContainer.withValues(alpha: 0.3)
+                        : Colors.transparent,
+                  ),
+                  child: InkWell(
+                    onTap: _processing ? null : _pickPhotos,
+                    borderRadius: BorderRadius.circular(8),
+                    child: Container(
+                      height: 120,
+                      width: double.infinity,
+                      alignment: Alignment.center,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.cloud_upload_outlined,
+                            size: 32,
+                            color: isHovering ? scheme.primary : scheme.outline,
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            isHovering ? 'Solte as imagens aqui' : 'Arraste fotos aqui ou clique para adicionar',
+                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                              color: isHovering ? scheme.primary : scheme.outline,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              },
+              onWillAcceptWithDetails: (details) => true,
+              onAcceptWithDetails: (details) => _handleDroppedFiles(_extractPaths(details.data)),
+              onLeave: (_) {},
+            ),
+          // Photo list with "+" button - ONLY rendered when photos exist.
+          if (_photoPaths.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            DragTarget<Object>(
+              builder: (context, candidateData, rejectedData) {
+                final isHovering = candidateData.isNotEmpty;
+                return SizedBox(
+                  height: 70, // Fixed height for horizontal thumbnail strip
+                  child: Scrollbar(
+                    thumbVisibility: true,
+                    trackVisibility: true,
+                    thickness: 6,
+                    radius: const Radius.circular(3),
+                    child: ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      physics: const ClampingScrollPhysics(),
+                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                      itemCount: _photoPaths.length + 1, // +1 for "+" button
+                      separatorBuilder: (_, __) => const SizedBox(width: 6),
+                      itemBuilder: (context, i) {
                       if (i == _photoPaths.length) {
-                        // Drop zone at the end of the list
-                        return DragTarget<String>(
-                          builder: (context, candidateData, rejectedData) {
-                            final hovering = candidateData.isNotEmpty;
-                            return AnimatedContainer(
-                              duration: const Duration(milliseconds: 150),
-                              width: 60,
-                              height: 60,
-                              decoration: BoxDecoration(
-                                border: Border.all(
-                                  color: hovering
-                                      ? Theme.of(context).colorScheme.primary
-                                      : Theme.of(context).colorScheme.outlineVariant,
-                                  width: hovering ? 2 : 1,
-                                  style: BorderStyle.solid,
-                                ),
-                                borderRadius: BorderRadius.circular(8),
-                                color: hovering
-                                    ? Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.3)
-                                    : Colors.transparent,
-                              ),
-                              alignment: Alignment.center,
-                              child: Icon(
-                                Icons.add,
-                                size: 24,
-                                color: hovering
-                                    ? Theme.of(context).colorScheme.primary
-                                    : Theme.of(context).colorScheme.outline,
-                              ),
-                            );
-                          },
-                          onWillAcceptWithDetails: (details) => true,
-                          onAcceptWithDetails: (details) {
-                            _handleDroppedFiles([details.data]);
-                          },
-                          onLeave: (_) {},
+                        // "+" button at end - visual only; drops handled by outer DragTarget
+                        return AnimatedContainer(
+                          duration: const Duration(milliseconds: 150),
+                          width: 60,
+                          height: 60,
+                          decoration: BoxDecoration(
+                            border: Border.all(
+                              color: isHovering ? scheme.primary : scheme.outlineVariant,
+                              width: isHovering ? 2 : 1,
+                            ),
+                            borderRadius: BorderRadius.circular(8),
+                            color: isHovering
+                                ? scheme.primaryContainer.withValues(alpha: 0.3)
+                                : Colors.transparent,
+                          ),
+                          alignment: Alignment.center,
+                          child: Icon(
+                            Icons.add,
+                            size: 24,
+                            color: isHovering ? scheme.primary : scheme.outline,
+                          ),
                         );
                       }
                       final sel = i == _previewIndex;
@@ -2282,7 +2548,7 @@ class _HomePageState extends State<HomePage> {
                         onTap: () => _selectPreview(i),
                         onRemove: () {
                           final path = _photoPaths[i];
-                          _previewToken++; // discard any in-flight render of it
+                          _previewToken++;
                           setState(() {
                             _photoPaths.removeAt(i);
                             _previews.remove(path);
@@ -2296,15 +2562,431 @@ class _HomePageState extends State<HomePage> {
                       );
                     },
                   ),
-                );
+                ),
+              );
               },
               onWillAcceptWithDetails: (details) => true,
-              onAcceptWithDetails: (details) {
-                _handleDroppedFiles([details.data]);
-              },
+              onAcceptWithDetails: (details) => _handleDroppedFiles(_extractPaths(details.data)),
               onLeave: (_) {},
             ),
           ],
+        ],
+      ),
+    );
+  }
+
+  /// Section for configuring dual logo sets (Set A / Set B) and assignment mode.
+  Widget _logoSetsSection() {
+    final small = Theme.of(context).textTheme.bodySmall;
+    final scheme = Theme.of(context).colorScheme;
+    return _Section(
+      number: 2,
+      title: 'Conjuntos de logos (A / B)',
+      icon: const Icon(Icons.layers_outlined, size: 18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Mode selector
+          Text('Modo de atribuição:', style: small),
+          const SizedBox(height: 8),
+          SegmentedButton<LogoSetMode>(
+            segments: [
+              ButtonSegment(
+                value: LogoSetMode.single,
+                label: Text('Único (todas as fotos)'),
+                icon: Icon(Icons.layers_clear, size: 16),
+              ),
+              ButtonSegment(
+                value: LogoSetMode.splitHalf,
+                label: Text('Metade / Metade'),
+                icon: Icon(Icons.call_split, size: 16),
+              ),
+              ButtonSegment(
+                value: LogoSetMode.alternating,
+                label: Text('Alternado (par/ímpar)'),
+                icon: Icon(Icons.swap_horiz, size: 16),
+              ),
+            ],
+            selected: {_logoSetMode},
+            onSelectionChanged: (s) {
+              final newMode = s.first;
+
+              // Sync between single mode and Set A when switching modes.
+              // Single mode logos ARE Set A - they share the same lists.
+              if (_logoSetMode == LogoSetMode.single && newMode != LogoSetMode.single) {
+                // Switching TO dual-set: ensure Set A exists with current single logos.
+                if (_logoSetA == null && (_p.bottomLogos.isNotEmpty || _p.topLeftLogos.isNotEmpty)) {
+                  _logoSetA = LogoSet(
+                    bottomLogos: _p.bottomLogos,
+                    topLeftLogos: _p.topLeftLogos,
+                  );
+                }
+              } else if (_logoSetMode != LogoSetMode.single && newMode == LogoSetMode.single) {
+                // Switching TO single: sync Set A back to project's single logos.
+                if (_logoSetA != null) {
+                  _p.bottomLogos
+                    ..clear()
+                    ..addAll(_logoSetA!.bottomLogos);
+                  _p.topLeftLogos
+                    ..clear()
+                    ..addAll(_logoSetA!.topLeftLogos);
+                }
+              }
+
+              setState(() => _logoSetMode = newMode);
+              _schedulePreview();
+            },
+            showSelectedIcon: false,
+            style: SegmentedButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          // Set A
+          Text('Conjunto A (base/topo-esquerdo):', style: small?.copyWith(fontWeight: FontWeight.w600)),
+          const SizedBox(height: 4),
+          _logoSetEditor('A', _logoSetA, (set) {
+            setState(() {
+              _logoSetA = set;
+              // Sync Set A changes to single mode logos (project's bottomLogos/topLeftLogos).
+              // This ensures "whatever you do in a set affects the same set in the others".
+              if (set != null) {
+                _p.bottomLogos
+                  ..clear()
+                  ..addAll(set.bottomLogos);
+                _p.topLeftLogos
+                  ..clear()
+                  ..addAll(set.topLeftLogos);
+              }
+            });
+          }),
+
+          // Set B - only shown in dual-set modes
+          if (_logoSetMode != LogoSetMode.single) ...[
+            const SizedBox(height: 12),
+            Text('Conjunto B (base/topo-esquerdo):', style: small?.copyWith(fontWeight: FontWeight.w600)),
+            const SizedBox(height: 4),
+            _logoSetEditor('B', _logoSetB, (set) => setState(() => _logoSetB = set)),
+            const SizedBox(height: 8),
+          ],
+
+          Text(
+            _logoSetMode == LogoSetMode.single
+                ? 'Use as seções "Logos da base" e "Logos do canto superior esquerdo" abaixo.'
+                : _logoSetMode == LogoSetMode.splitHalf
+                    ? 'Primeira metade das fotos → Conjunto A. Segunda metade → Conjunto B.'
+                    : 'Fotos ímpares (1, 3, 5...) → Conjunto A. Fotos pares (2, 4, 6...) → Conjunto B.',
+            style: small?.copyWith(color: scheme.outline),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Editor for a single logo set (bottom, top-left, corner).
+  Widget _logoSetEditor(String label, LogoSet? set, ValueChanged<LogoSet?> onChanged) {
+    final small = Theme.of(context).textTheme.bodySmall;
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: scheme.outlineVariant),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 24,
+                height: 24,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: scheme.primary,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(label, style: const TextStyle(color: Colors.black, fontSize: 11, fontWeight: FontWeight.w500)),
+              ),
+              const SizedBox(width: 8),
+              Expanded(child: Text('Conjunto $label', style: Theme.of(context).textTheme.titleSmall)),
+            ],
+          ),
+          const SizedBox(height: 8),
+
+          // Bottom row logos
+          Text('Fileira base:', style: small?.copyWith(fontWeight: FontWeight.w500)),
+          _LogoSetRowEditor(
+            items: set?.bottomLogos ?? [],
+            enabled: _controlsEnabled,
+            onChanged: (logos) => onChanged(set?.copyWith(bottomLogos: logos) ?? LogoSet(bottomLogos: logos, topLeftLogos: [])),
+          ),
+          const SizedBox(height: 8),
+
+          // Extra logos for bottom row: above leftmost and rightmost
+          if (set != null) ...[
+            Text('Extras da base (acima da fileira):', style: small?.copyWith(fontWeight: FontWeight.w500)),
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                Expanded(
+                  child: _ExtraLogoSlot(
+                    label: 'Esquerda (acima da 1ª)',
+                    logo: set.bottomLeftTopLogo,
+                    margin: set.bottomLeftTopMargin,
+                    enabled: _controlsEnabled,
+                    onPick: () => _pickSingleLogo().then((item) {
+                      if (item != null) onChanged(set.copyWith(bottomLeftTopLogo: item));
+                    }),
+                    onRemove: () => onChanged(set.copyWith(clearBottomLeftTopLogo: true)),
+                    onMarginChanged: (v) => onChanged(set.copyWith(bottomLeftTopMargin: v)),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _ExtraLogoSlot(
+                    label: 'Direita (acima da última)',
+                    logo: set.bottomRightTopLogo,
+                    margin: set.bottomRightTopMargin,
+                    enabled: _controlsEnabled,
+                    onPick: () => _pickSingleLogo().then((item) {
+                      if (item != null) onChanged(set.copyWith(bottomRightTopLogo: item));
+                    }),
+                    onRemove: () => onChanged(set.copyWith(clearBottomRightTopLogo: true)),
+                    onMarginChanged: (v) => onChanged(set.copyWith(bottomRightTopMargin: v)),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+          ],
+
+          // Top-left row logos
+          Text('Fileira topo-esquerdo:', style: small?.copyWith(fontWeight: FontWeight.w500)),
+          _LogoSetRowEditor(
+            items: set?.topLeftLogos ?? [],
+            enabled: _controlsEnabled,
+            onChanged: (logos) => onChanged(set?.copyWith(topLeftLogos: logos) ?? LogoSet(bottomLogos: [], topLeftLogos: logos)),
+          ),
+
+          // Extra logo for top-left row: below leftmost
+          if (set != null) ...[
+            const SizedBox(height: 8),
+            Text('Extra do topo (abaixo da 1ª):', style: small?.copyWith(fontWeight: FontWeight.w500)),
+            const SizedBox(height: 4),
+            _ExtraLogoSlot(
+              label: 'Abaixo da 1ª logo do topo',
+              logo: set.topLeftBottomLogo,
+              margin: set.topLeftBottomMargin,
+              enabled: _controlsEnabled,
+              onPick: () => _pickSingleLogo().then((item) {
+                if (item != null) onChanged(set.copyWith(topLeftBottomLogo: item));
+              }),
+              onRemove: () => onChanged(set.copyWith(clearTopLeftBottomLogo: true)),
+              onMarginChanged: (v) => onChanged(set.copyWith(topLeftBottomMargin: v)),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// Slot for a single extra logo (above/below main row).
+  Widget _ExtraLogoSlot({
+    required String label,
+    required LogoItem? logo,
+    required double margin,
+    required bool enabled,
+    required Future<void> Function() onPick,
+    required VoidCallback onRemove,
+    required ValueChanged<double> onMarginChanged,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: scheme.outline)),
+        const SizedBox(height: 4),
+        if (logo != null)
+          Stack(
+            children: [
+              Container(
+                width: double.infinity,
+                height: 60,
+                decoration: BoxDecoration(
+                  border: Border.all(color: scheme.primary, width: 2),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(2),
+                  child: Image.memory(logo.bytes, fit: BoxFit.contain, cacheWidth: 120),
+                ),
+              ),
+              Positioned(
+                top: 2,
+                right: 2,
+                child: GestureDetector(
+                  onTap: enabled ? onRemove : null,
+                  child: Container(
+                    decoration: const BoxDecoration(color: Colors.black54, shape: BoxShape.circle),
+                    padding: const EdgeInsets.all(4),
+                    child: const Icon(Icons.close, size: 14, color: Colors.white),
+                  ),
+                ),
+              ),
+            ],
+          )
+        else
+          OutlinedButton.icon(
+            onPressed: enabled ? () => onPick() : null,
+            icon: const Icon(Icons.add, size: 16),
+            label: const Text('Adicionar'),
+          ),
+        if (logo != null) ...[
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              const Text('Distância: ', style: TextStyle(fontSize: 11)),
+              Expanded(
+                child: Slider(
+                  value: margin,
+                  min: 0,
+                  max: 20,
+                  divisions: 40,
+                  label: '${margin.toStringAsFixed(1)}%',
+                  onChanged: enabled ? onMarginChanged : null,
+                ),
+              ),
+              Text('${margin.toStringAsFixed(1)}%', style: const TextStyle(fontSize: 11)),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+
+  Future<LogoItem?> _pickSingleLogo() async {
+    final picked = await _picker.pickMultiImage();
+    if (picked.isEmpty) return null;
+    return await _makeLogoItem(picked.first.path);
+  }
+
+  /// Row editor for logo sets (bottom or top-left).
+  Widget _LogoSetRowEditor({
+    required List<LogoItem> items,
+    required bool enabled,
+    required ValueChanged<List<LogoItem>> onChanged,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (items.isEmpty)
+          OutlinedButton.icon(
+            onPressed: enabled ? () async {
+              final picked = await _picker.pickMultiImage();
+              if (picked.isEmpty) return;
+              final newLogos = <LogoItem>[];
+              for (final x in picked) {
+                newLogos.add(await _makeLogoItem(x.path));
+              }
+              onChanged(newLogos);
+            } : null,
+            icon: const Icon(Icons.add, size: 16),
+            label: const Text('Adicionar logos'),
+          )
+        else
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (int i = 0; i < items.length; i++)
+                _LogoSetThumb(
+                  item: items[i],
+                  number: i + 1,
+                  enabled: enabled,
+                  onRemove: () {
+                    final newList = List<LogoItem>.from(items)..removeAt(i);
+                    onChanged(newList);
+                  },
+                ),
+              if (enabled)
+                GestureDetector(
+                  onTap: () async {
+                    final picked = await _picker.pickMultiImage();
+                    if (picked.isEmpty) return;
+                    final newLogos = <LogoItem>[...items];
+                    for (final x in picked) {
+                      newLogos.add(await _makeLogoItem(x.path));
+                    }
+                    onChanged(newLogos);
+                  },
+                  child: Container(
+                    width: 50,
+                    height: 50,
+                    decoration: BoxDecoration(
+                      border: Border.all(color: scheme.outlineVariant, style: BorderStyle.solid),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Icon(Icons.add, size: 20, color: scheme.outline),
+                  ),
+                ),
+            ],
+          ),
+      ],
+    );
+  }
+
+  /// Thumbnail for logo set editor.
+  Widget _LogoSetThumb({
+    required LogoItem item,
+    required int number,
+    required bool enabled,
+    required VoidCallback onRemove,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      width: 50,
+      height: 50,
+      decoration: BoxDecoration(
+        border: Border.all(color: scheme.outlineVariant),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: Image.memory(item.bytes, fit: BoxFit.cover, cacheWidth: 80),
+          ),
+          Positioned(
+            top: 2,
+            left: 2,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 0),
+              decoration: BoxDecoration(
+                color: Colors.black87,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text('$number', style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold)),
+            ),
+          ),
+          if (enabled)
+            Positioned(
+              top: 2,
+              right: 2,
+              child: GestureDetector(
+                onTap: onRemove,
+                child: Container(
+                  decoration: const BoxDecoration(color: Colors.black54, shape: BoxShape.circle),
+                  padding: const EdgeInsets.all(2),
+                  child: const Icon(Icons.close, size: 12, color: Colors.white),
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -2315,6 +2997,7 @@ class _HomePageState extends State<HomePage> {
     required String title,
     required Placement placement,
     required List<LogoItem> items,
+    required List<LogoItem> otherItems,
     required String hint,
     required VoidCallback onAdd,
     required List<Widget> sliders,
@@ -2367,16 +3050,15 @@ class _HomePageState extends State<HomePage> {
               onMoveToOther: (item, fromPlacement) {
                 setState(() {
                   items.remove(item);
-                  if (fromPlacement == Placement.bottom) {
-                    _topLeftLogos.add(item);
-                  } else {
-                    _bottomLogos.add(item);
-                  }
+                  otherItems.add(item);
                 });
                 _schedulePreview();
               },
               onAcceptFromOther: (item) {
-                setState(() => items.add(item));
+                setState(() {
+                  items.add(item);
+                  otherItems.remove(item);
+                });
                 _schedulePreview();
               },
               onOpenFullscreen: (index) => _openImagesFullscreen(
@@ -2392,7 +3074,7 @@ class _HomePageState extends State<HomePage> {
   Widget _cornerSection() {
     final small = Theme.of(context).textTheme.bodySmall;
     return _Section(
-      number: 4,
+      number: 5,
       title: 'Logo principal (canto superior direito)',
       icon: const _PlacementIcon(Placement.topRight),
       child: Column(
@@ -2408,7 +3090,7 @@ class _HomePageState extends State<HomePage> {
                   onTap: _processing
                       ? null
                       : () => _openImagesFullscreen([_cornerLogo!.bytes], 0),
-                  child: Image.memory(_cornerLogo!.bytes, fit: BoxFit.contain),
+                  child: Image.memory(_cornerLogo!.bytes, fit: BoxFit.contain, cacheWidth: 120),
                   onRemove: () {
                     setState(() => _cornerLogo = null);
                     _schedulePreview();
@@ -2454,8 +3136,39 @@ class _HomePageState extends State<HomePage> {
     final settings = _imageSettingsFor(path);
     final enabled = settings.enabled;
 
+    // Initialize with global values when first enabling per-image settings.
+    ImageSettings effectiveSettings = settings;
+    if (enabled && !settings.enabled) {
+      effectiveSettings = settings.copyWith(
+        enabled: true,
+        useGlobalLogoSize: true,
+        useBottomLogoSize: false,
+        useTopLeftLogoSize: false,
+        useCornerLogoSize: false,
+        useGlobalSpacing: true,
+        useBottomSpacing: false,
+        useTopLeftSpacing: false,
+        useGlobalGradientHeight: true,
+        useTopGradientHeight: false,
+        useBottomGradientHeight: false,
+        // Start with global values so user only changes what they need.
+        bottomLogoSize: _logoSize,
+        topLeftLogoSize: _logoSize,
+        cornerLogoSize: _cornerHeight,
+        logoSpacing: _logoSpacing,
+        topGradientHeight: _topGradientHeight,
+        bottomGradientHeight: _bottomGradientHeight,
+        bottomLogoMargin: _bottomMargin,
+        topLeftLogoMarginTop: _topMargin,
+        topLeftLogoMarginLeft: _leftMargin,
+        cornerLogoMarginTop: _cornerMarginTop,
+        cornerLogoMarginRight: _cornerMarginRight,
+      );
+      _setImageSettings(path, effectiveSettings);
+    }
+
     return _Section(
-      number: 5,
+      number: 6,
       title: 'Configurações especiais da imagem',
       icon: const Icon(Icons.tune_outlined, size: 18),
       child: Column(
@@ -2470,39 +3183,115 @@ class _HomePageState extends State<HomePage> {
                 ? null
                 : (s) {
                     setState(() {
-                      _setImageSettings(path, settings.copyWith(enabled: s));
+                      _setImageSettings(path, effectiveSettings.copyWith(enabled: s));
                     });
                   },
-            tooltip: 'Quando ativado, você pode alterar tamanho e distância das logos apenas para esta imagem. As configurações globais ficam desativadas.',
+            tooltip: 'Quando ativado, você pode alterar tamanho, espaçamento e gradientes apenas para esta imagem. As configurações globais ficam desativadas para esta imagem.',
           ),
           if (enabled) ...[
             const SizedBox(height: 12),
+            // Single toggle: "Aplicar a todas" controls logo size, spacing, AND gradient height together.
+            Text('Aplicar alterações a todas as seções', style: small?.copyWith(fontWeight: FontWeight.w600)),
+            const SizedBox(height: 4),
+            FilterChip(
+              label: const Text('Aplicar a todas (tamanho, espaçamento e gradientes iguais em base/topo/canto)'),
+              selected: effectiveSettings.useGlobalLogoSize,
+              onSelected: !_controlsEnabled
+                  ? null
+                  : (s) {
+                      _setImageSettings(path, effectiveSettings.copyWith(
+                        useGlobalLogoSize: s,
+                        useBottomLogoSize: !s,
+                        useTopLeftLogoSize: !s,
+                        useCornerLogoSize: !s,
+                        useGlobalSpacing: s,
+                        useBottomSpacing: !s,
+                        useTopLeftSpacing: !s,
+                        useGlobalGradientHeight: s,
+                        useTopGradientHeight: !s,
+                        useBottomGradientHeight: !s,
+                      ));
+                    },
+              showCheckmark: true,
+            ),
+            const SizedBox(height: 8),
+
+            // Logo Size
+            Text('Tamanho das logos', style: small?.copyWith(fontWeight: FontWeight.w600)),
+            const SizedBox(height: 4),
+            if (effectiveSettings.useGlobalLogoSize) ...[
+              _slider('Tamanho (todas: base/topo/canto)', effectiveSettings.bottomLogoSize ?? _logoSize, 5, 50,
+                  (v) => _setImageSettings(path, effectiveSettings.copyWith(
+                    bottomLogoSize: v,
+                    topLeftLogoSize: v,
+                    cornerLogoSize: v,
+                  ))),
+            ] else ...[
+              _slider('Tamanho (base)', effectiveSettings.bottomLogoSize ?? _logoSize, 5, 50,
+                  (v) => _setImageSettings(path, effectiveSettings.copyWith(bottomLogoSize: v))),
+              _slider('Tamanho (topo)', effectiveSettings.topLeftLogoSize ?? _logoSize, 5, 50,
+                  (v) => _setImageSettings(path, effectiveSettings.copyWith(topLeftLogoSize: v))),
+              _slider('Tamanho (canto)', effectiveSettings.cornerLogoSize ?? _cornerHeight, 5, 50,
+                  (v) => _setImageSettings(path, effectiveSettings.copyWith(cornerLogoSize: v))),
+            ],
+            const SizedBox(height: 12),
+
+            // Spacing
+            Text('Espaçamento entre logos', style: small?.copyWith(fontWeight: FontWeight.w600)),
+            const SizedBox(height: 4),
+            if (effectiveSettings.useGlobalSpacing) ...[
+              _slider('Espaço (todas as fileiras)', effectiveSettings.logoSpacing ?? _logoSpacing, 0, 20,
+                  (v) => _setImageSettings(path, effectiveSettings.copyWith(logoSpacing: v))),
+            ] else ...[
+              _slider('Espaço (base)', effectiveSettings.logoSpacing ?? _logoSpacing, 0, 20,
+                  (v) => _setImageSettings(path, effectiveSettings.copyWith(logoSpacing: v))),
+              _slider('Espaço (topo)', effectiveSettings.logoSpacing ?? _logoSpacing, 0, 20,
+                  (v) => _setImageSettings(path, effectiveSettings.copyWith(logoSpacing: v))),
+            ],
+            const SizedBox(height: 12),
+
+            // Margins (base row) - always per-section
             Text('Fileira da base (inferior)', style: small?.copyWith(fontWeight: FontWeight.w600)),
-            _slider('Tamanho das logos (base)', settings.bottomLogoSize ?? _logoSize, 5, 40,
-                (v) => _setImageSettings(path, settings.copyWith(bottomLogoSize: v))),
-            _slider('Distância da borda inferior', settings.bottomLogoMargin ?? _bottomMargin, 0, 30,
-                (v) => _setImageSettings(path, settings.copyWith(bottomLogoMargin: v))),
+            _slider('Distância da borda inferior', effectiveSettings.bottomLogoMargin ?? _bottomMargin, 0, 30,
+                (v) => _setImageSettings(path, effectiveSettings.copyWith(bottomLogoMargin: v))),
             const SizedBox(height: 8),
+
+            // Margins (top row) - always per-section
             Text('Fileira do topo (superior esquerda)', style: small?.copyWith(fontWeight: FontWeight.w600)),
-            _slider('Tamanho das logos (topo)', settings.topLeftLogoSize ?? _logoSize, 5, 40,
-                (v) => _setImageSettings(path, settings.copyWith(topLeftLogoSize: v))),
-            _slider('Distância da borda superior', settings.topLeftLogoMarginTop ?? _topMargin, 0, 30,
-                (v) => _setImageSettings(path, settings.copyWith(topLeftLogoMarginTop: v))),
-            _slider('Distância da borda esquerda', settings.topLeftLogoMarginLeft ?? _leftMargin, 0, 30,
-                (v) => _setImageSettings(path, settings.copyWith(topLeftLogoMarginLeft: v))),
+            _slider('Distância da borda superior', effectiveSettings.topLeftLogoMarginTop ?? _topMargin, 0, 30,
+                (v) => _setImageSettings(path, effectiveSettings.copyWith(topLeftLogoMarginTop: v))),
+            _slider('Distância da borda esquerda', effectiveSettings.topLeftLogoMarginLeft ?? _leftMargin, 0, 30,
+                (v) => _setImageSettings(path, effectiveSettings.copyWith(topLeftLogoMarginLeft: v))),
             const SizedBox(height: 8),
+
+            // Corner logo margins - always per-section
             Text('Logo principal (canto superior direito)', style: small?.copyWith(fontWeight: FontWeight.w600)),
-            _slider('Tamanho', settings.cornerLogoSize ?? _cornerHeight, 5, 50,
-                (v) => _setImageSettings(path, settings.copyWith(cornerLogoSize: v))),
-            _slider('Distância do topo', settings.cornerLogoMarginTop ?? _cornerMarginTop, 0, 40,
-                (v) => _setImageSettings(path, settings.copyWith(cornerLogoMarginTop: v))),
-            _slider('Distância da direita', settings.cornerLogoMarginRight ?? _cornerMarginRight, 0, 40,
-                (v) => _setImageSettings(path, settings.copyWith(cornerLogoMarginRight: v))),
+            _slider('Distância do topo', effectiveSettings.cornerLogoMarginTop ?? _cornerMarginTop, 0, 40,
+                (v) => _setImageSettings(path, effectiveSettings.copyWith(cornerLogoMarginTop: v))),
+            _slider('Distância da direita', effectiveSettings.cornerLogoMarginRight ?? _cornerMarginRight, 0, 40,
+                (v) => _setImageSettings(path, effectiveSettings.copyWith(cornerLogoMarginRight: v))),
+            const SizedBox(height: 12),
+
+            // Gradient Heights
+            Text('Altura dos gradientes', style: small?.copyWith(fontWeight: FontWeight.w600)),
+            const SizedBox(height: 4),
+            if (effectiveSettings.useGlobalGradientHeight) ...[
+              _slider('Altura (ambos: topo e base)', effectiveSettings.topGradientHeight ?? _topGradientHeight, 1, 50,
+                  (v) => _setImageSettings(path, effectiveSettings.copyWith(
+                    topGradientHeight: v,
+                    bottomGradientHeight: v,
+                  ))),
+            ] else ...[
+              _slider('Altura (topo)', effectiveSettings.topGradientHeight ?? _topGradientHeight, 1, 50,
+                  (v) => _setImageSettings(path, effectiveSettings.copyWith(topGradientHeight: v))),
+              _slider('Altura (base)', effectiveSettings.bottomGradientHeight ?? _bottomGradientHeight, 1, 50,
+                  (v) => _setImageSettings(path, effectiveSettings.copyWith(bottomGradientHeight: v))),
+            ],
           ],
           if (!enabled && _hasAnyContent) ...[
             const SizedBox(height: 8),
             Text(
-              'Ative para personalizar tamanho e distâncias das logos apenas nesta imagem.',
+              'Ative para personalizar tamanho, espaçamento e gradientes apenas nesta imagem.',
               style: small?.copyWith(color: scheme.outline),
             ),
           ],
@@ -2514,7 +3303,7 @@ class _HomePageState extends State<HomePage> {
   Widget _textsSection() {
     final small = Theme.of(context).textTheme.bodySmall;
     return _Section(
-      number: 5,
+      number: 7,
       title: 'Textos',
       icon: const Icon(Icons.text_fields, size: 18),
       child: Column(
@@ -2526,6 +3315,12 @@ class _HomePageState extends State<HomePage> {
                 onPressed: !_controlsEnabled ? null : _addText,
                 icon: const Icon(Icons.title, size: 18),
                 label: const Text('Adicionar texto'),
+              ),
+              const SizedBox(width: 12),
+              OutlinedButton.icon(
+                onPressed: !_controlsEnabled ? null : _pickSaveDir,
+                icon: const Icon(Icons.folder_outlined, size: 18),
+                label: const Text('Pasta de saída'),
               ),
               const SizedBox(width: 12),
               if (_texts.isNotEmpty)
@@ -2636,6 +3431,12 @@ class _HomePageState extends State<HomePage> {
                     ),
                   ),
                 ),
+              ),
+              const SizedBox(width: 4),
+              IconButton(
+                tooltip: 'Carregar fonte personalizada (.ttf/.otf)',
+                icon: const Icon(Icons.font_download_outlined, size: 20),
+                onPressed: !_controlsEnabled ? null : () => _pickCustomFont(t),
               ),
               const SizedBox(width: 4),
               IconButton(
@@ -2983,42 +3784,44 @@ class _HomePageState extends State<HomePage> {
     final paths = _filteredPhotoPaths;
     final n = paths.length;
 
-    // Search bar - always visible so user can clear search when no matches
-    Widget searchBar = Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-      child: TextField(
-        decoration: InputDecoration(
-          hintText: 'Buscar por nome do arquivo…',
-          prefixIcon: const Icon(Icons.search, size: 20),
-          suffixIcon: _previewSearch.isNotEmpty
-              ? IconButton(
-                  icon: const Icon(Icons.clear, size: 20),
-                  onPressed: () => setState(() {
-                    _previewSearch = '';
-                    _previewIndex = 0;
-                  }),
-                  tooltip: 'Limpar busca',
-                )
-              : null,
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(8),
-          ),
-          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          isDense: true,
-        ),
-        onChanged: (v) => setState(() {
-          _previewSearch = v;
-          _previewIndex = 0; // Reset to first match
-        }),
-      ),
-    );
+    // Search bar - show when project has photos (not filtered results), so it never disappears while typing
+    final bool showSearch = _photoPaths.isNotEmpty;
+    Widget searchBar = showSearch
+        ? Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+            child: TextField(
+              decoration: InputDecoration(
+                hintText: 'Buscar por nome do arquivo…',
+                prefixIcon: const Icon(Icons.search, size: 20),
+                suffixIcon: _previewSearch.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.clear, size: 20),
+                        onPressed: () => setState(() {
+                          _previewSearch = '';
+                          _previewIndex = 0;
+                        }),
+                        tooltip: 'Limpar busca',
+                      )
+                    : null,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                isDense: true,
+              ),
+              onChanged: (v) => setState(() {
+                _previewSearch = v;
+                _previewIndex = 0; // Reset to first match
+              }),
+            ),
+          )
+        : const SizedBox.shrink();
 
     if (paths.isEmpty) {
       return Container(
         color: scheme.surface,
         child: Column(
           children: [
-            searchBar,
             Expanded(
               child: Center(
                 child: Column(
@@ -3026,9 +3829,7 @@ class _HomePageState extends State<HomePage> {
                   children: [
                     Icon(Icons.image_outlined, size: 56, color: scheme.outline),
                     const SizedBox(height: 10),
-                    Text(_previewSearch.isEmpty
-                        ? 'Adicione fotos para ver a pré-visualização.'
-                        : 'Nenhuma foto encontrada para "$_previewSearch"',
+                    Text('Adicione fotos para ver a pré-visualização.',
                         style: TextStyle(color: scheme.outline)),
                   ],
                 ),
@@ -3045,6 +3846,24 @@ class _HomePageState extends State<HomePage> {
     final render = _hasAnyContent ? _previews[path] : null;
     final stale = render != null && _renderedVersion[path] != _previewVersion;
     final rendering = _hasAnyContent && (render == null || stale);
+
+    // Get actual aspect ratio for the current image (from preview or by decoding)
+    Future<double> getAspect(String p) async {
+      final r = _previews[p];
+      if (r != null) return r.aspect;
+      try {
+        final bytes = await File(p).readAsBytes();
+        final codec = await ui.instantiateImageCodec(bytes);
+        final frame = await codec.getNextFrame();
+        final image = frame.image;
+        final aspect = image.height == 0 ? 1.0 : image.width / image.height;
+        image.dispose();
+        codec.dispose();
+        return aspect;
+      } catch (_) {
+        return 1.0;
+      }
+    }
 
     Widget picture;
     if (render != null) {
@@ -3096,6 +3915,12 @@ class _HomePageState extends State<HomePage> {
                         left: 8,
                         child: _badge('Foto original — adicione logos ou textos')),
                   Positioned(top: 8, right: 8, child: _badge('${idx + 1} / $n')),
+                  if (_logoSetMode != LogoSetMode.single)
+                    Positioned(
+                      top: 8,
+                      left: 8,
+                      child: _setBadge(idx),
+                    ),
                   if (n > 1) ...[
                     Positioned(
                       left: 4,
@@ -3120,61 +3945,107 @@ class _HomePageState extends State<HomePage> {
               ),
             ),
           ),
+          // Thumbnail strip with filenames shown on hover (Windows-style tooltip)
           SizedBox(
-            height: 72,
-            child: ListView.builder(
-              controller: _thumbCtl,
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-              itemCount: n,
-              itemBuilder: (context, i) {
-                final sel = i == idx;
-                final r = _hasAnyContent ? _previews[paths[i]] : null;
-                final aspect = r?.aspect ?? 1.0;
-                // Limit width so tall images don't overflow the 72px height
-                final thumbWidth = (72.0 * aspect).clamp(48.0, 120.0);
-                return Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: GestureDetector(
-                    onTap: () => _selectPreview(i),
-                    child: Container(
-                      width: thumbWidth,
-                      decoration: BoxDecoration(
-                        border: Border.all(
-                          color: sel ? scheme.primary : scheme.outlineVariant,
-                          width: sel ? 2 : 1,
+            height: 96, // Increased height to fit filename
+            child: FutureBuilder<List<double>>(
+              future: Future.wait(paths.map((p) => getAspect(p))),
+              builder: (context, snapshot) {
+                final aspects = snapshot.data ?? List<double>.filled(n, 1.0);
+                return ListView.builder(
+                  controller: _thumbCtl,
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                  itemCount: n,
+                  itemBuilder: (context, i) {
+                    final sel = i == idx;
+                    final r = _hasAnyContent ? _previews[paths[i]] : null;
+                    final aspect = aspects[i];
+                    // Limit width so tall images don't overflow the 72px image area
+                    final thumbWidth = (72.0 * aspect).clamp(48.0, 120.0);
+                    final filename = paths[i].split('/').last.split('\\').last;
+                    return Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: Tooltip(
+                        message: filename,
+                        textStyle: TextStyle(fontSize: 11, color: scheme.onSurface),
+                        decoration: BoxDecoration(
+                          color: scheme.surfaceContainerHighest,
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: scheme.outline),
                         ),
-                      ),
-                      child: AspectRatio(
-                        aspectRatio: aspect,
-                        child: Stack(
-                          fit: StackFit.expand,
-                          children: [
-                            r != null
-                                ? Image.memory(r.bytes,
-                                    fit: BoxFit.cover, gaplessPlayback: true)
-                                : Image.file(File(paths[i]),
-                                    fit: BoxFit.cover, cacheWidth: 200),
-                            Positioned(
-                              top: 2,
-                              left: 2,
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        waitDuration: const Duration(milliseconds: 500),
+                        child: GestureDetector(
+                          onTap: () => _selectPreview(i),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Container(
+                                width: thumbWidth,
+                                height: 72,
                                 decoration: BoxDecoration(
-                                  color: Colors.black54,
-                                  borderRadius: BorderRadius.circular(3),
+                                  border: Border.all(
+                                    color: sel ? scheme.primary : scheme.outlineVariant,
+                                    width: sel ? 2 : 1,
+                                  ),
                                 ),
-                                child: Text(
-                                  '${i + 1}',
-                                  style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                                child: AspectRatio(
+                                  aspectRatio: aspect,
+                                  child: Stack(
+                                    fit: StackFit.expand,
+                                    children: [
+                                      r != null
+                                          ? Image.memory(r.bytes,
+                                              fit: BoxFit.cover, gaplessPlayback: true)
+                                          : Image.file(File(paths[i]),
+                                              fit: BoxFit.cover, cacheWidth: 200),
+                                      Positioned(
+                                        top: 2,
+                                        left: 2,
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                                          decoration: BoxDecoration(
+                                            color: Colors.black54,
+                                            borderRadius: BorderRadius.circular(3),
+                                          ),
+                                          child: Text(
+                                            '${i + 1}',
+                                            style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                                          ),
+                                        ),
+                                      ),
+                                      if (_logoSetMode != LogoSetMode.single)
+                                        Positioned(
+                                          top: 2,
+                                          right: 2,
+                                          child: _thumbSetBadge(i),
+                                        ),
+                                    ],
+                                  ),
                                 ),
                               ),
-                            ),
-                          ],
+                              const SizedBox(height: 4),
+                              // Filename below thumbnail
+                              SizedBox(
+                                width: thumbWidth,
+                                child: Text(
+                                  filename,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    fontSize: 8,
+                                    color: scheme.onSurfaceVariant,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
-                    ),
-                  ),
+                    );
+                  },
                 );
               },
             ),
@@ -3201,6 +4072,48 @@ class _HomePageState extends State<HomePage> {
         child: Text(text,
             style: const TextStyle(color: Colors.white, fontSize: 11.5)),
       );
+
+  Widget _setBadge(int index) {
+    final set = _logoSetForIndex(index);
+    if (set == null) return const SizedBox.shrink(); // single mode
+    final isSetA = set == _logoSetA;
+    final label = isSetA ? 'SET A' : 'SET B';
+    // Teal color #05b2ae
+    const color = Color(0xFF05B2AE);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.9),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: color, width: 1),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(color: Colors.black, fontSize: 11.5, fontWeight: FontWeight.normal),
+      ),
+    );
+  }
+
+  Widget _thumbSetBadge(int index) {
+    final set = _logoSetForIndex(index);
+    if (set == null) return const SizedBox.shrink(); // single mode
+    final isSetA = set == _logoSetA;
+    final label = isSetA ? 'A' : 'B';
+    // Teal color #05b2ae
+    const color = Color(0xFF05B2AE);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.9),
+        borderRadius: BorderRadius.circular(3),
+        border: Border.all(color: color, width: 1),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold),
+      ),
+    );
+  }
 
   Widget _navButton(IconData icon, VoidCallback? onPressed) => Material(
         color: Colors.black45,
@@ -3326,7 +4239,8 @@ class _HomePageState extends State<HomePage> {
     try {
       final bytes = await File(path).readAsBytes();
       await _ensureTextPngs();
-      return await compute(renderWatermark, _request(bytes, quality: 95, path: path));
+      final index = _photoPaths.indexOf(path);
+      return await compute(renderWatermark, _request(bytes, quality: 95, path: path, index: index));
     } catch (_) {
       return null;
     }
@@ -3612,6 +4526,11 @@ class _DraggableLogoList extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
 
     return DragTarget<LogoItem>(
+      onWillAcceptWithDetails: (details) => controlsEnabled,
+      onAcceptWithDetails: (details) {
+        if (!controlsEnabled) return;
+        onAcceptFromOther(details.data);
+      },
       builder: (context, candidateData, rejectedData) {
         final isDragOver = candidateData.isNotEmpty;
         return Container(
@@ -3645,10 +4564,6 @@ class _DraggableLogoList extends StatelessWidget {
             },
           ),
         );
-      },
-      onAcceptWithDetails: (details) {
-        if (!controlsEnabled) return;
-        onAcceptFromOther(details.data);
       },
     );
   }
@@ -4560,18 +5475,20 @@ class _FullscreenViewerState extends State<_FullscreenViewer> {
                           },
                     child: GestureDetector(
                       behavior: HitTestBehavior.opaque,
-                      // Only while zoomed: at scale 1 the drag belongs to the
-                      // page viewer (previous / next photo).
-                      onScaleStart:
-                          zoomed ? (_) => _gestureStartScale = _scale : null,
-                      onScaleUpdate: !zoomed
+                      // Allow pinch-to-zoom from scale 1 (trackpad two-finger pinch).
+                      // Pan only works when zoomed; at scale 1 horizontal drag goes to PageView.
+                      onScaleStart: current
+                          ? (_) => _gestureStartScale = _scale
+                          : null,
+                      onScaleUpdate: !current
                           ? null
                           : (d) {
                               final target = _gestureStartScale * d.scale;
                               if ((target - _scale).abs() > 0.001) {
                                 _zoomAt(d.localFocalPoint, target);
                               }
-                              if (d.focalPointDelta != Offset.zero) {
+                              // Pan only when zoomed in.
+                              if (zoomed && d.focalPointDelta != Offset.zero) {
                                 _pan(d.focalPointDelta);
                               }
                             },
