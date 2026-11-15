@@ -49,14 +49,21 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.24'
+          flutter-version: '3.35'
           channel: 'stable'
           cache: true
       - name: Get dependencies
         working-directory: ./flutter_app
         run: flutter pub get
+      - name: Configure Windows desktop
+        working-directory: ./flutter_app
+        run: flutter create --platforms=windows .
       - name: Build Windows Release
         working-directory: ./flutter_app
         run: flutter build windows --release
