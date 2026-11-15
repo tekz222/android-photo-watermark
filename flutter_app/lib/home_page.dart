@@ -1779,12 +1779,18 @@ class _HomePageState extends State<HomePage> {
       });
       return;
     }
-    // Ensure worker is ready before starting renders
+    // Ensure worker is ready before starting renders (with timeout + retry)
     try {
-      await _worker.ready();
+      await _worker.ready().timeout(const Duration(seconds: 5));
     } catch (_) {
-      if (mounted) setState(() => _renderingPreview = false);
-      return;
+      // Worker failed or timed out, try to restart once
+      try {
+        await _worker.restart();
+        await _worker.ready().timeout(const Duration(seconds: 5));
+      } catch (_) {
+        if (mounted) setState(() => _renderingPreview = false);
+        return;
+      }
     }
     setState(() => _renderingPreview = true);
     // Small copies of the logos, once (cached), so renders are cheap.

@@ -19,7 +19,7 @@ class PreviewWorker {
   int _nextId = 0;
   bool _disposed = false;
   Object? _spawnError;
-  final Completer<SendPort> _sendPortReady = Completer<SendPort>();
+  Completer<SendPort> _sendPortReady = Completer<SendPort>();
 
   Future<void> start() async {
     _receive.listen((msg) {
@@ -51,6 +51,18 @@ class PreviewWorker {
 
   /// Waits for the worker isolate to be ready (SendPort received).
   Future<void> ready() => _sendPortReady.future;
+
+  /// Whether the worker is ready (SendPort received).
+  bool get isReady => _sendPortReady.isCompleted && _send != null;
+
+  /// Restarts the worker if it failed or was disposed.
+  Future<void> restart() async {
+    dispose();
+    _sendPortReady = Completer<SendPort>();
+    _disposed = false;
+    _spawnError = null;
+    await start();
+  }
 
   /// Renders [r]; null if the render failed or was cancelled.
   Future<Uint8List?> render(WatermarkRequest r) {
