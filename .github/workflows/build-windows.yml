@@ -24,6 +24,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Setup Visual Studio 2019 Build Tools
+        uses: microsoft/setup-vsbuildtools@v2
+        with:
+          vs-version: '16'
+          components: ['VC', 'Windows.Universal.CRT']
+
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
