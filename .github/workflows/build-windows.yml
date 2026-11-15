@@ -28,7 +28,7 @@ jobs:
         uses: microsoft/setup-vsbuildtools@v2
         with:
           vs-version: '16'
-          components: ['VC', 'Windows.Universal.CRT']
+          components: VC,Windows.Universal.CRT
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
