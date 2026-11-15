@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  analyze:
+    name: Analyze
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24'
+          channel: 'stable'
+          cache: true
+      - name: Get dependencies
+        working-directory: ./flutter_app
+        run: flutter pub get
+      - name: Analyze
+        working-directory: ./flutter_app
+        run: flutter analyze
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24'
+          channel: 'stable'
+          cache: true
+      - name: Get dependencies
+        working-directory: ./flutter_app
+        run: flutter pub get
+      - name: Run tests
+        working-directory: ./flutter_app
+        run: flutter test
+
+  build-windows:
+    name: Build Windows (verify)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24'
+          channel: 'stable'
+          cache: true
+      - name: Get dependencies
+        working-directory: ./flutter_app
+        run: flutter pub get
+      - name: Build Windows Release
+        working-directory: ./flutter_app
+        run: flutter build windows --release
+      - name: Verify output exists
+        run: Test-Path flutter_app/build/windows/x64/runner/Release/photo_watermark.exe
+        shell: pwsh

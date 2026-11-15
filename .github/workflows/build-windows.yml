@@ -1,0 +1,80 @@
+name: Build Windows Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g., v1.0.0)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build Windows x64
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24'
+          channel: 'stable'
+          cache: true
+
+      - name: Get dependencies
+        working-directory: ./flutter_app
+        run: flutter pub get
+
+      - name: Build Windows Release
+        working-directory: ./flutter_app
+        run: flutter build windows --release
+
+      - name: Verify build output
+        run: |
+          ls -la flutter_app/build/windows/x64/runner/Release/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          files: |
+            flutter_app/build/windows/x64/runner/Release/photo_watermark.exe
+          body: |
+            ## JCV Photo Watermarker - Windows Release
+
+            ### Installation
+            1. Download `photo_watermark.exe`
+            2. Place it in a folder of your choice
+            3. Run the executable (no installation required)
+
+            ### Features
+            - Batch watermark photos with logos and text
+            - Multiple logo sets (Set A / Set B / Auto Multi-Set)
+            - Automatic logo distribution and sizing
+            - Custom per-image settings
+            - Export with date/time prefix
+
+            ### Requirements
+            - Windows 10/11 (x64)
+            - No additional dependencies
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: photo-watermark-windows
+          path: flutter_app/build/windows/x64/runner/Release/photo_watermark.exe
+          retention-days: 30
