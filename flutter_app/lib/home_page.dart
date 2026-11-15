@@ -1760,6 +1760,13 @@ class _HomePageState extends State<HomePage> {
       });
       return;
     }
+    // Ensure worker is ready before starting renders
+    try {
+      await _worker.ready();
+    } catch (_) {
+      if (mounted) setState(() => _renderingPreview = false);
+      return;
+    }
     setState(() => _renderingPreview = true);
     // Small copies of the logos, once (cached), so renders are cheap.
     final allLogos = [
