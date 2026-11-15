@@ -50,29 +50,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup MSBuild
-        uses: microsoft/setup-msbuild@v2
-
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.35'
-          channel: 'stable'
-          cache: true
+          channel: stable
+
       - name: Get dependencies
         working-directory: ./flutter_app
         run: flutter pub get
-      - name: Configure Windows desktop
+
+      - name: Scaffold Windows platform folder
         working-directory: ./flutter_app
         run: flutter create --platforms=windows .
-      - name: Initial build to generate ephemeral files
+
+      - name: Generate app icon
         working-directory: ./flutter_app
-        run: flutter build windows --release || true
-      - name: Configure CMake with VS 2026
-        working-directory: ./flutter_app
-        run: cmake -G "Visual Studio 18 2026" -A x64 -B build/windows -S windows
+        run: dart run flutter_launcher_icons
+
       - name: Build Windows Release
-        working-directory: ./flutter_app/build/windows
-        run: msbuild photo_watermark.sln /p:Configuration=Release /p:Platform=x64
+        working-directory: ./flutter_app
+        run: flutter build windows --release
+
       - name: Verify output exists
-        run: Test-Path flutter_app/build/windows/x64/runner/Release/photo_watermark.exe
+        run: Test-Path build/windows/x64/runner/Release/photo_watermark.exe
         shell: pwsh

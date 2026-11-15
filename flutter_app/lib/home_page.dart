@@ -6091,7 +6091,7 @@ class _DraggableLogoList extends StatelessWidget {
   final Placement placement;
   final bool controlsEnabled;
   final bool processing;
-  final void Function(int oldIndex, int newIndex) onReorder;
+  final void Function(int oldIndex, int newIndex)? onReorder;
   final void Function(int index) onRemove;
   final void Function(LogoItem item, Placement fromPlacement) onMoveToOther;
   final void Function(LogoItem item) onAcceptFromOther;

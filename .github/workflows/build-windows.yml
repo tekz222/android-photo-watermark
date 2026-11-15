@@ -24,37 +24,38 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup MSBuild
-        uses: microsoft/setup-msbuild@v2
-
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.35'
-          channel: 'stable'
-          cache: true
+          channel: stable
 
       - name: Get dependencies
         working-directory: ./flutter_app
         run: flutter pub get
 
-      - name: Configure Windows desktop
+      - name: Scaffold Windows platform folder
         working-directory: ./flutter_app
         run: flutter create --platforms=windows .
 
-      - name: Initial build to generate ephemeral files
+      - name: Set window title
         working-directory: ./flutter_app
-        run: flutter build windows --release || true
-      - name: Configure CMake with VS 2026
-        working-directory: ./flutter_app
-        run: cmake -G "Visual Studio 18 2026" -A x64 -B build/windows -S windows
-      - name: Build Windows Release
-        working-directory: ./flutter_app/build/windows
-        run: msbuild photo_watermark.sln /p:Configuration=Release /p:Platform=x64
+        run: sed -i 's/L"photo_watermark"/L"JCV Watermarker"/' windows/runner/main.cpp
 
-      - name: Verify build output
+      - name: Generate app icon
+        working-directory: ./flutter_app
+        run: dart run flutter_launcher_icons
+
+      - name: Build Windows Release
+        working-directory: ./flutter_app
+        run: flutter build windows --release
+
+      - name: Package as ZIP
+        working-directory: ./flutter_app
         run: |
-          ls -la flutter_app/build/windows/x64/runner/Release/
+          cd build/windows/x64/runner
+          mv Release/photo_watermark.exe "Release/JCV Watermarker.exe"
+          mv Release "JCV Watermarker"
+          7z a ../../../JCV-Watermarker-Windows.zip "JCV Watermarker"
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
@@ -65,14 +66,14 @@ jobs:
           draft: false
           prerelease: false
           files: |
-            flutter_app/build/windows/x64/runner/Release/photo_watermark.exe
+            flutter_app/build/JCV-Watermarker-Windows.zip
           body: |
             ## JCV Photo Watermarker - Windows Release
 
             ### Installation
-            1. Download `photo_watermark.exe`
-            2. Place it in a folder of your choice
-            3. Run the executable (no installation required)
+            1. Download `JCV-Watermarker-Windows.zip`
+            2. Extract the ZIP
+            3. Run `JCV Watermarker.exe` (no installation required)
 
             ### Features
             - Batch watermark photos with logos and text
@@ -89,5 +90,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: photo-watermark-windows
-          path: flutter_app/build/windows/x64/runner/Release/photo_watermark.exe
+          path: flutter_app/build/JCV-Watermarker-Windows.zip
           retention-days: 30
