@@ -12,7 +12,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart' show PointerScrollEvent;
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show LogicalKeyboardKey, rootBundle, MethodChannel, ui;
+import 'package:flutter/services.dart' show LogicalKeyboardKey, rootBundle, MethodChannel;
 import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
@@ -134,14 +134,14 @@ class _HomePageState extends State<HomePage> {
   /// AutoMultiSet mode: Creates N sets as needed to fit ALL logos.
   ///   Each set has equal bottom count and equal top count.
   /// Returns true if distribution succeeded, false if all rows are full.
-  bool _autoDistributeLogos(List<LogoItem> allLogos) {
+  Future<bool> _autoDistributeLogos(List<LogoItem> allLogos) async {
     if (allLogos.isEmpty || _photoPaths.isEmpty) return true;
 
     // Calculate minimum available width across ALL photos to ensure logos fit on every photo
     double minPhotoWidth = double.infinity;
     double minShortestSide = double.infinity;
     for (final path in _photoPaths) {
-      final bytes = File(path).readAsBytesSync();
+      final bytes = await File(path).readAsBytes();
       final decoded = img.decodeImage(bytes);
       if (decoded != null) {
         final w = decoded.width.toDouble();
@@ -156,10 +156,10 @@ class _HomePageState extends State<HomePage> {
     final photoWidth = minPhotoWidth;
     final shortestSide = minShortestSide;
 
-    // Calculate aspect ratios for all logos
+    // Calculate aspect ratios for all logos (use compute for heavy decoding)
     final logoAspectRatios = <double>[];
     for (final item in allLogos) {
-      final logoImg = img.decodeImage(item.bytes);
+      final logoImg = await compute((Uint8List bytes) => img.decodeImage(bytes), item.bytes);
       logoAspectRatios.add(logoImg != null ? logoImg.width / logoImg.height : 1.0);
     }
 
@@ -271,11 +271,10 @@ class _HomePageState extends State<HomePage> {
       // Last top logo must not overlap corner logo.
       // Uses ACTUAL logo widths (not worst-case) for tight packing.
 
-      // Calculate individual logo widths at current size
+      // Calculate individual logo widths at current size using pre-computed aspect ratios
       final logoWidths = <double>[];
-      for (final item in allLogos) {
-        final logoImg = img.decodeImage(item.bytes);
-        final ar = logoImg != null ? logoImg.width / logoImg.height : 1.0;
+      for (int i = 0; i < allLogos.length; i++) {
+        final ar = logoAspectRatios[i];
         logoWidths.add(ar * shortestSide * _logoSize / 100.0);
       }
 
@@ -1077,12 +1076,13 @@ class _HomePageState extends State<HomePage> {
   Future<void> _importProject() async {
     try {
       // Use file_picker to allow picking .jcv files
-      final List<PlatformFile>? files = await FilePicker.pickFiles(
+      final result = await FilePicker.pickFiles(
         type: FileType.custom,
         allowedExtensions: ['jcv'],
         dialogTitle: 'Selecione o arquivo do projeto (.jcv)',
       );
-      if (files == null || files.isEmpty) return;
+      if (result == null || result.files.isEmpty) return;
+      final List<PlatformFile> files = result.files;
 
       final PlatformFile projectFile = files.first;
       final String? path = projectFile.path;
@@ -1342,12 +1342,12 @@ class _HomePageState extends State<HomePage> {
         });
       }
     }
-    _kickPreview();
     // After adding photos, redistribute logos into sets based on current mode
     // (uses masterLogos which persists across restarts)
     if (_p.masterLogos.isNotEmpty) {
-      _autoDistributeLogos(_p.masterLogos);
+      await _autoDistributeLogos(_p.masterLogos);
     }
+    _kickPreview();
     // If this project was already saved, the new photos go straight into the
     // same album (only the unsaved ones get processed).
     if (_currentAlbum != null && !_processing) _saveAll();
@@ -1411,11 +1411,11 @@ class _HomePageState extends State<HomePage> {
         });
       }
     }
-    _kickPreview();
     // After adding photos, redistribute logos into sets based on current mode
     if (_p.masterLogos.isNotEmpty) {
-      _autoDistributeLogos(_p.masterLogos);
+      await _autoDistributeLogos(_p.masterLogos);
     }
+    _kickPreview();
     if (_currentAlbum != null && !_processing) _saveAll();
   }
 
@@ -1661,7 +1661,7 @@ class _HomePageState extends State<HomePage> {
       setState(() => _logoSize = size);
       // In autoMultiSet mode, recalculate sets with the new size
       if (_logoSetMode == LogoSetMode.autoMultiSet) {
-        _autoDistributeLogos(_p.masterLogos);
+        Future.microtask(() => _autoDistributeLogos(_p.masterLogos));
       }
       _snack('Tamanho ajustado automaticamente para o modo: ${size.toStringAsFixed(1)}%');
     }
@@ -1699,12 +1699,13 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _pickCustomFont(TextItem t) async {
-    final List<PlatformFile>? files = await FilePicker.pickFiles(
+    final result = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['ttf', 'otf'],
       dialogTitle: 'Selecione um arquivo de fonte (.ttf/.otf)',
     );
-    if (files == null || files.isEmpty) return;
+    if (result == null || result.files.isEmpty) return;
+    final List<PlatformFile> files = result.files;
 
     final file = files.first;
     final path = file.path;
@@ -2770,7 +2771,7 @@ class _HomePageState extends State<HomePage> {
                 style: TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.w500,
-                    color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6)),
+                    color: Theme.of(context).colorScheme.onSurface.withOpacity( 0.6)),
               ),
               const SizedBox(width: 16),
               // Project tabs
@@ -2883,7 +2884,7 @@ class _HomePageState extends State<HomePage> {
     _worker.cancelPending();
     // Redistribute logos for the new project (uses its masterLogos)
     if (_p.masterLogos.isNotEmpty && _photoPaths.isNotEmpty) {
-      _autoDistributeLogos(_p.masterLogos);
+      await _autoDistributeLogos(_p.masterLogos);
     }
     _kickPreview();
     if (mounted) setState(() {}); // Trigger rebuild with new project
@@ -2976,7 +2977,7 @@ class _HomePageState extends State<HomePage> {
                         ...(_logoSetB?.topLeftLogos ?? []),
                       ];
                       if (allLogos.isNotEmpty) {
-                        _autoDistributeLogos(allLogos);
+                        Future.microtask(() => _autoDistributeLogos(allLogos));
                       }
                     } else if (!nowAuto && !wasManual) {
                       // Switching from auto to manual: logos are already in correct positions
@@ -3025,7 +3026,7 @@ class _HomePageState extends State<HomePage> {
                           (v) {
                             setState(() => _logoSize = v);
                             if (_logoSetMode == LogoSetMode.autoMultiSet) {
-                              _autoDistributeLogos(_p.masterLogos);
+                              Future.microtask(() => _autoDistributeLogos(_p.masterLogos));
                             }
                           },
                           enabled: !_currentImageHasCustomSettings),
@@ -3215,7 +3216,7 @@ class _HomePageState extends State<HomePage> {
                     ),
                     borderRadius: BorderRadius.circular(8),
                     color: isHovering
-                        ? scheme.primaryContainer.withValues(alpha: 0.3)
+                        ? scheme.primaryContainer.withOpacity( 0.3)
                         : Colors.transparent,
                   ),
                   child: InkWell(
@@ -3283,7 +3284,7 @@ class _HomePageState extends State<HomePage> {
                             ),
                             borderRadius: BorderRadius.circular(8),
                             color: isHovering
-                                ? scheme.primaryContainer.withValues(alpha: 0.3)
+                                ? scheme.primaryContainer.withOpacity( 0.3)
                                 : Colors.transparent,
                           ),
                           alignment: Alignment.center,
@@ -3501,7 +3502,7 @@ class _HomePageState extends State<HomePage> {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) {
             setState(() => _p.masterLogos.addAll(unique));
-            _autoDistributeLogos(_p.masterLogos);
+            Future.microtask(() => _autoDistributeLogos(_p.masterLogos));
           }
         });
       }
@@ -3624,9 +3625,11 @@ class _HomePageState extends State<HomePage> {
               setState(() => _logoSetMode = newMode);
               // Re-distribute all logos with new mode using masterLogos
               if (_p.masterLogos.isNotEmpty) {
-                _autoDistributeLogos(_p.masterLogos);
-                // Also auto-arrange logo size for the new mode
-                _autoArrangeLogoSizeForCurrentMode();
+                Future.microtask(() async {
+                  await _autoDistributeLogos(_p.masterLogos);
+                  // Also auto-arrange logo size for the new mode
+                  await _autoArrangeLogoSizeForCurrentMode();
+                });
               }
             },
             showSelectedIcon: false,
@@ -3686,16 +3689,22 @@ class _HomePageState extends State<HomePage> {
                 controlsEnabled: _controlsEnabled,
                 processing: _processing,
                 onReorder: (oldIndex, newIndex) {
-                  setState(() {
-                    if (newIndex > oldIndex) newIndex -= 1;
-                    final item = _bottomLogos.removeAt(oldIndex);
-                    _bottomLogos.insert(newIndex, item);
-                    _autoDistributeLogos([..._bottomLogos, ..._topLeftLogos]);
-                  });
+                  final newBottom = [..._bottomLogos];
+                  if (newIndex > oldIndex) newIndex -= 1;
+                  final item = newBottom.removeAt(oldIndex);
+                  newBottom.insert(newIndex, item);
+                  setState(() => _bottomLogos
+                    ..clear()
+                    ..addAll(newBottom));
+                  Future.microtask(() => _autoDistributeLogos([..._bottomLogos, ..._topLeftLogos]));
                 },
                 onRemove: (index) {
-                  setState(() => _bottomLogos.removeAt(index));
-                  _autoDistributeLogos([..._bottomLogos, ..._topLeftLogos]);
+                  final newBottom = [..._bottomLogos];
+                  newBottom.removeAt(index);
+                  setState(() => _bottomLogos
+                    ..clear()
+                    ..addAll(newBottom));
+                  Future.microtask(() => _autoDistributeLogos([..._bottomLogos, ..._topLeftLogos]));
                 },
                 onMoveToOther: (item, fromPlacement) {},
                 onAcceptFromOther: (item) {},
@@ -3707,7 +3716,7 @@ class _HomePageState extends State<HomePage> {
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: scheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                  color: scheme.surfaceContainerHighest.withOpacity( 0.5),
                   borderRadius: BorderRadius.circular(8),
                   border: Border.all(color: scheme.outlineVariant),
                 ),
@@ -3737,16 +3746,22 @@ class _HomePageState extends State<HomePage> {
                 controlsEnabled: _controlsEnabled,
                 processing: _processing,
                 onReorder: (oldIndex, newIndex) {
-                  setState(() {
-                    if (newIndex > oldIndex) newIndex -= 1;
-                    final item = _topLeftLogos.removeAt(oldIndex);
-                    _topLeftLogos.insert(newIndex, item);
-                    _autoDistributeLogos([..._bottomLogos, ..._topLeftLogos]);
-                  });
+                  final newTop = [..._topLeftLogos];
+                  if (newIndex > oldIndex) newIndex -= 1;
+                  final item = newTop.removeAt(oldIndex);
+                  newTop.insert(newIndex, item);
+                  setState(() => _topLeftLogos
+                    ..clear()
+                    ..addAll(newTop));
+                  Future.microtask(() => _autoDistributeLogos([..._bottomLogos, ..._topLeftLogos]));
                 },
                 onRemove: (index) {
-                  setState(() => _topLeftLogos.removeAt(index));
-                  _autoDistributeLogos([..._bottomLogos, ..._topLeftLogos]);
+                  final newTop = [..._topLeftLogos];
+                  newTop.removeAt(index);
+                  setState(() => _topLeftLogos
+                    ..clear()
+                    ..addAll(newTop));
+                  Future.microtask(() => _autoDistributeLogos([..._bottomLogos, ..._topLeftLogos]));
                 },
                 onMoveToOther: (item, fromPlacement) {},
                 onAcceptFromOther: (item) {},
@@ -3772,13 +3787,12 @@ class _HomePageState extends State<HomePage> {
                       if (newIndex > oldIndex) newIndex -= 1;
                       final item = multiSets[i].bottomLogos.removeAt(oldIndex);
                       multiSets[i].bottomLogos.insert(newIndex, item);
-                      // Rebuild allLogos and redistribute
-                      final rebuilt = <LogoItem>[
-                        ...multiSets.expand((s) => s.bottomLogos),
-                        ...multiSets.expand((s) => s.topLeftLogos),
-                      ];
-                      _autoDistributeLogos(rebuilt);
                     });
+                    final rebuilt = <LogoItem>[
+                      ...multiSets.expand((s) => s.bottomLogos),
+                      ...multiSets.expand((s) => s.topLeftLogos),
+                    ];
+                    Future.microtask(() => _autoDistributeLogos(rebuilt));
                   },
                   onRemove: (index) {
                     setState(() => multiSets[i].bottomLogos.removeAt(index));
@@ -3786,7 +3800,7 @@ class _HomePageState extends State<HomePage> {
                       ...multiSets.expand((s) => s.bottomLogos),
                       ...multiSets.expand((s) => s.topLeftLogos),
                     ];
-                    _autoDistributeLogos(rebuilt);
+                    Future.microtask(() => _autoDistributeLogos(rebuilt));
                   },
                   onMoveToOther: (item, fromPlacement) {},
                   onAcceptFromOther: (item) {},
@@ -3797,7 +3811,7 @@ class _HomePageState extends State<HomePage> {
                 Container(
                   padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
-                    color: scheme.surfaceContainerHighest.withValues(alpha: 0.3),
+                    color: scheme.surfaceContainerHighest.withOpacity( 0.3),
                     borderRadius: BorderRadius.circular(6),
                     border: Border.all(color: scheme.outlineVariant),
                   ),
@@ -3817,12 +3831,12 @@ class _HomePageState extends State<HomePage> {
                       if (newIndex > oldIndex) newIndex -= 1;
                       final item = multiSets[i].topLeftLogos.removeAt(oldIndex);
                       multiSets[i].topLeftLogos.insert(newIndex, item);
-                      final rebuilt = <LogoItem>[
-                        ...multiSets.expand((s) => s.bottomLogos),
-                        ...multiSets.expand((s) => s.topLeftLogos),
-                      ];
-                      _autoDistributeLogos(rebuilt);
                     });
+                    final rebuilt = <LogoItem>[
+                      ...multiSets.expand((s) => s.bottomLogos),
+                      ...multiSets.expand((s) => s.topLeftLogos),
+                    ];
+                    Future.microtask(() => _autoDistributeLogos(rebuilt));
                   },
                   onRemove: (index) {
                     setState(() => multiSets[i].topLeftLogos.removeAt(index));
@@ -3830,7 +3844,7 @@ class _HomePageState extends State<HomePage> {
                       ...multiSets.expand((s) => s.bottomLogos),
                       ...multiSets.expand((s) => s.topLeftLogos),
                     ];
-                    _autoDistributeLogos(rebuilt);
+                    Future.microtask(() => _autoDistributeLogos(rebuilt));
                   },
                   onMoveToOther: (item, fromPlacement) {},
                   onAcceptFromOther: (item) {},
@@ -3845,9 +3859,9 @@ class _HomePageState extends State<HomePage> {
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: scheme.primaryContainer.withValues(alpha: 0.3),
+                  color: scheme.primaryContainer.withOpacity( 0.3),
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: scheme.primary.withValues(alpha: 0.5)),
+                  border: Border.all(color: scheme.primary.withOpacity( 0.5)),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -3908,12 +3922,12 @@ class _HomePageState extends State<HomePage> {
                     if (newIndex > oldIndex) newIndex -= 1;
                     final item = setABottom.removeAt(oldIndex);
                     setABottom.insert(newIndex, item);
-                    _autoDistributeLogos(allLogos);
                   });
+                  Future.microtask(() => _autoDistributeLogos(allLogos));
                 },
                 onRemove: (index) {
                   setState(() => setABottom.removeAt(index));
-                  _autoDistributeLogos(allLogos);
+                  Future.microtask(() => _autoDistributeLogos(allLogos));
                 },
                 onMoveToOther: (item, fromPlacement) {},
                 onAcceptFromOther: (item) {},
@@ -3924,7 +3938,7 @@ class _HomePageState extends State<HomePage> {
               Container(
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
-                  color: scheme.surfaceContainerHighest.withValues(alpha: 0.3),
+                  color: scheme.surfaceContainerHighest.withOpacity( 0.3),
                   borderRadius: BorderRadius.circular(6),
                   border: Border.all(color: scheme.outlineVariant),
                 ),
@@ -3944,12 +3958,12 @@ class _HomePageState extends State<HomePage> {
                     if (newIndex > oldIndex) newIndex -= 1;
                     final item = setATop.removeAt(oldIndex);
                     setATop.insert(newIndex, item);
-                    _autoDistributeLogos(allLogos);
                   });
+                  Future.microtask(() => _autoDistributeLogos(allLogos));
                 },
                 onRemove: (index) {
                   setState(() => setATop.removeAt(index));
-                  _autoDistributeLogos(allLogos);
+                  Future.microtask(() => _autoDistributeLogos(allLogos));
                 },
                 onMoveToOther: (item, fromPlacement) {},
                 onAcceptFromOther: (item) {},
@@ -3960,7 +3974,7 @@ class _HomePageState extends State<HomePage> {
               Container(
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
-                  color: scheme.surfaceContainerHighest.withValues(alpha: 0.3),
+                  color: scheme.surfaceContainerHighest.withOpacity( 0.3),
                   borderRadius: BorderRadius.circular(6),
                   border: Border.all(color: scheme.outlineVariant),
                 ),
@@ -3984,12 +3998,12 @@ class _HomePageState extends State<HomePage> {
                     if (newIndex > oldIndex) newIndex -= 1;
                     final item = setBBottom.removeAt(oldIndex);
                     setBBottom.insert(newIndex, item);
-                    _autoDistributeLogos(allLogos);
                   });
+                  Future.microtask(() => _autoDistributeLogos(allLogos));
                 },
                 onRemove: (index) {
                   setState(() => setBBottom.removeAt(index));
-                  _autoDistributeLogos(allLogos);
+                  Future.microtask(() => _autoDistributeLogos(allLogos));
                 },
                 onMoveToOther: (item, fromPlacement) {},
                 onAcceptFromOther: (item) {},
@@ -4000,7 +4014,7 @@ class _HomePageState extends State<HomePage> {
               Container(
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
-                  color: scheme.surfaceContainerHighest.withValues(alpha: 0.3),
+                  color: scheme.surfaceContainerHighest.withOpacity( 0.3),
                   borderRadius: BorderRadius.circular(6),
                   border: Border.all(color: scheme.outlineVariant),
                 ),
@@ -4020,12 +4034,12 @@ class _HomePageState extends State<HomePage> {
                     if (newIndex > oldIndex) newIndex -= 1;
                     final item = setBTop.removeAt(oldIndex);
                     setBTop.insert(newIndex, item);
-                    _autoDistributeLogos(allLogos);
                   });
+                  Future.microtask(() => _autoDistributeLogos(allLogos));
                 },
                 onRemove: (index) {
                   setState(() => setBTop.removeAt(index));
-                  _autoDistributeLogos(allLogos);
+                  Future.microtask(() => _autoDistributeLogos(allLogos));
                 },
                 onMoveToOther: (item, fromPlacement) {},
                 onAcceptFromOther: (item) {},
@@ -4036,7 +4050,7 @@ class _HomePageState extends State<HomePage> {
               Container(
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
-                  color: scheme.surfaceContainerHighest.withValues(alpha: 0.3),
+                  color: scheme.surfaceContainerHighest.withOpacity( 0.3),
                   borderRadius: BorderRadius.circular(6),
                   border: Border.all(color: scheme.outlineVariant),
                 ),
@@ -4049,13 +4063,13 @@ class _HomePageState extends State<HomePage> {
           _slider('Tamanho das logos (todas)', _logoSize, 5, 35,
               (v) {
                 setState(() => _logoSize = v);
-                _autoDistributeLogos(allLogos);
+                Future.microtask(() => _autoDistributeLogos(allLogos));
               },
               enabled: !_currentImageHasCustomSettings),
           _slider('Espaço entre logos', _logoSpacing, 0, 10,
               (v) {
                 setState(() => _logoSpacing = v);
-                _autoDistributeLogos(allLogos);
+                Future.microtask(() => _autoDistributeLogos(allLogos));
               },
               enabled: !_currentImageHasCustomSettings),
           _slider('Opacidade', _logoOpacity, 0, 100,
@@ -4077,12 +4091,13 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _pickLogosAutoMode() async {
-    final List<PlatformFile>? files = await FilePicker.pickFiles(
+    final result = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['png', 'jpg', 'jpeg', 'webp', 'bmp', 'tiff'],
       dialogTitle: 'Selecione logos para o conjunto (todas vão para a base; excesso vai pro topo)',
     );
-    if (files == null || files.isEmpty) return;
+    if (result == null || result.files.isEmpty) return;
+    final List<PlatformFile> files = result.files;
 
     setState(() => _importing = true);
     try {
@@ -4145,7 +4160,7 @@ class _HomePageState extends State<HomePage> {
       }
 
       // Auto-distribute using masterLogos
-      _autoDistributeLogos(_p.masterLogos);
+      await _autoDistributeLogos(_p.masterLogos);
       // Auto-arrange logo size for the new distribution
       await _autoArrangeLogoSizeForCurrentMode();
     } finally {
@@ -4186,7 +4201,7 @@ class _HomePageState extends State<HomePage> {
     return Container(
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: scheme.surfaceContainerHighest.withValues(alpha: 0.5),
+        color: scheme.surfaceContainerHighest.withOpacity( 0.5),
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: scheme.outlineVariant),
       ),
@@ -5631,7 +5646,7 @@ class _HomePageState extends State<HomePage> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.9),
+        color: color.withOpacity( 0.9),
         borderRadius: BorderRadius.circular(4),
         border: Border.all(color: color, width: 1),
       ),
@@ -5655,7 +5670,7 @@ class _HomePageState extends State<HomePage> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.9),
+        color: color.withOpacity( 0.9),
         borderRadius: BorderRadius.circular(3),
         border: Border.all(color: color, width: 1),
       ),
@@ -5926,7 +5941,7 @@ class _HomePageState extends State<HomePage> {
                         ...(_logoSetB?.bottomLogos ?? []),
                         ...(_logoSetB?.topLeftLogos ?? []),
                       ];
-                      _autoDistributeLogos(allLogos);
+                      Future.microtask(() => _autoDistributeLogos(allLogos));
                     } else {
                       _schedulePreview();
                     }
@@ -6096,7 +6111,7 @@ class _DraggableLogoList extends StatelessWidget {
         final isDragOver = candidateData.isNotEmpty;
         return Container(
           decoration: BoxDecoration(
-            color: isDragOver ? scheme.primaryContainer.withValues(alpha: 0.3) : Colors.transparent,
+            color: isDragOver ? scheme.primaryContainer.withOpacity( 0.3) : Colors.transparent,
             borderRadius: BorderRadius.circular(8),
             border: isDragOver
                 ? Border.all(color: scheme.primary, width: 2, style: BorderStyle.solid)
@@ -6365,7 +6380,7 @@ class _ColorPanelState extends State<_ColorPanel> {
   void didUpdateWidget(_ColorPanel old) {
     super.didUpdateWidget(old);
     // Follow the value when it was changed elsewhere (swatch, hover).
-    if (widget.color != _hsv.toColor().toARGB32()) {
+    if (widget.color != _hsv.toColor().value) {
       _hsv = HSVColor.fromColor(Color(widget.color));
       if (!_hexFocus.hasFocus) _hex.text = _fmt(widget.color);
     }
@@ -6381,9 +6396,9 @@ class _ColorPanelState extends State<_ColorPanel> {
   void _apply(HSVColor v) {
     setState(() {
       _hsv = v;
-      if (!_hexFocus.hasFocus) _hex.text = _fmt(v.toColor().toARGB32());
+      if (!_hexFocus.hasFocus) _hex.text = _fmt(v.toColor().value);
     });
-    widget.onChanged(v.toColor().toARGB32());
+    widget.onChanged(v.toColor().value);
   }
 
   void _svAt(Offset p, Size size) {
@@ -6687,7 +6702,7 @@ class _GradientAnglePainter extends CustomPainter {
     final paint = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = 3
-      ..color = color.withValues(alpha: 0.3);
+      ..color = color.withOpacity( 0.3);
     // Outer circle
     canvas.drawCircle(center, radius, paint);
 
@@ -6696,7 +6711,7 @@ class _GradientAnglePainter extends CustomPainter {
     for (final a in [0, 90, 180, -90]) {
       final rad = a * math.pi / 180;
       final p = Offset(center.dx + (radius + 8) * math.cos(rad), center.dy + (radius + 8) * math.sin(rad));
-      textPainter.text = TextSpan(text: '$a°', style: TextStyle(fontSize: 10, color: color.withValues(alpha: 0.6)));
+      textPainter.text = TextSpan(text: '$a°', style: TextStyle(fontSize: 10, color: color.withOpacity( 0.6)));
       textPainter.layout();
       textPainter.paint(canvas, p - Offset(textPainter.width / 2, textPainter.height / 2));
     }

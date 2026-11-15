@@ -72,7 +72,7 @@ jobs:
         run: cmake -G "Visual Studio 18 2026" -A x64 -B build/windows -S windows
       - name: Build Windows Release
         working-directory: ./flutter_app/build/windows
-        run: msbuild *.sln /p:Configuration=Release /p:Platform=x64
+        run: msbuild photo_watermark.sln /p:Configuration=Release /p:Platform=x64
       - name: Verify output exists
         run: Test-Path flutter_app/build/windows/x64/runner/Release/photo_watermark.exe
         shell: pwsh
