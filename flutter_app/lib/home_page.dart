@@ -1631,6 +1631,10 @@ class _HomePageState extends State<HomePage> {
 
     if (size != null && mounted) {
       setState(() => _logoSize = size);
+      // In autoMultiSet mode, recalculate sets with the new size
+      if (_logoSetMode == LogoSetMode.autoMultiSet) {
+        _autoDistributeLogos(_p.masterLogos);
+      }
       _snack('Tamanho ajustado automaticamente para o modo: ${size.toStringAsFixed(1)}%');
     }
   }
@@ -1766,10 +1770,16 @@ class _HomePageState extends State<HomePage> {
     for (final e in allLogos) {
       _previewLogo[e.id] ??=
           await compute(downscaleImage, (e.bytes, 512, true));
-      if (token != _previewToken) return;
+      if (token != _previewToken) {
+        if (mounted) setState(() => _renderingPreview = false);
+        return;
+      }
     }
     await _ensureTextPngs();
-    if (token != _previewToken) return;
+    if (token != _previewToken) {
+      if (mounted) setState(() => _renderingPreview = false);
+      return;
+    }
 
     final version = _previewVersion;
     for (final path in _previewOrder()) {
@@ -1783,18 +1793,30 @@ class _HomePageState extends State<HomePage> {
           small = cached;
         } else {
           final full = await File(path).readAsBytes();
-          if (token != _previewToken) return;
+          if (token != _previewToken) {
+            if (mounted) setState(() => _renderingPreview = false);
+            return;
+          }
           small = await compute<(Uint8List, int, bool), Uint8List>(
               downscaleImage, (full, 1280, false));
-          if (token != _previewToken) return;
+          if (token != _previewToken) {
+            if (mounted) setState(() => _renderingPreview = false);
+            return;
+          }
           if (!_photoPaths.contains(path)) continue;
           _previewPhoto[path] = small;
         }
         final out = await _worker.render(_previewRequest(path, small));
-        if (token != _previewToken) return;
+        if (token != _previewToken) {
+          if (mounted) setState(() => _renderingPreview = false);
+          return;
+        }
         if (out == null) continue;
         final aspect = await _aspectOf(out);
-        if (token != _previewToken || !mounted) return;
+        if (token != _previewToken || !mounted) {
+          if (mounted) setState(() => _renderingPreview = false);
+          return;
+        }
         if (!_photoPaths.contains(path)) continue;
         setState(() {
           _previews[path] = Preview(out, aspect);
@@ -1803,7 +1825,10 @@ class _HomePageState extends State<HomePage> {
       } catch (_) {
         // A photo that can't be read/decoded must not block the others.
         _previewFailed.add(path);
-        if (token != _previewToken) return;
+        if (token != _previewToken) {
+          if (mounted) setState(() => _renderingPreview = false);
+          return;
+        }
       }
     }
     if (mounted && token == _previewToken) {
@@ -2952,7 +2977,12 @@ class _HomePageState extends State<HomePage> {
                   children: [
                     Expanded(
                       child: _slider('Tamanho (todas)', _logoSize, 5, 35,
-                          (v) => setState(() => _logoSize = v),
+                          (v) {
+                            setState(() => _logoSize = v);
+                            if (_logoSetMode == LogoSetMode.autoMultiSet) {
+                              _autoDistributeLogos(_p.masterLogos);
+                            }
+                          },
                           enabled: !_currentImageHasCustomSettings),
                     ),
                     if (!_controlsEnabled)
@@ -5526,11 +5556,31 @@ class _HomePageState extends State<HomePage> {
             style: const TextStyle(color: Colors.white, fontSize: 11.5)),
       );
 
+  /// Returns the set index (0-based) for the given photo index in autoMultiSet mode,
+  /// or null for single/dual modes where we use A/B labels.
+  int? _logoSetIndexForIndex(int index) {
+    switch (_logoSetMode) {
+      case LogoSetMode.single:
+        return null;
+      case LogoSetMode.splitHalf:
+      case LogoSetMode.alternating:
+        // These only have 2 sets (A and B)
+        return null;
+      case LogoSetMode.autoMultiSet:
+        final sets = _p.logoSets.where((s) => s.bottomLogos.isNotEmpty || s.topLeftLogos.isNotEmpty).toList();
+        if (sets.isEmpty) return null;
+        return index % sets.length;
+    }
+  }
+
   Widget _setBadge(int index) {
     final set = _logoSetForIndex(index);
     if (set == null) return const SizedBox.shrink(); // single mode
-    final isSetA = set == _logoSetA;
-    final label = isSetA ? 'SET A' : 'SET B';
+
+    final setIndex = _logoSetIndexForIndex(index);
+    final label = setIndex != null
+        ? 'SET ${String.fromCharCode(65 + setIndex)}' // A, B, C, D...
+        : (set == _logoSetA ? 'SET A' : 'SET B');
     // Teal color #05b2ae
     const color = Color(0xFF05B2AE);
     return Container(
@@ -5550,8 +5600,11 @@ class _HomePageState extends State<HomePage> {
   Widget _thumbSetBadge(int index) {
     final set = _logoSetForIndex(index);
     if (set == null) return const SizedBox.shrink(); // single mode
-    final isSetA = set == _logoSetA;
-    final label = isSetA ? 'A' : 'B';
+
+    final setIndex = _logoSetIndexForIndex(index);
+    final label = setIndex != null
+        ? String.fromCharCode(65 + setIndex) // A, B, C, D...
+        : (set == _logoSetA ? 'A' : 'B');
     // Teal color #05b2ae
     const color = Color(0xFF05B2AE);
     return Container(
