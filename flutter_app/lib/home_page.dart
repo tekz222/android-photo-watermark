@@ -1343,6 +1343,11 @@ class _HomePageState extends State<HomePage> {
       }
     }
     _kickPreview();
+    // After adding photos, redistribute logos into sets based on current mode
+    // (uses masterLogos which persists across restarts)
+    if (_p.masterLogos.isNotEmpty) {
+      _autoDistributeLogos(_p.masterLogos);
+    }
     // If this project was already saved, the new photos go straight into the
     // same album (only the unsaved ones get processed).
     if (_currentAlbum != null && !_processing) _saveAll();
@@ -1407,6 +1412,10 @@ class _HomePageState extends State<HomePage> {
       }
     }
     _kickPreview();
+    // After adding photos, redistribute logos into sets based on current mode
+    if (_p.masterLogos.isNotEmpty) {
+      _autoDistributeLogos(_p.masterLogos);
+    }
     if (_currentAlbum != null && !_processing) _saveAll();
   }
 
@@ -2872,6 +2881,10 @@ class _HomePageState extends State<HomePage> {
     await _projectManager.setActive(index);
     _previewToken++; // Invalidate preview
     _worker.cancelPending();
+    // Redistribute logos for the new project (uses its masterLogos)
+    if (_p.masterLogos.isNotEmpty && _photoPaths.isNotEmpty) {
+      _autoDistributeLogos(_p.masterLogos);
+    }
     _kickPreview();
     if (mounted) setState(() {}); // Trigger rebuild with new project
   }
