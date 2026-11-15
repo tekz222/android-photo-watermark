@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:image/image.dart' as img;
@@ -386,8 +387,11 @@ Uint8List renderWatermark(WatermarkRequest r, {DecodedCache? cache}) {
 
   // Bottom row.
   final bottomH = shortest * r.effectiveBottomHeight();
+  final rowWidth = _rowWidth(r.bottomLogos, decode, bottomH, bottomGap);
+  // Always center: allow negative startX so row stays centered even if wider than photo
+  // (logos will be clipped on both sides symmetrically, not just left).
   final bottomStartX = r.centered
-      ? (photo.width - _rowWidth(r.bottomLogos, decode, bottomH, bottomGap)) / 2
+      ? (photo.width - rowWidth) / 2
       : shortest * r.effectiveBottomMargin();
   final bottomRowTop = photo.height - shortest * r.effectiveBottomMargin() - bottomH;
   _drawRow(
@@ -402,16 +406,47 @@ Uint8List renderWatermark(WatermarkRequest r, {DecodedCache? cache}) {
   );
 
   // Extra logos for bottom row: above leftmost and rightmost logos.
-  // These sit above the main bottom row, at the same X positions as the first/last logos.
+  // Use ACTUAL rendered positions (after clamping), not theoretical.
+  // Reserve top-right corner area for the main corner logo (never overlap it).
+  // Reserve ~20% of photo width from right edge as "corner section".
+  final cornerLogo = r.cornerLogo;
+  img.Image? decodedCorner;
+  int cornerW = 0, cornerH = 0;
+  // Corner section: rightmost 20% of photo width, top 20% of photo height
+  final cornerSectionLeft = (photo.width * 0.8).round();
+  final cornerSectionTop = (photo.height * 0.2).round();
+  if (cornerLogo != null) {
+    decodedCorner = decode(cornerLogo);
+    if (decodedCorner != null) {
+      cornerH = (shortest * r.effectiveCornerHeight()).round().clamp(1, photo.height);
+      final resizedCorner = _resize(decodedCorner!, height: cornerH);
+      cornerW = resizedCorner.width;
+    }
+  }
+  // Helper: check if a logo rect overlaps the reserved corner section (20% from right/top)
+  bool _overlapsCornerSection(int x, int y, int w, int h) {
+    // Logo rect
+    final lLeft = x;
+    final lRight = x + w;
+    final lTop = y;
+    final lBottom = y + h;
+    // Reserved corner section: right 20% width, top 20% height
+    final cLeft = cornerSectionLeft;
+    final cRight = photo!.width;
+    final cTop = 0;
+    final cBottom = cornerSectionTop;
+    return !(lRight < cLeft || lLeft > cRight || lBottom < cTop || lTop > cBottom);
+  }
+
   if (r.bottomLeftTopLogo != null && r.bottomLogos.isNotEmpty) {
     final logo = decode(r.bottomLeftTopLogo!);
     if (logo != null) {
       final h = (shortest * r.effectiveBottomHeight()).round().clamp(1, photo.height);
       final resized = _resize(logo, height: h);
       final margin = (shortest * r.bottomLeftTopMargin).round();
-      final x = bottomStartX.round();
-      final y = bottomRowTop - margin - h;
-      if (y >= 0) {
+      final x = bottomStartX.round(); // CLAMPED position
+      final y = (bottomRowTop - margin - h).round();
+      if (y >= 0 && !_overlapsCornerSection(x, y, resized!.width, resized.height)) {
         final dstY = y.clamp(0, photo.height - h).toInt();
         img.compositeImage(photo, resized, dstX: x, dstY: dstY);
       }
@@ -423,10 +458,12 @@ Uint8List renderWatermark(WatermarkRequest r, {DecodedCache? cache}) {
       final h = (shortest * r.effectiveBottomHeight()).round().clamp(1, photo.height);
       final resized = _resize(logo, height: h);
       final margin = (shortest * r.bottomRightTopMargin).round();
-      final rowWidth = _rowWidth(r.bottomLogos, decode, bottomH, bottomGap);
-      final x = (bottomStartX + rowWidth - resized.width).round();
-      final y = bottomRowTop - margin - h;
-      if (y >= 0) {
+      // Rightmost logo's actual X = clamped startX + actual rendered width - logo width
+      // _drawRow stops at dst.width, so rendered width = min(rowWidth, photo.width - bottomStartX)
+      final renderedRowWidth = math.min(rowWidth, photo.width - bottomStartX);
+      final x = (bottomStartX + renderedRowWidth - resized!.width).round();
+      final y = (bottomRowTop - margin - h).round();
+      if (y >= 0 && !_overlapsCornerSection(x, y, resized!.width, resized.height)) {
         final dstY = y.clamp(0, photo.height - h).toInt();
         img.compositeImage(photo, resized, dstX: x, dstY: dstY);
       }
@@ -442,7 +479,7 @@ Uint8List renderWatermark(WatermarkRequest r, {DecodedCache? cache}) {
       final resized = _resize(logo, height: h);
       final marginTop = shortest * r.effectiveCornerMarginTop();
       final marginRight = shortest * r.effectiveCornerMarginRight();
-      final x = (photo.width - marginRight - resized.width).round();
+      final x = (photo.width - marginRight - resized!.width).round();
       final y = marginTop.round();
       img.compositeImage(photo, resized, dstX: x, dstY: y);
     }
@@ -456,10 +493,10 @@ Uint8List renderWatermark(WatermarkRequest r, {DecodedCache? cache}) {
     final ratio = t.contentRatio > 0 ? t.contentRatio : 1.0;
     final h = (shortest * t.height / ratio).round().clamp(1, photo.height);
     var resized = _resize(text, height: h);
-    if (resized.width > photo.width) {
+    if (resized!.width > photo.width) {
       resized = _resize(text, width: photo.width);
     }
-    final x = ((photo.width - resized.width) / 2).round();
+    final x = ((photo.width - resized!.width) / 2).round();
     final maxY = photo.height - resized.height;
     var y = (t.top * photo.height - resized.height / 2).round();
     y = maxY <= 0 ? 0 : y.clamp(0, maxY);
@@ -482,14 +519,19 @@ void _drawRow(
   if (logos.isEmpty) return;
   final h = height.round().clamp(1, dst.height);
   final y = top.round();
-  var x = startX;
+  // Clamp startX to valid range [0, dst.width)
+  var x = startX.clamp(0.0, dst.width.toDouble() - 1);
   for (final src in logos) {
     final logo = decode(src);
     if (logo == null) continue;
     final resized = _withOpacity(_resize(logo, height: h), opacity);
-    img.compositeImage(dst, resized, dstX: x.round(), dstY: y);
-    x += resized.width + gap;
-    if (x > dst.width) break; // Stop once the row has left the frame.
+    final logoRight = x + resized!.width;
+    // Only draw if logo fits fully within image bounds (with 1px tolerance)
+    if (logoRight <= dst.width + 1) {
+      img.compositeImage(dst, resized, dstX: x.round(), dstY: y);
+    }
+    x = logoRight + gap;
+    if (x >= dst.width) break; // No more room for next logo
   }
 }
 

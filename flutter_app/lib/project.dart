@@ -65,6 +65,8 @@ class Project {
     this.logoSetMode = LogoSetMode.single,
     this.logoSetA,
     this.logoSetB,
+    // New: multiple logo sets for autoMultiSet mode
+    this.logoSets = const [],
   }) : textJob = Future<void>.value();
 
   final String id;
@@ -107,6 +109,8 @@ class Project {
   LogoSetMode logoSetMode;
   LogoSet? logoSetA;
   LogoSet? logoSetB;
+  // Multiple logo sets for autoMultiSet mode
+  List<LogoSet> logoSets;
   bool cancelRequested;
   int done;
   int total;
@@ -193,6 +197,25 @@ class Project {
       logoSetMode: logoSetMode,
       logoSetA: logoSetA,
       logoSetB: logoSetB,
+      // New: multiple logo sets for autoMultiSet
+      logoSets: logoSets.map((s) => LogoSet(
+        bottomLogos: s.bottomLogos.map((l) => LogoItem(
+          nextLogoId(), l.path, l.sourceKey, l.bytes, l.phash, l.phones, l.texts)).toList(),
+        topLeftLogos: s.topLeftLogos.map((l) => LogoItem(
+          nextLogoId(), l.path, l.sourceKey, l.bytes, l.phash, l.phones, l.texts)).toList(),
+        bottomLeftTopLogo: s.bottomLeftTopLogo != null ? LogoItem(
+          nextLogoId(), s.bottomLeftTopLogo!.path, s.bottomLeftTopLogo!.sourceKey, s.bottomLeftTopLogo!.bytes,
+          s.bottomLeftTopLogo!.phash, s.bottomLeftTopLogo!.phones, s.bottomLeftTopLogo!.texts) : null,
+        bottomRightTopLogo: s.bottomRightTopLogo != null ? LogoItem(
+          nextLogoId(), s.bottomRightTopLogo!.path, s.bottomRightTopLogo!.sourceKey, s.bottomRightTopLogo!.bytes,
+          s.bottomRightTopLogo!.phash, s.bottomRightTopLogo!.phones, s.bottomRightTopLogo!.texts) : null,
+        topLeftBottomLogo: s.topLeftBottomLogo != null ? LogoItem(
+          nextLogoId(), s.topLeftBottomLogo!.path, s.topLeftBottomLogo!.sourceKey, s.topLeftBottomLogo!.bytes,
+          s.topLeftBottomLogo!.phash, s.topLeftBottomLogo!.phones, s.topLeftBottomLogo!.texts) : null,
+        bottomLeftTopMargin: s.bottomLeftTopMargin,
+        bottomRightTopMargin: s.bottomRightTopMargin,
+        topLeftBottomMargin: s.topLeftBottomMargin,
+      )).toList(),
       // Empty save state
       savedPaths: {},
       currentAlbum: null,
@@ -263,6 +286,8 @@ class Project {
       'logoSetMode': logoSetMode.index,
       'logoSetA': logoSetA?.toJson(),
       'logoSetB': logoSetB?.toJson(),
+      // New: multiple logo sets for autoMultiSet
+      'logoSets': logoSets.map((s) => s.toJson()).toList(),
     };
   }
 
@@ -354,6 +379,10 @@ class Project {
       logoSetB: json['logoSetB'] != null
           ? LogoSet.fromJson(json['logoSetB'] as Map<String, dynamic>)
           : null,
+      // New: multiple logo sets for autoMultiSet
+      logoSets: (json['logoSets'] as List? ?? [])
+          .map((e) => LogoSet.fromJson(e as Map<String, dynamic>))
+          .toList(),
     );
   }
 
@@ -596,6 +625,9 @@ class ProjectManager {
           previewFailed: {},
           previewPhoto: {},
           previewLogo: {},
+          // Dual-set mode: load logo sets from saved settings
+          logoSetA: project.logoSetA,
+          logoSetB: project.logoSetB,
         ));
         _activeIndex = 0;
       } catch (_) {
