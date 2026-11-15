@@ -92,6 +92,10 @@ class _HomePageState extends State<HomePage> {
   // Preview worker (shared across projects)
   final PreviewWorker _worker = PreviewWorker();
 
+  // Reference shortest side for auto mode (minimum across all photos).
+  // Used to ensure consistent logo sizing across photos of different dimensions.
+  double? _autoReferenceShortestSide;
+
   // Getters delegating to active project
   Project get _p => _projectManager.activeProject;
   List<String> get _photoPaths => _p.photoPaths;
@@ -519,6 +523,8 @@ class _HomePageState extends State<HomePage> {
     }
 
     _schedulePreview();
+    // Store reference shortest side for consistent logo sizing in auto mode
+    _autoReferenceShortestSide = shortestSide;
     return true;
   }
   LogoItem? get _cornerLogo => _p.cornerLogo;
@@ -1768,6 +1774,8 @@ class _HomePageState extends State<HomePage> {
       bottomRightTopMargin: (logoSet?.bottomRightTopMargin ?? 2.0) / 100,
       topLeftBottomLogo: logoSet?.topLeftBottomLogo == null ? null : logo(logoSet!.topLeftBottomLogo!),
       topLeftBottomMargin: (logoSet?.topLeftBottomMargin ?? 2.0) / 100,
+      // Use reference shortest side for consistent logo sizing in auto mode
+      referenceShortestSide: _autoReferenceShortestSide,
     );
   }
 
@@ -1814,6 +1822,8 @@ class _HomePageState extends State<HomePage> {
       bottomRightTopMargin: (logoSet?.bottomRightTopMargin ?? 2.0) / 100,
       topLeftBottomLogo: logoSet?.topLeftBottomLogo == null ? null : logo(logoSet!.topLeftBottomLogo!),
       topLeftBottomMargin: (logoSet?.topLeftBottomMargin ?? 2.0) / 100,
+      // Use reference shortest side for consistent logo sizing in auto mode
+      referenceShortestSide: _autoReferenceShortestSide,
     );
   }
 
@@ -2782,7 +2792,11 @@ class _HomePageState extends State<HomePage> {
                   onSelectionChanged: (s) {
                     final wasManual = !_autoArrangeMode;
                     final nowAuto = s.first;
-                    setState(() => _autoArrangeMode = nowAuto);
+                    setState(() {
+                      _autoArrangeMode = nowAuto;
+                      // Clear reference shortest side when leaving auto mode
+                      if (!nowAuto) _autoReferenceShortestSide = null;
+                    });
                     if (wasManual && nowAuto) {
                       // Switching from manual to auto: collect all logos and redistribute
                       final allLogos = <LogoItem>[
@@ -3385,6 +3399,14 @@ class _HomePageState extends State<HomePage> {
                 icon: const Icon(Icons.add_photo_alternate_outlined, size: 18),
                 label: Text(isSingle ? 'Adicionar logos ao conjunto' : (isAutoMultiSet ? 'Adicionar logos (auto sets)' : 'Adicionar logos (Set A + B)')),
               ),
+              const SizedBox(width: 8),
+              if (allLogos.isNotEmpty)
+                OutlinedButton.icon(
+                  onPressed: !_controlsEnabled ? null : () => _clearAllLogos(),
+                  icon: const Icon(Icons.clear_all, size: 18),
+                  label: const Text('Limpar todas'),
+                  style: OutlinedButton.styleFrom(foregroundColor: scheme.error),
+                ),
               const SizedBox(width: 12),
               if (allLogos.isNotEmpty)
                 Text(isSingle
@@ -3804,6 +3826,31 @@ class _HomePageState extends State<HomePage> {
     } finally {
       if (mounted) setState(() => _importing = false);
     }
+  }
+
+  /// Clears all logos from all sets and the project.
+  void _clearAllLogos() {
+    setState(() {
+      // Clear project-level logos
+      _p.bottomLogos.clear();
+      _p.topLeftLogos.clear();
+      _p.cornerLogo = null;
+
+      // Clear Set A and B
+      if (_logoSetA != null) {
+        _logoSetA = _logoSetA!.copyWith(bottomLogos: [], topLeftLogos: []);
+      }
+      if (_logoSetB != null) {
+        _logoSetB = _logoSetB!.copyWith(bottomLogos: [], topLeftLogos: []);
+      }
+
+      // Clear autoMultiSet sets
+      _p.logoSets.clear();
+
+      // Clear reference shortest side
+      _autoReferenceShortestSide = null;
+    });
+    _schedulePreview();
   }
 
   /// Editor for a single logo set (bottom, top-left, corner).

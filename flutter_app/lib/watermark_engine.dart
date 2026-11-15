@@ -125,6 +125,11 @@ class WatermarkRequest {
     // Extra logo for top-left row (below leftmost)
     this.topLeftBottomLogo,
     this.topLeftBottomMargin = 2.0,
+    // Optional reference shortest side for consistent logo sizing across photos.
+    // When provided, logos are sized relative to this value instead of each
+    // photo's actual shortest side. Used in auto mode to ensure logos that fit
+    // on the smallest photo also fit on larger photos without clipping.
+    this.referenceShortestSide,
   });
 
   final ImageSrc photo;
@@ -161,6 +166,10 @@ class WatermarkRequest {
   /// false = bottom row anchored left; true = bottom row centered.
   /// The top row is ALWAYS anchored left.
   final bool centered;
+
+  /// Optional reference shortest side for consistent logo sizing.
+  /// If null, each photo's own shortest side is used.
+  final double? referenceShortestSide;
 
   /// Horizontal gap between logos in a row, as a fraction of the shortest side.
   final double spacing;
@@ -323,7 +332,9 @@ Uint8List renderWatermark(WatermarkRequest r, {DecodedCache? cache}) {
     photo = photo.clone(); // never draw onto the cached original
   }
 
-  final shortest =
+  // Use reference shortest side if provided (for consistent logo sizing across photos),
+  // otherwise calculate from the current photo.
+  final shortest = r.referenceShortestSide ??
       (photo.width < photo.height ? photo.width : photo.height).toDouble();
 
   // Draw top gradient if enabled.
@@ -356,6 +367,10 @@ Uint8List renderWatermark(WatermarkRequest r, {DecodedCache? cache}) {
   final topGap = shortest * r.effectiveTopLeftSpacing();
   final bottomGap = shortest * r.effectiveBottomSpacing();
 
+  // Corner section: rightmost 20% of photo width reserved for main corner logo.
+  // Top row should not extend into this area.
+  final cornerSectionLeft = (photo.width * 0.8).round().toDouble();
+
   // Top-left / top row (lowest layer). Always anchored to the left; only the
   // bottom row honors the "centered" option.
   final topH = shortest * r.effectiveTopLeftHeight();
@@ -370,6 +385,7 @@ Uint8List renderWatermark(WatermarkRequest r, {DecodedCache? cache}) {
     top: topRowTop,
     opacity: r.rowOpacity,
     gap: topGap,
+    maxX: cornerSectionLeft, // Prevent top row from overlapping corner logo area
   );
 
   // Extra logo for top-left row: below the leftmost logo.
@@ -413,7 +429,7 @@ Uint8List renderWatermark(WatermarkRequest r, {DecodedCache? cache}) {
   img.Image? decodedCorner;
   int cornerW = 0, cornerH = 0;
   // Corner section: rightmost 20% of photo width, top 20% of photo height
-  final cornerSectionLeft = (photo.width * 0.8).round();
+  final cornerSectionLeftInt = cornerSectionLeft.round();
   final cornerSectionTop = (photo.height * 0.2).round();
   if (cornerLogo != null) {
     decodedCorner = decode(cornerLogo);
@@ -431,7 +447,7 @@ Uint8List renderWatermark(WatermarkRequest r, {DecodedCache? cache}) {
     final lTop = y;
     final lBottom = y + h;
     // Reserved corner section: right 20% width, top 20% height
-    final cLeft = cornerSectionLeft;
+    final cLeft = cornerSectionLeftInt;
     final cRight = photo!.width;
     final cTop = 0;
     final cBottom = cornerSectionTop;
@@ -515,23 +531,25 @@ void _drawRow(
   required double top,
   double opacity = 1.0,
   double gap = 0.0,
+  double? maxX,
 }) {
   if (logos.isEmpty) return;
   final h = height.round().clamp(1, dst.height);
   final y = top.round();
   // Clamp startX to valid range [0, dst.width)
   var x = startX.clamp(0.0, dst.width.toDouble() - 1);
+  final limitX = maxX ?? dst.width.toDouble();
   for (final src in logos) {
     final logo = decode(src);
     if (logo == null) continue;
     final resized = _withOpacity(_resize(logo, height: h), opacity);
     final logoRight = x + resized!.width;
-    // Only draw if logo fits fully within image bounds (with 1px tolerance)
-    if (logoRight <= dst.width + 1) {
+    // Only draw if logo fits fully within image bounds (with 1px tolerance) and before maxX
+    if (logoRight <= dst.width + 1 && logoRight <= limitX + 1) {
       img.compositeImage(dst, resized, dstX: x.round(), dstY: y);
     }
     x = logoRight + gap;
-    if (x >= dst.width) break; // No more room for next logo
+    if (x >= dst.width || x >= limitX) break; // No more room for next logo
   }
 }
 
