@@ -25,3 +25,4 @@ pelo GitHub Actions (**Build Windows app**), que publica o ZIP na release
    **Cancelar** fica ativo; ao cancelar, o app volta exatamente ao estado
    anterior.
 4. Ao fechar o app nada fica guardado — cada abertura começa um projeto novo.
+# Trigger CI
