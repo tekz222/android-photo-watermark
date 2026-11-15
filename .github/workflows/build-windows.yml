@@ -49,8 +49,8 @@ jobs:
         working-directory: ./flutter_app
         run: cmake -G "Visual Studio 18 2026" -A x64 -B build/windows -S windows
       - name: Build Windows Release
-        working-directory: ./flutter_app
-        run: flutter build windows --release
+        working-directory: ./flutter_app/build/windows
+        run: msbuild photo_watermark.sln /p:Configuration=Release /p:Platform=x64
 
       - name: Verify build output
         run: |
