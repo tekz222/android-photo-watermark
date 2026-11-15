@@ -66,6 +66,8 @@ jobs:
         run: flutter create --platforms=windows .
       - name: Build Windows Release
         working-directory: ./flutter_app
+        env:
+          CMAKE_GENERATOR: "Visual Studio 17 2022"
         run: flutter build windows --release
       - name: Verify output exists
         run: Test-Path flutter_app/build/windows/x64/runner/Release/photo_watermark.exe
