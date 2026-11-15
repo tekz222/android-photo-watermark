@@ -3335,6 +3335,43 @@ class _HomePageState extends State<HomePage> {
     final isAutoMultiSet = _logoSetMode == LogoSetMode.autoMultiSet;
     final isDualSet = _logoSetMode == LogoSetMode.splitHalf || _logoSetMode == LogoSetMode.alternating;
 
+    // Auto-migrate logos to masterLogos if in autoMultiSet mode and masterLogos is empty
+    // but other sources have logos (e.g., old projects, or switching from other modes)
+    if (isAutoMultiSet && _p.masterLogos.isEmpty) {
+      final collected = <LogoItem>[];
+      collected.addAll(_p.bottomLogos);
+      collected.addAll(_p.topLeftLogos);
+      if (_logoSetA != null) {
+        collected.addAll(_logoSetA!.bottomLogos);
+        collected.addAll(_logoSetA!.topLeftLogos);
+      }
+      if (_logoSetB != null) {
+        collected.addAll(_logoSetB!.bottomLogos);
+        collected.addAll(_logoSetB!.topLeftLogos);
+      }
+      for (final set in _p.logoSets) {
+        collected.addAll(set.bottomLogos);
+        collected.addAll(set.topLeftLogos);
+      }
+      // Deduplicate by sourceKey
+      final seen = <String>{};
+      final unique = <LogoItem>[];
+      for (final logo in collected) {
+        if (seen.add(logo.sourceKey)) {
+          unique.add(logo);
+        }
+      }
+      if (unique.isNotEmpty) {
+        // Use addPostFrameCallback to avoid setState during build
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            setState(() => _p.masterLogos.addAll(unique));
+            _autoDistributeLogos(_p.masterLogos);
+          }
+        });
+      }
+    }
+
     // Collect all logos from masterLogos (single source of truth)
     final allLogos = <LogoItem>[];
     allLogos.addAll(_p.masterLogos);
@@ -3412,6 +3449,40 @@ class _HomePageState extends State<HomePage> {
                   _p.topLeftLogos
                     ..clear()
                     ..addAll(_logoSetA!.topLeftLogos);
+                }
+              }
+
+              // When switching TO autoMultiSet, migrate logos from all sources to masterLogos
+              if (newMode == LogoSetMode.autoMultiSet && _p.masterLogos.isEmpty) {
+                final collected = <LogoItem>[];
+                // From single mode legacy
+                collected.addAll(_p.bottomLogos);
+                collected.addAll(_p.topLeftLogos);
+                // From Set A
+                if (_logoSetA != null) {
+                  collected.addAll(_logoSetA!.bottomLogos);
+                  collected.addAll(_logoSetA!.topLeftLogos);
+                }
+                // From Set B
+                if (_logoSetB != null) {
+                  collected.addAll(_logoSetB!.bottomLogos);
+                  collected.addAll(_logoSetB!.topLeftLogos);
+                }
+                // From existing autoMultiSet sets
+                for (final set in _p.logoSets) {
+                  collected.addAll(set.bottomLogos);
+                  collected.addAll(set.topLeftLogos);
+                }
+                // Deduplicate by sourceKey
+                final seen = <String>{};
+                final unique = <LogoItem>[];
+                for (final logo in collected) {
+                  if (seen.add(logo.sourceKey)) {
+                    unique.add(logo);
+                  }
+                }
+                if (unique.isNotEmpty) {
+                  setState(() => _p.masterLogos.addAll(unique));
                 }
               }
 
@@ -3632,6 +3703,57 @@ class _HomePageState extends State<HomePage> {
                     multiSets[i].topLeftLogos.map((e) => e.bytes).toList(), index),
                 ),
               ],
+            ],
+            // Fallback: show masterLogos if no sets created yet but logos exist
+            if (multiSets.isEmpty && _p.masterLogos.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: scheme.primaryContainer.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: scheme.primary.withValues(alpha: 0.5)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.info_outline, size: 16, color: scheme.primary),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Logos carregadas (aguardando distribuição automática)',
+                          style: small?.copyWith(fontWeight: FontWeight.w600, color: scheme.primary),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text('Total: ${_p.masterLogos.length} logo(s). A distribuição em sets será feita automaticamente.',
+                        style: small?.copyWith(color: scheme.onSurfaceVariant)),
+                    const SizedBox(height: 8),
+                    _DraggableLogoList(
+                      items: _p.masterLogos,
+                      placement: Placement.bottom,
+                      controlsEnabled: _controlsEnabled,
+                      processing: _processing,
+                      onReorder: (oldIndex, newIndex) {
+                        setState(() {
+                          if (newIndex > oldIndex) newIndex -= 1;
+                          final item = _p.masterLogos.removeAt(oldIndex);
+                          _p.masterLogos.insert(newIndex, item);
+                        });
+                      },
+                      onRemove: (index) {
+                        setState(() => _p.masterLogos.removeAt(index));
+                      },
+                      onMoveToOther: (item, fromPlacement) {},
+                      onAcceptFromOther: (item) {},
+                      onOpenFullscreen: (index) => _openImagesFullscreen(
+                        _p.masterLogos.map((e) => e.bytes).toList(), index),
+                    ),
+                  ],
+                ),
+              ),
             ],
           ] else ...[
             // Dual-set mode (splitHalf/alternating): show Set A and Set B separately
