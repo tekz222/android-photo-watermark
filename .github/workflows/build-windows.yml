@@ -37,7 +37,7 @@ jobs:
 
       - name: Configure Windows desktop
         working-directory: ./flutter_app
-        run: flutter config --enable-windows-desktop
+        run: flutter create --platforms=windows .
 
       - name: Build Windows Release
         working-directory: ./flutter_app
