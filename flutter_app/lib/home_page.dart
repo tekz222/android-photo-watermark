@@ -269,9 +269,64 @@ class _HomePageState extends State<HomePage> {
       // Fill bottom rows first (maximize), then top rows (with remainder).
       // Use MINIMUM number of sets needed.
 
-      // Step 1: Calculate capacity for ONE row
-      final bottomPerRow = _fitCountWithCorner(0, mainSectionWidth, cornerSectionWidth);
-      final topPerRow = _fitCount(0, availableWidthTop);
+      // Step 1: Calculate capacity for ONE row using WORST-CASE (widest) logo aspect ratio
+      // to ensure ALL logos fit in any set, not just the first ones.
+      double maxLogoAspectRatio = 0;
+      for (final item in allLogos) {
+        final logoImg = img.decodeImage(item.bytes);
+        if (logoImg != null) {
+          final ar = logoImg.width / logoImg.height;
+          if (ar > maxLogoAspectRatio) maxLogoAspectRatio = ar;
+        }
+      }
+      if (maxLogoAspectRatio == 0) maxLogoAspectRatio = 1.0;
+
+      // Use worst-case aspect ratio for capacity calculation
+      int _fitCountWorstCase(int startIdx, double availableWidth) {
+        double currentWidth = 0;
+        int count = 0;
+        for (int i = startIdx; i < allLogos.length; i++) {
+          final logoWidthAtCurrentHeight = maxLogoAspectRatio * shortestSide * _logoSize / 100.0;
+          final neededWidth = currentWidth + logoWidthAtCurrentHeight + (count == 0 ? 0 : gapPx);
+          if (neededWidth <= availableWidth) {
+            currentWidth = neededWidth;
+            count++;
+          } else {
+            break;
+          }
+        }
+        return count;
+      }
+
+      int _fitCountWithCornerWorstCase(int startIdx, double mainWidth, double cornerWidth) {
+        double currentWidth = 0;
+        int count = 0;
+        bool usedCorner = false;
+        for (int i = startIdx; i < allLogos.length; i++) {
+          final logoWidthAtCurrentHeight = maxLogoAspectRatio * shortestSide * _logoSize / 100.0;
+          final neededWidth = currentWidth + logoWidthAtCurrentHeight + (count == 0 ? 0 : gapPx);
+
+          if (neededWidth <= mainWidth) {
+            currentWidth = neededWidth;
+            count++;
+          } else if (!usedCorner && neededWidth <= mainWidth + cornerWidth) {
+            final logoRightEdge = neededWidth;
+            if (logoRightEdge <= mainWidth + cornerWidth) {
+              currentWidth = neededWidth;
+              count++;
+              usedCorner = true;
+            } else {
+              break;
+            }
+          } else {
+            break;
+          }
+        }
+        return count;
+      }
+
+      final bottomPerRow = _fitCountWithCornerWorstCase(0, mainSectionWidth, cornerSectionWidth);
+      final topPerRow = _fitCountWorstCase(0, availableWidthTop);
 
       if (bottomPerRow == 0 && topPerRow == 0) {
         if (mounted) {
@@ -523,8 +578,10 @@ class _HomePageState extends State<HomePage> {
     }
 
     _schedulePreview();
-    // Store reference shortest side for consistent logo sizing in auto mode
-    _autoReferenceShortestSide = shortestSide;
+    // Store reference shortest side for consistent logo sizing in auto mode.
+    // Use minimum PHOTO WIDTH (not shortest side) so logos appear visually consistent
+    // across orientations - bottom row spans width, so size relative to width.
+    _autoReferenceShortestSide = minPhotoWidth;
     return true;
   }
   LogoItem? get _cornerLogo => _p.cornerLogo;
@@ -1477,7 +1534,9 @@ class _HomePageState extends State<HomePage> {
     if (minPhotoWidth == double.infinity) return null;
 
     final photoWidth = minPhotoWidth;
-    final shortestSide = minShortestSide;
+    // Use minimum photo WIDTH as reference for percentage (not shortest side).
+    // This makes logos visually consistent across orientations since bottom row spans width.
+    final referenceWidth = minPhotoWidth;
 
     // Sum of aspect ratios (width/height) for all logos
     double totalAspectRatio = 0;
@@ -1492,20 +1551,21 @@ class _HomePageState extends State<HomePage> {
     // For edge-to-edge filling: use minimal margins (1% each side instead of 0 for centered)
     // This ensures logos almost touch the edges but don't clip
     final edgeMargin = centered ? 1.0 : leftMargin; // 1% for centered, or leftMargin for left-aligned
-    final mainSectionWidth = photoWidth * 0.8 - (edgeMargin + edgeMargin) / 100.0 * shortestSide;
+    // Use referenceWidth for margin/gap calculations to be consistent with percentage base
+    final mainSectionWidth = photoWidth * 0.8 - (edgeMargin + edgeMargin) / 100.0 * referenceWidth;
     final cornerSectionWidth = photoWidth * 0.2;
     // Total available width including corner section
     final availableWidth = mainSectionWidth + cornerSectionWidth;
     // Total gap space between logos
-    final totalGap = gap / 100.0 * shortestSide * (items.length - 1);
+    final totalGap = gap / 100.0 * referenceWidth * (items.length - 1);
 
     // Calculate logo height that fits all logos + gaps in available width
     // height * totalAspectRatio + totalGap = availableWidth
     // height = (availableWidth - totalGap) / totalAspectRatio
     final logoHeightPx = (availableWidth - totalGap) / totalAspectRatio;
 
-    // Convert to percentage of shortest side
-    final logoHeightPct = (logoHeightPx / shortestSide) * 100.0;
+    // Convert to percentage of reference width (not shortest side)
+    final logoHeightPct = (logoHeightPx / referenceWidth) * 100.0;
 
     // Clamp to reasonable bounds (1% to 80%)
     return logoHeightPct.clamp(1.0, 80.0);
