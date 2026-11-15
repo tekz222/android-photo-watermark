@@ -64,11 +64,10 @@ jobs:
       - name: Configure Windows desktop
         working-directory: ./flutter_app
         run: flutter create --platforms=windows .
-      - name: Configure CMake with VS 2022
-        working-directory: ./flutter_app
-        run: cmake -A x64 -B build/windows -S windows
       - name: Build Windows Release
         working-directory: ./flutter_app
+        env:
+          CMAKE_GENERATOR: "Visual Studio 18 2026"
         run: flutter build windows --release
       - name: Verify output exists
         run: Test-Path flutter_app/build/windows/x64/runner/Release/photo_watermark.exe
