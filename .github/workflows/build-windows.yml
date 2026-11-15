@@ -24,9 +24,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install Visual Studio 2019 Build Tools
-        run: |
-          choco install visualstudio2019buildtools --version=16.11.33826 --package-parameters "--add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.Windows10SDK.19041 --includeRecommended --quiet" -y
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
