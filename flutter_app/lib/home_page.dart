@@ -264,30 +264,28 @@ class _HomePageState extends State<HomePage> {
         return false;
       }
     } else if (_logoSetMode == LogoSetMode.autoMultiSet) {
-      // AUTO MULTI-SET MODE: Create as many sets as needed to fit ALL logos
-      // RULE: All sets have EQUAL bottom count AND EQUAL top count.
-      // Fill bottom rows first (maximize), then top rows (with remainder).
-      // Use MINIMUM number of sets needed.
+      // AUTO MULTI-SET MODE: Max 2 sets (A and B).
+      // Try 1 set first. If logos don't fit, use 2 sets.
+      // RULE: Both sets have SAME bottom count and SAME top count.
+      // Fill bottom rows first (maximize), then top rows.
+      // Last top logo must not overlap corner logo.
+      // Uses ACTUAL logo widths (not worst-case) for tight packing.
 
-      // Step 1: Calculate capacity for ONE row using WORST-CASE (widest) logo aspect ratio
-      // to ensure ALL logos fit in any set, not just the first ones.
-      double maxLogoAspectRatio = 0;
+      // Calculate individual logo widths at current size
+      final logoWidths = <double>[];
       for (final item in allLogos) {
         final logoImg = img.decodeImage(item.bytes);
-        if (logoImg != null) {
-          final ar = logoImg.width / logoImg.height;
-          if (ar > maxLogoAspectRatio) maxLogoAspectRatio = ar;
-        }
+        final ar = logoImg != null ? logoImg.width / logoImg.height : 1.0;
+        logoWidths.add(ar * shortestSide * _logoSize / 100.0);
       }
-      if (maxLogoAspectRatio == 0) maxLogoAspectRatio = 1.0;
 
-      // Use worst-case aspect ratio for capacity calculation
-      int _fitCountWorstCase(int startIdx, double availableWidth) {
+      // Helper: count how many logos from [startIdx] fit in [availableWidth]
+      // Uses actual logo widths for tight packing
+      int _fitCountActual(int startIdx, double availableWidth) {
         double currentWidth = 0;
         int count = 0;
         for (int i = startIdx; i < allLogos.length; i++) {
-          final logoWidthAtCurrentHeight = maxLogoAspectRatio * shortestSide * _logoSize / 100.0;
-          final neededWidth = currentWidth + logoWidthAtCurrentHeight + (count == 0 ? 0 : gapPx);
+          final neededWidth = currentWidth + logoWidths[i] + (count == 0 ? 0 : gapPx);
           if (neededWidth <= availableWidth) {
             currentWidth = neededWidth;
             count++;
@@ -298,20 +296,24 @@ class _HomePageState extends State<HomePage> {
         return count;
       }
 
-      int _fitCountWithCornerWorstCase(int startIdx, double mainWidth, double cornerWidth) {
+      // Helper: count how many fit in bottom row (can use corner section)
+      // Returns max count that fits in mainSectionWidth + cornerSectionWidth
+      int _fitCountBottom(int startIdx) {
         double currentWidth = 0;
         int count = 0;
         bool usedCorner = false;
+        final totalAvailWidth = mainSectionWidth + cornerSectionWidth;
         for (int i = startIdx; i < allLogos.length; i++) {
-          final logoWidthAtCurrentHeight = maxLogoAspectRatio * shortestSide * _logoSize / 100.0;
-          final neededWidth = currentWidth + logoWidthAtCurrentHeight + (count == 0 ? 0 : gapPx);
-
-          if (neededWidth <= mainWidth) {
+          final neededWidth = currentWidth + logoWidths[i] + (count == 0 ? 0 : gapPx);
+          if (neededWidth <= mainSectionWidth) {
             currentWidth = neededWidth;
             count++;
-          } else if (!usedCorner && neededWidth <= mainWidth + cornerWidth) {
+          } else if (!usedCorner && neededWidth <= totalAvailWidth) {
+            // Check if logo itself would overlap corner area
+            // Corner area starts at photoWidth * 0.8
             final logoRightEdge = neededWidth;
-            if (logoRightEdge <= mainWidth + cornerWidth) {
+            final cornerStart = photoWidth * 0.8 - edgeMarginPx;
+            if (logoRightEdge <= cornerStart + cornerSectionWidth) {
               currentWidth = neededWidth;
               count++;
               usedCorner = true;
@@ -325,122 +327,139 @@ class _HomePageState extends State<HomePage> {
         return count;
       }
 
-      final bottomPerRow = _fitCountWithCornerWorstCase(0, mainSectionWidth, cornerSectionWidth);
-      final topPerRow = _fitCountWorstCase(0, availableWidthTop);
-
-      if (bottomPerRow == 0 && topPerRow == 0) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: const Text(
-                'Nenhuma logo cabe. Reduza o tamanho das logos.',
-                style: TextStyle(color: Colors.white),
-              ),
-              backgroundColor: const Color(0xFFB71C1C),
-              duration: const Duration(seconds: 5),
-            ),
-          );
+      // Helper: count how many fit in top row (must not overlap corner)
+      // Top row limited to mainSectionWidth (80% of photo width)
+      int _fitCountTop(int startIdx) {
+        double currentWidth = 0;
+        int count = 0;
+        for (int i = startIdx; i < allLogos.length; i++) {
+          final neededWidth = currentWidth + logoWidths[i] + (count == 0 ? 0 : gapPx);
+          if (neededWidth <= mainSectionWidth) {
+            currentWidth = neededWidth;
+            count++;
+          } else {
+            break;
+          }
         }
-        return false;
+        return count;
       }
 
       final totalLogos = allLogos.length;
 
-      // Step 2: Find optimal number of sets (N) and distribution (b, t)
-      // We want: N sets, each with b bottom logos and t top logos
-      // Constraints: b <= bottomPerRow, t <= topPerRow
-      // Goal: N * (b + t) >= totalLogos - 1 (allow 1 remainder for odd total)
-      //       Maximize b first (fill bottom), then maximize t
-      //       Minimize N (fewest sets)
-      int bestN = 1;
-      int bestB = 0;
-      int bestT = 0;
-      int bestPlaced = 0;
+      // STEP 1: Try 1 set first
+      int bottomPerSet1 = _fitCountBottom(0);
+      int topPerSet1 = _fitCountTop(bottomPerSet1);
+      int placedIn1Set = bottomPerSet1 + topPerSet1;
 
-      // Maximum possible sets if we only use bottom rows
-      final maxPossibleSets = (totalLogos / (bottomPerRow > 0 ? bottomPerRow : 1)).ceil().clamp(1, 20);
+      if (placedIn1Set >= totalLogos) {
+        // Everything fits in 1 set!
+        final sets = [LogoSet(
+          bottomLogos: allLogos.take(bottomPerSet1).toList(),
+          topLeftLogos: allLogos.skip(bottomPerSet1).take(topPerSet1).toList(),
+        )];
 
-      for (int n = 1; n <= maxPossibleSets; n++) {
-        // For this n, max bottom per set (try to maximize)
-        int maxBForN = (totalLogos / n).floor().clamp(0, bottomPerRow);
+        setState(() {
+          _p.logoSets = sets;
+          _logoSetA = sets[0];
+          _logoSetB = LogoSet(bottomLogos: [], topLeftLogos: []);
+        });
 
-        // Try from maxB down to 0 to find best balance
-        for (int b = maxBForN; b >= 0; b--) {
-          final logosUsedInBottom = n * b;
-          final remaining = totalLogos - logosUsedInBottom;
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                '1 set automático: $bottomPerSet1 base + $topPerSet1 topo.',
+                style: const TextStyle(color: Colors.white),
+              ),
+              backgroundColor: const Color(0xFF2E7D32),
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
+        _schedulePreview();
+        return true;
+      }
 
-          if (remaining < 0) continue;
+      // STEP 2: Need 2 sets. Distribute equally.
+      // Find max bottomPerSet such that 2 * bottomPerSet <= totalLogos
+      // and bottomPerSet fits in one row
+      final maxBottomPerRow = _fitCountBottom(0);
+      int bestBottomPerSet = 0;
+      int bestTopPerSet = 0;
 
-          // Top per set: distribute remaining equally
-          int t = (remaining / n).floor().clamp(0, topPerRow);
+      // Try from max possible bottom down to 1
+      for (int b = maxBottomPerRow; b >= 1; b--) {
+        final logosInBottom = 2 * b;
+        if (logosInBottom > totalLogos) continue;
 
-          // Check if we can place all (or all but 1 for odd)
-          final totalPlaced = n * (b + t);
-          final remainder = totalLogos - totalPlaced;
+        final remaining = totalLogos - logosInBottom;
+        // Top per set: split remaining equally
+        final t = (remaining / 2).floor();
+        if (t < 0) continue;
 
-          if (remainder <= 1) { // Allow 1 logo remainder for odd total
-            // This works! Check if it's better (more bottom logos = better)
-            if (b > bestB || (b == bestB && t > bestT) || (b == bestB && t == bestT && n < bestN)) {
-              bestN = n;
-              bestB = b;
-              bestT = t;
-              bestPlaced = totalPlaced;
-            }
-          }
+        // Check if top fits (need to check from index b for first set, but both sets same)
+        final topFit = _fitCountTop(b);
+        if (t <= topFit) {
+          bestBottomPerSet = b;
+          bestTopPerSet = t;
+          break; // Found maximum bottom that works
         }
       }
 
-      // If nothing worked (shouldn't happen if bottomPerRow > 0), fallback
-      if (bestB == 0 && bestT == 0 && bottomPerRow > 0) {
-        bestN = (totalLogos / bottomPerRow).ceil();
-        bestB = bottomPerRow;
-        bestT = 0;
-        bestPlaced = bestN * bestB;
+      // If no bottom worked (edge case), at least 1 per bottom
+      if (bestBottomPerSet == 0 && maxBottomPerRow > 0) {
+        bestBottomPerSet = 1;
+        bestTopPerSet = ((totalLogos - 2) / 2).floor().clamp(0, _fitCountTop(1));
       }
 
-      final setsNeeded = bestN;
-      final bottomPerSet = bestB;
-      final topPerSet = bestT;
+      final bottomPerSet = bestBottomPerSet;
+      final topPerSet = bestTopPerSet;
+      final totalPlaced = 2 * (bottomPerSet + topPerSet);
 
-      // Step 3: Create sets with equal distribution
-      final List<LogoSet> sets = [];
+      // Build the two sets
       int logoIdx = 0;
+      final setABottom = <LogoItem>[];
+      final setBBottom = <LogoItem>[];
+      final setATop = <LogoItem>[];
+      final setBTop = <LogoItem>[];
 
-      for (int setIdx = 0; setIdx < setsNeeded; setIdx++) {
-        final setBottom = <LogoItem>[];
-        final setTop = <LogoItem>[];
-
-        // Each set gets exactly bottomPerSet logos in bottom
-        for (int i = 0; i < bottomPerSet && logoIdx < allLogos.length; i++) {
-          setBottom.add(allLogos[logoIdx++]);
-        }
-        // Each set gets exactly topPerSet logos in top
-        for (int i = 0; i < topPerSet && logoIdx < allLogos.length; i++) {
-          setTop.add(allLogos[logoIdx++]);
-        }
-
-        sets.add(LogoSet(bottomLogos: setBottom, topLeftLogos: setTop));
+      // Fill Set A bottom
+      for (int i = 0; i < bottomPerSet && logoIdx < allLogos.length; i++) {
+        setABottom.add(allLogos[logoIdx++]);
+      }
+      // Fill Set B bottom
+      for (int i = 0; i < bottomPerSet && logoIdx < allLogos.length; i++) {
+        setBBottom.add(allLogos[logoIdx++]);
+      }
+      // Fill Set A top
+      for (int i = 0; i < topPerSet && logoIdx < allLogos.length; i++) {
+        setATop.add(allLogos[logoIdx++]);
+      }
+      // Fill Set B top
+      for (int i = 0; i < topPerSet && logoIdx < allLogos.length; i++) {
+        setBTop.add(allLogos[logoIdx++]);
       }
 
-      // Step 4: Update state - store ALL sets in project
+      final setA = LogoSet(bottomLogos: setABottom, topLeftLogos: setATop);
+      final setB = LogoSet(bottomLogos: setBBottom, topLeftLogos: setBTop);
+      final sets = [setA, setB];
+
       setState(() {
         _p.logoSets = sets;
-        // Also update A/B for backward compatibility and UI
-        _logoSetA = sets.isNotEmpty ? sets[0] : LogoSet(bottomLogos: [], topLeftLogos: []);
-        _logoSetB = sets.length > 1 ? sets[1] : LogoSet(bottomLogos: [], topLeftLogos: []);
+        _logoSetA = setA;
+        _logoSetB = setB;
       });
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'Criados $setsNeeded sets automáticos para ${allLogos.length} logos. '
-              'Cada set: $bottomPerSet base + $topPerSet topo. '
-              'Total usado: $bestPlaced logo(s).',
+              '2 sets automáticos: $bottomPerSet base + $topPerSet topo por set. '
+              'Total usado: $totalPlaced de $totalLogos logos.',
               style: const TextStyle(color: Colors.white),
             ),
             backgroundColor: const Color(0xFF2E7D32),
-            duration: const Duration(seconds: 5),
+            duration: const Duration(seconds: 4),
             action: SnackBarAction(label: 'OK', textColor: Colors.white, onPressed: () {}),
           ),
         );
