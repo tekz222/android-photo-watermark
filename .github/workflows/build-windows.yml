@@ -35,6 +35,10 @@ jobs:
         working-directory: ./flutter_app
         run: flutter pub get
 
+      - name: Configure Windows desktop
+        working-directory: ./flutter_app
+        run: flutter config --enable-windows-desktop
+
       - name: Build Windows Release
         working-directory: ./flutter_app
         run: flutter build windows --release
