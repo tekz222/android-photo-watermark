@@ -87,7 +87,7 @@ class _HomePageState extends State<HomePage> {
   late final AppLifecycleListener _lifecycle;
 
   // Logo arrangement mode: manual (user controls each row) or auto (distribute all logos)
-  bool _autoArrangeMode = false;
+  bool _autoArrangeMode = true;
 
   // Preview worker (shared across projects)
   final PreviewWorker _worker = PreviewWorker();
@@ -1532,6 +1532,46 @@ class _HomePageState extends State<HomePage> {
       _snack('Tamanho ajustado automaticamente: ${size.toStringAsFixed(1)}%');
     } else {
       _snack('Não foi possível calcular (adicione fotos e logos primeiro)');
+    }
+  }
+
+  /// Auto-arrange logo size for the current mode's logo distribution.
+  Future<void> _autoArrangeLogoSizeForCurrentMode() async {
+    if (_photoPaths.isEmpty || _p.masterLogos.isEmpty) return;
+
+    // Get the logos for the current mode's first set (for size calculation)
+    List<LogoItem> logosForSizeCalc = [];
+
+    if (_logoSetMode == LogoSetMode.single) {
+      // Use first set's logos (which is the distributed single set)
+      logosForSizeCalc = [..._p.bottomLogos, ..._p.topLeftLogos];
+    } else if (_logoSetMode == LogoSetMode.autoMultiSet) {
+      // Use first autoMultiSet set
+      if (_p.logoSets.isNotEmpty) {
+        final firstSet = _p.logoSets.first;
+        logosForSizeCalc = [...firstSet.bottomLogos, ...firstSet.topLeftLogos];
+      }
+    } else {
+      // Dual-set modes: use Set A
+      if (_logoSetA != null) {
+        logosForSizeCalc = [..._logoSetA!.bottomLogos, ..._logoSetA!.topLeftLogos];
+      }
+    }
+
+    if (logosForSizeCalc.isEmpty) return;
+
+    // Calculate optimal size using all logos in the set
+    final size = _calculateAutoArrangeSize(
+      items: logosForSizeCalc,
+      leftMargin: _centered ? 1.0 : _leftMargin,
+      rightMargin: _centered ? 1.0 : _leftMargin,
+      gap: _logoSpacing,
+      centered: _centered,
+    );
+
+    if (size != null && mounted) {
+      setState(() => _logoSize = size);
+      _snack('Tamanho ajustado automaticamente para o modo: ${size.toStringAsFixed(1)}%');
     }
   }
 
@@ -3295,13 +3335,9 @@ class _HomePageState extends State<HomePage> {
     final isAutoMultiSet = _logoSetMode == LogoSetMode.autoMultiSet;
     final isDualSet = _logoSetMode == LogoSetMode.splitHalf || _logoSetMode == LogoSetMode.alternating;
 
-    // Collect all logos from all sets
-    final allLogos = <LogoItem>[
-      ...(_logoSetMode == LogoSetMode.single ? _p.bottomLogos : _logoSetA?.bottomLogos ?? []),
-      ...(_logoSetMode == LogoSetMode.single ? _p.topLeftLogos : _logoSetA?.topLeftLogos ?? []),
-      ...(_logoSetB?.bottomLogos ?? []),
-      ...(_logoSetB?.topLeftLogos ?? []),
-    ];
+    // Collect all logos from masterLogos (single source of truth)
+    final allLogos = <LogoItem>[];
+    allLogos.addAll(_p.masterLogos);
 
     // For display: group by set and row
     List<LogoItem> setABottom, setATop, setBBottom, setBTop;
@@ -3380,9 +3416,11 @@ class _HomePageState extends State<HomePage> {
               }
 
               setState(() => _logoSetMode = newMode);
-              // Re-distribute all logos with new mode
-              if (allLogos.isNotEmpty) {
-                _autoDistributeLogos(allLogos);
+              // Re-distribute all logos with new mode using masterLogos
+              if (_p.masterLogos.isNotEmpty) {
+                _autoDistributeLogos(_p.masterLogos);
+                // Also auto-arrange logo size for the new mode
+                _autoArrangeLogoSizeForCurrentMode();
               }
             },
             showSelectedIcon: false,
@@ -3792,37 +3830,67 @@ class _HomePageState extends State<HomePage> {
     setState(() => _importing = true);
     try {
       final newLogos = <LogoItem>[];
+      final existingNames = _p.masterLogos.map((l) => l.sourceKey).toSet();
+      int duplicates = 0;
+      int added = 0;
+
       for (final file in files) {
         if (file.path == null) continue;
-        final bytes = await File(file.path!).readAsBytes();
         final name = _logoName(p.basename(file.path!));
+
+        // Check for duplicate filename
+        if (existingNames.contains(name)) {
+          duplicates++;
+          continue; // Skip duplicate
+        }
+
+        final bytes = await File(file.path!).readAsBytes();
         final sig = Project.imageSig(bytes);
         final appPath = await _copyBytesToApp(bytes, 'logos');
         final item = LogoItem(Project.nextLogoId(), appPath, name, bytes, sig,
             const <String>{}, const <String>{});
         newLogos.add(item);
+        existingNames.add(name);
+        added++;
       }
 
-      // Collect all existing logos from all sets
-      final allLogos = <LogoItem>[
-        ...(_logoSetMode == LogoSetMode.single ? _p.bottomLogos : _logoSetA?.bottomLogos ?? []),
-        ...(_logoSetMode == LogoSetMode.single ? _p.topLeftLogos : _logoSetA?.topLeftLogos ?? []),
-        ...(_logoSetB?.bottomLogos ?? []),
-        ...(_logoSetB?.topLeftLogos ?? []),
-        // For autoMultiSet, also include logos from project.logoSets
-        ...(_logoSetMode == LogoSetMode.autoMultiSet
-            ? _p.logoSets.expand((s) => s.bottomLogos).toList()
-            : []),
-        ...(_logoSetMode == LogoSetMode.autoMultiSet
-            ? _p.logoSets.expand((s) => s.topLeftLogos).toList()
-            : []),
-      ];
+      // Add new logos to masterLogos (single source of truth)
+      setState(() {
+        _p.masterLogos.addAll(newLogos);
+      });
 
-      // Add new logos
-      allLogos.addAll(newLogos);
+      // Show feedback about duplicates
+      if (duplicates > 0 && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '$duplicates logo(s) ignorada(s) — já existiam com o mesmo nome. '
+              '$added logo(s) nova(s) adicionada(s).',
+              style: const TextStyle(color: Colors.white),
+            ),
+            backgroundColor: const Color(0xFFFF9800),
+            duration: const Duration(seconds: 4),
+            action: SnackBarAction(label: 'OK', textColor: Colors.white, onPressed: () {}),
+          ),
+        );
+      } else if (added > 0 && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '$added logo(s) adicionada(s) com sucesso.',
+              style: const TextStyle(color: Colors.white),
+            ),
+            backgroundColor: const Color(0xFF2E7D32),
+            duration: const Duration(seconds: 3),
+            action: SnackBarAction(label: 'OK', textColor: Colors.white, onPressed: () {}),
+          ),
+        );
+      }
 
-      // Auto-distribute
-      _autoDistributeLogos(allLogos);
+      // Auto-distribute using masterLogos
+      _autoDistributeLogos(_p.masterLogos);
+      // Auto-arrange logo size for the new distribution
+      await _autoArrangeLogoSizeForCurrentMode();
     } finally {
       if (mounted) setState(() => _importing = false);
     }
@@ -3835,6 +3903,7 @@ class _HomePageState extends State<HomePage> {
       _p.bottomLogos.clear();
       _p.topLeftLogos.clear();
       _p.cornerLogo = null;
+      _p.masterLogos.clear(); // Clear master list
 
       // Clear Set A and B
       if (_logoSetA != null) {

@@ -62,11 +62,13 @@ class Project {
     this.previewPhoto = const {},
     this.previewLogo = const {},
     // New: dual logo sets
-    this.logoSetMode = LogoSetMode.single,
+    this.logoSetMode = LogoSetMode.autoMultiSet,
     this.logoSetA,
     this.logoSetB,
     // New: multiple logo sets for autoMultiSet mode
     this.logoSets = const [],
+    // Master list of ALL logos uploaded by user (single source of truth)
+    this.masterLogos = const [],
   }) : textJob = Future<void>.value();
 
   final String id;
@@ -111,6 +113,8 @@ class Project {
   LogoSet? logoSetB;
   // Multiple logo sets for autoMultiSet mode
   List<LogoSet> logoSets;
+  // Master list of ALL logos uploaded by user (single source of truth)
+  List<LogoItem> masterLogos;
   bool cancelRequested;
   int done;
   int total;
@@ -216,6 +220,9 @@ class Project {
         bottomRightTopMargin: s.bottomRightTopMargin,
         topLeftBottomMargin: s.topLeftBottomMargin,
       )).toList(),
+      // Master list of ALL logos uploaded by user (single source of truth)
+      masterLogos: masterLogos.map((l) => LogoItem(
+        nextLogoId(), l.path, l.sourceKey, l.bytes, l.phash, l.phones, l.texts)).toList(),
       // Empty save state
       savedPaths: {},
       currentAlbum: null,
@@ -288,6 +295,8 @@ class Project {
       'logoSetB': logoSetB?.toJson(),
       // New: multiple logo sets for autoMultiSet
       'logoSets': logoSets.map((s) => s.toJson()).toList(),
+      // Master list of ALL logos uploaded by user (single source of truth)
+      'masterLogos': masterLogos.map(_logoToJson).toList(),
     };
   }
 
@@ -382,6 +391,12 @@ class Project {
       // New: multiple logo sets for autoMultiSet
       logoSets: (json['logoSets'] as List? ?? [])
           .map((e) => LogoSet.fromJson(e as Map<String, dynamic>))
+          .toList(),
+      // Master list of ALL logos uploaded by user (single source of truth)
+      masterLogos: (json['masterLogos'] as List? ?? [])
+          .map((e) => _logoFromJson(e as Map<String, dynamic>))
+          .where((l) => l != null)
+          .cast<LogoItem>()
           .toList(),
     );
   }
@@ -628,6 +643,10 @@ class ProjectManager {
           // Dual-set mode: load logo sets from saved settings
           logoSetA: project.logoSetA,
           logoSetB: project.logoSetB,
+          // New: autoMultiSet mode logo sets
+          logoSets: project.logoSets,
+          // Master list of ALL logos
+          masterLogos: project.masterLogos,
         ));
         _activeIndex = 0;
       } catch (_) {
