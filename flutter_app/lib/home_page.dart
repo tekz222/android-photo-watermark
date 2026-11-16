@@ -4095,6 +4095,7 @@ class _HomePageState extends State<HomePage> {
       type: FileType.custom,
       allowedExtensions: ['png', 'jpg', 'jpeg', 'webp', 'bmp', 'tiff'],
       dialogTitle: 'Selecione logos para o conjunto (todas vão para a base; excesso vai pro topo)',
+      allowMultiple: true,
     );
     if (result == null || result.files.isEmpty) return;
     final List<PlatformFile> files = result.files;
