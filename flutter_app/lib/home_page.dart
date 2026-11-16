@@ -629,9 +629,13 @@ class _HomePageState extends State<HomePage> {
 
     _schedulePreview();
     // Store reference shortest side for consistent logo sizing in auto mode.
-    // Use minimum PHOTO WIDTH (not shortest side) so logos appear visually consistent
-    // across orientations - bottom row spans width, so size relative to width.
-    _autoReferenceShortestSide = minPhotoWidth;
+    // Use MINIMUM SHORTEST SIDE across all photos (not width).
+    // This ensures logos at X% appear the same relative size on ALL orientations:
+    // - Vertical: height is long side, width is short side → size based on width
+    // - Horizontal: width is long side, height is short side → size based on height
+    // - Square: both equal
+    // Using min shortest side guarantees logos fit on the most constrained photo.
+    _autoReferenceShortestSide = minShortestSide;
     return true;
   }
   LogoItem? get _cornerLogo => _p.cornerLogo;
@@ -1599,9 +1603,10 @@ class _HomePageState extends State<HomePage> {
     if (minPhotoWidth == double.infinity) return null;
 
     final photoWidth = minPhotoWidth;
-    // Use minimum photo WIDTH as reference for percentage (not shortest side).
-    // This makes logos visually consistent across orientations since bottom row spans width.
-    final referenceWidth = minPhotoWidth;
+    // Use minimum photo's SHORTEST SIDE as reference for percentage.
+    // This makes logos visually consistent across ALL orientations.
+    // Logo size % is relative to shortest side, matching the watermark engine.
+    final referenceShortestSide = minShortestSide;
 
     // Sum of aspect ratios (width/height) for all logos
     double totalAspectRatio = 0;
@@ -1616,21 +1621,21 @@ class _HomePageState extends State<HomePage> {
     // For edge-to-edge filling: use minimal margins (1% each side instead of 0 for centered)
     // This ensures logos almost touch the edges but don't clip
     final edgeMargin = centered ? 1.0 : leftMargin; // 1% for centered, or leftMargin for left-aligned
-    // Use referenceWidth for margin/gap calculations to be consistent with percentage base
-    final mainSectionWidth = photoWidth * 0.8 - (edgeMargin + edgeMargin) / 100.0 * referenceWidth;
+    // Use referenceShortestSide for margin/gap calculations to be consistent with percentage base
+    final mainSectionWidth = photoWidth * 0.8 - (edgeMargin + edgeMargin) / 100.0 * referenceShortestSide;
     final cornerSectionWidth = photoWidth * 0.2;
     // Total available width including corner section
     final availableWidth = mainSectionWidth + cornerSectionWidth;
     // Total gap space between logos
-    final totalGap = gap / 100.0 * referenceWidth * (items.length - 1);
+    final totalGap = gap / 100.0 * referenceShortestSide * (items.length - 1);
 
     // Calculate logo height that fits all logos + gaps in available width
     // height * totalAspectRatio + totalGap = availableWidth
     // height = (availableWidth - totalGap) / totalAspectRatio
     final logoHeightPx = (availableWidth - totalGap) / totalAspectRatio;
 
-    // Convert to percentage of reference width (not shortest side)
-    final logoHeightPct = (logoHeightPx / referenceWidth) * 100.0;
+    // Convert to percentage of reference shortest side
+    final logoHeightPct = (logoHeightPx / referenceShortestSide) * 100.0;
 
     // Clamp to reasonable bounds (1% to 80%)
     return logoHeightPct.clamp(1.0, 80.0);
@@ -6985,21 +6990,24 @@ class _ResizableDivider extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      behavior: HitTestBehavior.translucent,
-      onHorizontalDragUpdate: (details) => onDragUpdate(details.delta.dx),
-      onHorizontalDragStart: (_) {},
-      onHorizontalDragEnd: (_) {},
-      child: Container(
-        width: 8,
-        color: Colors.transparent,
-        child: Center(
-          child: Container(
-            width: 2,
-            height: 40,
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.outlineVariant.withOpacity(0.5),
-              borderRadius: BorderRadius.circular(1),
+    return MouseRegion(
+      cursor: SystemMouseCursors.resizeColumn,
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onHorizontalDragUpdate: (details) => onDragUpdate(details.delta.dx),
+        onHorizontalDragStart: (_) {},
+        onHorizontalDragEnd: (_) {},
+        child: Container(
+          width: 8,
+          color: Colors.transparent,
+          child: Center(
+            child: Container(
+              width: 2,
+              height: 40,
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.outlineVariant.withOpacity(0.5),
+                borderRadius: BorderRadius.circular(1),
+              ),
             ),
           ),
         ),
