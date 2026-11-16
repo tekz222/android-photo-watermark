@@ -33,7 +33,7 @@ class Project {
     this.cornerHeight = 22.0,
     this.cornerMarginTop = 2.0,
     this.cornerMarginRight = 2.0,
-    this.centered = false,
+    this.centered = true,
     this.logoSpacing = 0.0,
     this.bottomGradient = false,
     this.topGradient = false,
@@ -69,7 +69,17 @@ class Project {
     this.logoSets = const [],
     // Master list of ALL logos uploaded by user (single source of truth)
     this.masterLogos = const [],
-  }) : textJob = Future<void>.value();
+  }) : textJob = Future<void>.value() {
+    // Ensure preview caches are mutable maps (default params are const {})
+    textSrc = <int, ImageSrc>{};
+    textRatio = <int, double>{};
+    textSigCache = <int, String>{};
+    previews = <String, Preview>{};
+    renderedVersion = <String, int>{};
+    previewFailed = <String>{};
+    previewPhoto = <String, Uint8List>{};
+    previewLogo = <int, Uint8List>{};
+  }
 
   final String id;
   String name;

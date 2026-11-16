@@ -167,11 +167,12 @@ class _HomePageState extends State<HomePage> {
     }
 
     // Available widths in pixels (using min photo dimensions to guarantee fit on ALL photos)
-    // For edge-to-edge filling: use minimal margins (1% each side instead of 0 for centered)
-    final edgeMarginPct = _centered ? 1.0 : _leftMargin; // 1% for centered, or leftMargin for left-aligned
+    // For centered bottom logos: use minimal margins (1% each side)
+    final edgeMarginPct = 1.0; // 1% margin on each side for centered
     final edgeMarginPx = edgeMarginPct / 100.0 * shortestSide;
-    final availableWidthBottom = photoWidth - 2 * edgeMarginPx;
-    final availableWidthTop = photoWidth - 2 * (_leftMargin / 100.0 * shortestSide);
+    final leftMarginPx = _leftMargin / 100.0 * shortestSide;
+    // Top row: starts at leftMarginPx, ends at photoWidth*0.8 - edgeMarginPx (main section right edge)
+    final availableWidthTop = photoWidth * 0.8 - edgeMarginPx - leftMarginPx;
     final gapPx = _logoSpacing / 100.0 * shortestSide;
 
     // Corner section: right 20% of photo width reserved for main corner logo
@@ -200,25 +201,30 @@ class _HomePageState extends State<HomePage> {
 
     // Helper: try to fit more logos by using corner section space if available
     // Returns count of logos that fit in main section + corner section
+    // Coordinate system: currentWidth measured from LEFT EDGE (0).
+    // Main section right edge = photoWidth * 0.8 - edgeMarginPx
+    // Corner section right edge = photoWidth - edgeMarginPx
     int _fitCountWithCorner(int startIdx, double mainWidth, double cornerWidth) {
       double currentWidth = 0;
       int count = 0;
       bool usedCorner = false;
+      final mainSectionRightEdge = photoWidth * 0.8 - edgeMarginPx;
+      final cornerSectionRightEdge = photoWidth - edgeMarginPx;
       for (int i = startIdx; i < allLogos.length; i++) {
         final logoAr = logoAspectRatios[i];
         final logoWidthAtCurrentHeight = logoAr * shortestSide * _logoSize / 100.0;
         final neededWidth = currentWidth + logoWidthAtCurrentHeight + (count == 0 ? 0 : gapPx);
 
         // Check if we can fit in main section
-        if (neededWidth <= mainWidth) {
+        if (neededWidth <= mainSectionRightEdge) {
           currentWidth = neededWidth;
           count++;
         }
         // If we can't fit in main, try corner section (only if we haven't used it yet)
-        else if (!usedCorner && neededWidth <= mainWidth + cornerWidth) {
-          // Check if logo itself fits in corner section
-          final logoRightEdge = neededWidth;
-          if (logoRightEdge <= mainWidth + cornerWidth) {
+        else if (!usedCorner && neededWidth <= cornerSectionRightEdge) {
+          // Check if logo's right edge is within corner section bounds
+          final cornerSectionLeftEdge = photoWidth * 0.8 - edgeMarginPx;
+          if (neededWidth >= cornerSectionLeftEdge && neededWidth <= cornerSectionRightEdge) {
             currentWidth = neededWidth;
             count++;
             usedCorner = true;
@@ -268,11 +274,12 @@ class _HomePageState extends State<HomePage> {
       }
     } else if (_logoSetMode == LogoSetMode.autoMultiSet) {
       // AUTO MULTI-SET MODE: Max 2 sets (A and B).
-      // Try 1 set first. If logos don't fit, use 2 sets.
-      // RULE: Both sets have SAME bottom count and SAME top count.
-      // Fill bottom rows first (maximize), then top rows.
-      // Last top logo must not overlap corner logo.
-      // Uses ACTUAL logo widths (not worst-case) for tight packing.
+      // ALGORITHM (per user requirement):
+      // 1. Fill Set A bottom MAXIMALLY - tight packing with actual logo widths, minimal edge gap
+      // 2. Fill Set B bottom MAXIMALLY from remaining logos - tight packing, minimal edge gap
+      // 3. Bottom counts DON'T need to be equal between sets - just fill each completely
+      // 4. Then fill TOP rows equally (same count per set) - must NOT touch corner logo
+      // 5. Corner logo reserved ~20% section on top-right - top logos stop at 80% mark
 
       // Calculate individual logo widths at current size using pre-computed aspect ratios
       final logoWidths = <double>[];
@@ -281,42 +288,32 @@ class _HomePageState extends State<HomePage> {
         logoWidths.add(ar * shortestSide * _logoSize / 100.0);
       }
 
-      // Helper: count how many logos from [startIdx] fit in [availableWidth]
-      // Uses actual logo widths for tight packing
-      int _fitCountActual(int startIdx, double availableWidth) {
-        double currentWidth = 0;
-        int count = 0;
-        for (int i = startIdx; i < allLogos.length; i++) {
-          final neededWidth = currentWidth + logoWidths[i] + (count == 0 ? 0 : gapPx);
-          if (neededWidth <= availableWidth) {
-            currentWidth = neededWidth;
-            count++;
-          } else {
-            break;
-          }
-        }
-        return count;
-      }
-
-      // Helper: count how many fit in bottom row (can use corner section)
-      // Returns max count that fits in mainSectionWidth + cornerSectionWidth
+      // Helper: count how many fit in bottom row (can use corner section up to edgeMarginPx)
+      // Coordinate system: currentRightEdge tracks the RIGHT EDGE of the last placed logo.
+      // First logo starts at edgeMarginPx, so its right edge = edgeMarginPx + logoWidth.
+      // Main section: [edgeMarginPx, photoWidth*0.8 - edgeMarginPx]
+      // Corner section: [photoWidth*0.8 - edgeMarginPx, photoWidth - edgeMarginPx]
+      // Uses ALL available space up to photoWidth - edgeMarginPx (right margin)
       int _fitCountBottom(int startIdx) {
-        double currentWidth = 0;
+        double currentRightEdge = edgeMarginPx;
         int count = 0;
         bool usedCorner = false;
-        final totalAvailWidth = mainSectionWidth + cornerSectionWidth;
+        final mainSectionRightEdge = photoWidth * 0.8 - edgeMarginPx;
+        final cornerSectionRightEdge = photoWidth - edgeMarginPx;
+        final cornerSectionLeftEdge = photoWidth * 0.8 - edgeMarginPx;
         for (int i = startIdx; i < allLogos.length; i++) {
-          final neededWidth = currentWidth + logoWidths[i] + (count == 0 ? 0 : gapPx);
-          if (neededWidth <= mainSectionWidth) {
-            currentWidth = neededWidth;
+          final logoWidth = logoWidths[i];
+          final neededRightEdge = currentRightEdge + (count == 0 ? 0 : gapPx) + logoWidth;
+          // Check if logo fits in main section
+          if (neededRightEdge <= mainSectionRightEdge) {
+            currentRightEdge = neededRightEdge;
             count++;
-          } else if (!usedCorner && neededWidth <= totalAvailWidth) {
-            // Check if logo itself would overlap corner area
-            // Corner area starts at photoWidth * 0.8
-            final logoRightEdge = neededWidth;
-            final cornerStart = photoWidth * 0.8 - edgeMarginPx;
-            if (logoRightEdge <= cornerStart + cornerSectionWidth) {
-              currentWidth = neededWidth;
+          }
+          // If not in main, try corner section (only if not used yet)
+          else if (!usedCorner && neededRightEdge <= cornerSectionRightEdge) {
+            final logoLeftEdge = neededRightEdge - logoWidth;
+            if (logoLeftEdge >= cornerSectionLeftEdge) {
+              currentRightEdge = neededRightEdge;
               count++;
               usedCorner = true;
             } else {
@@ -329,15 +326,20 @@ class _HomePageState extends State<HomePage> {
         return count;
       }
 
-      // Helper: count how many fit in top row (must not overlap corner)
-      // Top row limited to mainSectionWidth (80% of photo width)
+      // Helper: count how many fit in top row (must NOT overlap corner logo)
+      // Top row limited to mainSectionWidth (80% of photo width = up to photoWidth*0.8 - edgeMarginPx)
+      // Corner logo occupies ~20% on the right, so top logos stop at photoWidth*0.8 - edgeMarginPx
+      // Coordinate system: currentRightEdge tracks the RIGHT EDGE of the last placed logo.
+      // First logo starts at leftMarginPx, so its right edge = leftMarginPx + logoWidth.
       int _fitCountTop(int startIdx) {
-        double currentWidth = 0;
+        double currentRightEdge = leftMarginPx;
         int count = 0;
+        final topSectionRightEdge = photoWidth * 0.8 - edgeMarginPx; // Stop before corner section
         for (int i = startIdx; i < allLogos.length; i++) {
-          final neededWidth = currentWidth + logoWidths[i] + (count == 0 ? 0 : gapPx);
-          if (neededWidth <= mainSectionWidth) {
-            currentWidth = neededWidth;
+          final logoWidth = logoWidths[i];
+          final neededRightEdge = currentRightEdge + (count == 0 ? 0 : gapPx) + logoWidth;
+          if (neededRightEdge <= topSectionRightEdge) {
+            currentRightEdge = neededRightEdge;
             count++;
           } else {
             break;
@@ -382,41 +384,25 @@ class _HomePageState extends State<HomePage> {
         return true;
       }
 
-      // STEP 2: Need 2 sets. Distribute equally.
-      // Find max bottomPerSet such that 2 * bottomPerSet <= totalLogos
-      // and bottomPerSet fits in one row
-      final maxBottomPerRow = _fitCountBottom(0);
-      int bestBottomPerSet = 0;
-      int bestTopPerSet = 0;
+      // STEP 2: Need 2 sets.
+      // Fill Set A bottom MAXIMALLY
+      int bottomA = _fitCountBottom(0);
+      // Fill Set B bottom MAXIMALLY from remaining logos
+      int bottomB = _fitCountBottom(bottomA);
 
-      // Try from max possible bottom down to 1
-      for (int b = maxBottomPerRow; b >= 1; b--) {
-        final logosInBottom = 2 * b;
-        if (logosInBottom > totalLogos) continue;
+      // Total logos used in bottoms
+      int logosInBottoms = bottomA + bottomB;
 
-        final remaining = totalLogos - logosInBottom;
-        // Top per set: split remaining equally
-        final t = (remaining / 2).floor();
-        if (t < 0) continue;
+      // Remaining logos for top rows
+      int remaining = totalLogos - logosInBottoms;
 
-        // Check if top fits (need to check from index b for first set, but both sets same)
-        final topFit = _fitCountTop(b);
-        if (t <= topFit) {
-          bestBottomPerSet = b;
-          bestTopPerSet = t;
-          break; // Found maximum bottom that works
-        }
-      }
+      // Fill TOP rows EQUALLY (same count per set)
+      // Max top that fits in top row (same for both sets since they use same space, must not touch corner)
+      int maxTopFit = _fitCountTop(logosInBottoms);
 
-      // If no bottom worked (edge case), at least 1 per bottom
-      if (bestBottomPerSet == 0 && maxBottomPerRow > 0) {
-        bestBottomPerSet = 1;
-        bestTopPerSet = ((totalLogos - 2) / 2).floor().clamp(0, _fitCountTop(1));
-      }
-
-      final bottomPerSet = bestBottomPerSet;
-      final topPerSet = bestTopPerSet;
-      final totalPlaced = 2 * (bottomPerSet + topPerSet);
+      // Equal tops: limited by remaining logos / 2 and space available
+      int maxEqualTop = (remaining / 2).floor();
+      int topPerSet = maxEqualTop.clamp(0, maxTopFit);
 
       // Build the two sets
       int logoIdx = 0;
@@ -426,18 +412,18 @@ class _HomePageState extends State<HomePage> {
       final setBTop = <LogoItem>[];
 
       // Fill Set A bottom
-      for (int i = 0; i < bottomPerSet && logoIdx < allLogos.length; i++) {
+      for (int i = 0; i < bottomA && logoIdx < allLogos.length; i++) {
         setABottom.add(allLogos[logoIdx++]);
       }
       // Fill Set B bottom
-      for (int i = 0; i < bottomPerSet && logoIdx < allLogos.length; i++) {
+      for (int i = 0; i < bottomB && logoIdx < allLogos.length; i++) {
         setBBottom.add(allLogos[logoIdx++]);
       }
-      // Fill Set A top
+      // Fill Set A top (equal count)
       for (int i = 0; i < topPerSet && logoIdx < allLogos.length; i++) {
         setATop.add(allLogos[logoIdx++]);
       }
-      // Fill Set B top
+      // Fill Set B top (equal count)
       for (int i = 0; i < topPerSet && logoIdx < allLogos.length; i++) {
         setBTop.add(allLogos[logoIdx++]);
       }
@@ -445,6 +431,10 @@ class _HomePageState extends State<HomePage> {
       final setA = LogoSet(bottomLogos: setABottom, topLeftLogos: setATop);
       final setB = LogoSet(bottomLogos: setBBottom, topLeftLogos: setBTop);
       final sets = [setA, setB];
+
+      int totalA = bottomA + topPerSet;
+      int totalB = bottomB + topPerSet;
+      int totalPlaced = totalA + totalB;
 
       setState(() {
         _p.logoSets = sets;
@@ -456,8 +446,9 @@ class _HomePageState extends State<HomePage> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              '2 sets automáticos: $bottomPerSet base + $topPerSet topo por set. '
-              'Total usado: $totalPlaced de $totalLogos logos.',
+              '2 sets automáticos: Set A: $bottomA base + $topPerSet topo = $totalA. '
+              'Set B: $bottomB base + $topPerSet topo = $totalB. '
+              'Total: $totalPlaced de $totalLogos logos.',
               style: const TextStyle(color: Colors.white),
             ),
             backgroundColor: const Color(0xFF2E7D32),
@@ -630,8 +621,8 @@ class _HomePageState extends State<HomePage> {
   set _cornerMarginTop(double v) => _p.cornerMarginTop = v;
   double get _cornerMarginRight => _p.cornerMarginRight;
   set _cornerMarginRight(double v) => _p.cornerMarginRight = v;
-  bool get _centered => _p.centered;
-  set _centered(bool v) => _p.centered = v;
+  bool get _centered => true; // Bottom logos are always centered
+  set _centered(bool v) => _p.centered = v; // Keep for persistence
   double get _logoSpacing => _p.logoSpacing;
   set _logoSpacing(double v) => _p.logoSpacing = v;
   bool get _bottomGradient => _p.bottomGradient;
@@ -1654,10 +1645,10 @@ class _HomePageState extends State<HomePage> {
     // Calculate optimal size using all logos in the set
     final size = _calculateAutoArrangeSize(
       items: logosForSizeCalc,
-      leftMargin: _centered ? 1.0 : _leftMargin,
-      rightMargin: _centered ? 1.0 : _leftMargin,
+      leftMargin: 1.0,
+      rightMargin: 1.0,
       gap: _logoSpacing,
-      centered: _centered,
+      centered: true,
     );
 
     if (size != null && mounted) {
@@ -1813,8 +1804,10 @@ class _HomePageState extends State<HomePage> {
       if (_cornerLogo != null) _cornerLogo!,
     ];
     for (final e in allLogos) {
-      _previewLogo[e.id] ??=
-          await compute(downscaleImage, (e.bytes, 512, true));
+      _previewLogo[e.id] ??= await compute(downscaleImage, (e.bytes, 512, true))
+          .timeout(const Duration(seconds: 10), onTimeout: () {
+        throw TimeoutException('Logo downscale timeout');
+      });
       if (token != _previewToken) {
         if (mounted) setState(() => _renderingPreview = false);
         return;
@@ -1843,7 +1836,10 @@ class _HomePageState extends State<HomePage> {
             return;
           }
           small = await compute<(Uint8List, int, bool), Uint8List>(
-              downscaleImage, (full, 1280, false));
+              downscaleImage, (full, 1280, false))
+              .timeout(const Duration(seconds: 10), onTimeout: () {
+            throw TimeoutException('Photo downscale timeout');
+          });
           if (token != _previewToken) {
             if (mounted) setState(() => _renderingPreview = false);
             return;
@@ -1851,20 +1847,37 @@ class _HomePageState extends State<HomePage> {
           if (!_photoPaths.contains(path)) continue;
           _previewPhoto[path] = small;
         }
-        final out = await _worker.render(_previewRequest(path, small));
+        // Render with timeout + retry (worker isolate can hang/crash)
+        Uint8List? out;
+        try {
+          out = await _worker.render(_previewRequest(path, small))
+              .timeout(const Duration(seconds: 10));
+        } on TimeoutException {
+          // Worker hung, try to restart once
+          try {
+            await _worker.restart();
+            await _worker.ready().timeout(const Duration(seconds: 5));
+            out = await _worker.render(_previewRequest(path, small))
+                .timeout(const Duration(seconds: 10));
+          } catch (_) {
+            if (mounted) setState(() => _renderingPreview = false);
+            return;
+          }
+        }
         if (token != _previewToken) {
           if (mounted) setState(() => _renderingPreview = false);
           return;
         }
         if (out == null) continue;
-        final aspect = await _aspectOf(out);
+        final Uint8List outBytes = out;
+        final aspect = await _aspectOf(outBytes);
         if (token != _previewToken || !mounted) {
           if (mounted) setState(() => _renderingPreview = false);
           return;
         }
         if (!_photoPaths.contains(path)) continue;
         setState(() {
-          _previews[path] = Preview(out, aspect);
+          _previews[path] = Preview(outBytes, aspect);
           _renderedVersion[path] = version;
         });
       } catch (_) {
@@ -1926,7 +1939,7 @@ class _HomePageState extends State<HomePage> {
       cornerMarginTop: _cornerMarginTop / 100,
       cornerMarginRight: _cornerMarginRight / 100,
       rowOpacity: _logoOpacity / 100,
-      centered: _centered,
+      centered: true,
       spacing: _logoSpacing / 100,
       textOverlays: _textOverlays(preview: true),
       quality: 85,
@@ -1972,7 +1985,7 @@ class _HomePageState extends State<HomePage> {
       cornerMarginTop: _cornerMarginTop / 100,
       cornerMarginRight: _cornerMarginRight / 100,
       rowOpacity: _logoOpacity / 100,
-      centered: _centered,
+      centered: true,
       spacing: _logoSpacing / 100,
       textOverlays: _textOverlays(),
       png: png,
@@ -3076,7 +3089,6 @@ class _HomePageState extends State<HomePage> {
                   'as duas fileiras.',
               onAdd: () => _pickLogos(_bottomLogos),
               sliders: [
-              _alignmentChooser(),
               Row(
                 children: [
                   Expanded(
@@ -3089,10 +3101,6 @@ class _HomePageState extends State<HomePage> {
               _slider('Espaço entre as logos (todas)', _logoSpacing, 0, 10,
                   (v) => setState(() => _logoSpacing = v),
                   enabled: !_currentImageHasCustomSettings),
-              if (!_centered)
-                _slider('Distância da borda esquerda (todas)', _leftMargin, 0,
-                    15, (v) => setState(() => _leftMargin = v),
-                    enabled: !_currentImageHasCustomSettings),
               _slider('Opacidade (todas)', _logoOpacity, 0, 100,
                   (v) => setState(() => _logoOpacity = v)),
               _slider('Distância da borda inferior', _bottomMargin, 0, 15,
@@ -4127,11 +4135,6 @@ class _HomePageState extends State<HomePage> {
               enabled: !_currentImageHasCustomSettings),
           _slider('Opacidade', _logoOpacity, 0, 100,
               (v) => setState(() => _logoOpacity = v)),
-          _alignmentChooser(),
-          if (!_centered)
-            _slider('Distância da borda esquerda', _leftMargin, 0, 15,
-                (v) => setState(() => _leftMargin = v),
-                enabled: !_currentImageHasCustomSettings),
           _slider('Distância da borda superior (topo)', _topMargin, 0, 15,
               (v) => setState(() => _topMargin = v),
               enabled: !_currentImageHasCustomSettings),
@@ -6025,42 +6028,6 @@ class _HomePageState extends State<HomePage> {
   }
 
   // ---- Small controls ----
-
-  Widget _alignmentChooser() {
-    return Padding(
-      padding: const EdgeInsets.only(top: 10),
-      child: Row(
-        children: [
-          Text('Alinhamento', style: Theme.of(context).textTheme.bodySmall),
-          const SizedBox(width: 10),
-          SegmentedButton<bool>(
-            segments: const [
-              ButtonSegment(value: false, label: Text('Esquerda → direita')),
-              ButtonSegment(value: true, label: Text('Centralizado')),
-            ],
-            selected: {_centered},
-            showSelectedIcon: false,
-            onSelectionChanged: !_controlsEnabled
-                ? null
-                : (s) {
-                    setState(() => _centered = s.first);
-                    if (_autoArrangeMode) {
-                      final allLogos = <LogoItem>[
-                        ...(_logoSetMode == LogoSetMode.single ? _p.bottomLogos : _logoSetA?.bottomLogos ?? []),
-                        ...(_logoSetMode == LogoSetMode.single ? _p.topLeftLogos : _logoSetA?.topLeftLogos ?? []),
-                        ...(_logoSetB?.bottomLogos ?? []),
-                        ...(_logoSetB?.topLeftLogos ?? []),
-                      ];
-                      Future.microtask(() => _autoDistributeLogos(allLogos));
-                    } else {
-                      _schedulePreview();
-                    }
-                  },
-          ),
-        ],
-      ),
-    );
-  }
 
   Widget _slider(String label, double value, double min, double max,
       ValueChanged<double> onChanged,
