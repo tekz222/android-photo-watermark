@@ -831,7 +831,6 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
-    _worker.start();
     _lifecycle = AppLifecycleListener(
       onExitRequested: () async {
         await _flushSettings();
@@ -845,6 +844,12 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _initializeProjects() async {
+    // Start worker and wait for it to be ready before proceeding
+    await _worker.start();
+    await _worker.ready().timeout(const Duration(seconds: 15), onTimeout: () {
+      throw Exception('Worker failed to start in time');
+    });
+
     await _projectManager.initialize();
     // If a specific project ID was passed, switch to that project
     if (widget.initialProjectId != null) {
