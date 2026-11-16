@@ -2752,11 +2752,15 @@ class _HomePageState extends State<HomePage> {
 
   // ---- UI ----
 
-  static const double _sidebarWidth = 430;
+  static const double _defaultSidebarWidth = 430;
+  static const double _minSidebarWidth = 300;
+  static const double _maxSidebarWidth = 800;
 
   /// Below this width the page keeps its size and scrolls sideways instead of
   /// squeezing the text into single letters.
   static const double _minPageWidth = 1000;
+
+  double _sidebarWidth = _defaultSidebarWidth;
 
   @override
   Widget build(BuildContext context) {
@@ -2803,8 +2807,13 @@ class _HomePageState extends State<HomePage> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 SizedBox(width: _sidebarWidth, child: _settingsPanel()),
-                VerticalDivider(
-                    width: 1, thickness: 1, color: scheme.outlineVariant),
+                _ResizableDivider(
+                  onDragUpdate: (delta) {
+                    setState(() {
+                      _sidebarWidth = (_sidebarWidth + delta).clamp(_minSidebarWidth, _maxSidebarWidth);
+                    });
+                  },
+                ),
                 Expanded(
                   child: Column(
                     children: [
@@ -3243,7 +3252,7 @@ class _HomePageState extends State<HomePage> {
                     style: small)
               else if (_photoPaths.isNotEmpty)
                 Text('${_photoPaths.length} foto(s)', style: small),
-              if (_photoPaths.isNotEmpty && !_isSelectingImagesForSettings) ...[
+              if (_photoPaths.isNotEmpty && !_isSelectingImagesForSettings && _currentImageHasCustomSettings) ...[
                 const SizedBox(width: 12),
                 OutlinedButton.icon(
                   onPressed: _controlsEnabled
@@ -3783,17 +3792,25 @@ class _HomePageState extends State<HomePage> {
               const SizedBox(width: 12),
               if (allLogos.isNotEmpty)
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                   decoration: BoxDecoration(
                     color: scheme.primaryContainer,
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: scheme.primary.withOpacity(0.3), width: 1.5),
+                    boxShadow: [
+                      BoxShadow(
+                        color: scheme.primary.withOpacity(0.1),
+                        blurRadius: 4,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
                   ),
                   child: Text(isSingle
                       ? 'Total: ${allLogos.length}  |  Base: ${_bottomLogos.length}  |  Topo: ${_topLeftLogos.length}'
                       : (isAutoMultiSet
                           ? 'Sets: ${_logoSetCount}  |  Total: ${allLogos.length}  |  Set A: ${_bottomPerSetCount} base + ${_topPerSetCount} topo = ${_bottomPerSetCount + _topPerSetCount}  |  Set B: ${setBBottom.length} base + ${setBTop.length} topo = ${setBBottom.length + setBTop.length}'
                           : 'Total: ${allLogos.length}  |  A: ${setABottom.length} base + ${setATop.length} topo = ${setABottom.length + setATop.length}  |  B: ${setBBottom.length} base + ${setBTop.length} topo = ${setBBottom.length + setBTop.length}'),
-                      style: small?.copyWith(fontWeight: FontWeight.w600, color: scheme.onPrimaryContainer)),
+                      style: small?.copyWith(fontSize: 13, fontWeight: FontWeight.w700, color: scheme.onPrimaryContainer, letterSpacing: 0.2)),
                 ),
             ],
           ),
@@ -6976,6 +6993,37 @@ class _NumberFieldState extends State<_NumberField> {
           border: OutlineInputBorder(borderRadius: BorderRadius.circular(4)),
         ),
         onSubmitted: (_) => _commit(),
+      ),
+    );
+  }
+}
+
+/// Draggable divider for resizing the sidebar.
+class _ResizableDivider extends StatelessWidget {
+  final ValueChanged<double> onDragUpdate;
+
+  const _ResizableDivider({required this.onDragUpdate});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onHorizontalDragUpdate: (details) => onDragUpdate(details.delta.dx),
+      onHorizontalDragStart: (_) {},
+      onHorizontalDragEnd: (_) {},
+      child: Container(
+        width: 8,
+        color: Colors.transparent,
+        child: Center(
+          child: Container(
+            width: 2,
+            height: 40,
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.outlineVariant.withOpacity(0.5),
+              borderRadius: BorderRadius.circular(1),
+            ),
+          ),
+        ),
       ),
     );
   }
