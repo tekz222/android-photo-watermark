@@ -100,6 +100,9 @@ class _HomePageState extends State<HomePage> {
   // Preview worker (shared across projects)
   final PreviewWorker _worker = PreviewWorker();
 
+  // Whether initialization (worker + projects) is complete
+  bool _initialized = false;
+
   // Reference shortest side for auto mode (minimum across all photos).
   // Used to ensure consistent logo sizing across photos of different dimensions.
   double? _autoReferenceShortestSide;
@@ -270,17 +273,10 @@ class _HomePageState extends State<HomePage> {
       });
 
       if (overflow && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Ambas as fileiras estão cheias! ${allLogos.length - bottomCount - topCount} logo(s) não couberam. '
-              'Reduza o tamanho das logos ou crie outro conjunto.',
-              style: const TextStyle(color: Colors.white),
-            ),
-            backgroundColor: const Color(0xFFB71C1C),
-            duration: const Duration(seconds: 5),
-            action: SnackBarAction(label: 'OK', textColor: Colors.white, onPressed: () {}),
-          ),
+        _snack(
+          'Ambas as fileiras estão cheias! ${allLogos.length - bottomCount - topCount} logo(s) não couberam. '
+          'Reduza o tamanho das logos ou crie outro conjunto.',
+          backgroundColor: const Color(0xFFB71C1C),
         );
         return false;
       }
@@ -347,15 +343,9 @@ class _HomePageState extends State<HomePage> {
         });
 
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                '1 set automático: $bottomPerSet1 base + $topPerSet1 topo.',
-                style: const TextStyle(color: Colors.white),
-              ),
-              backgroundColor: const Color(0xFF2E7D32),
-              duration: const Duration(seconds: 3),
-            ),
+          _snack(
+            '1 set automático: $bottomPerSet1 base + $topPerSet1 topo.',
+            backgroundColor: const Color(0xFF2E7D32),
           );
         }
         _schedulePreview();
@@ -426,18 +416,11 @@ class _HomePageState extends State<HomePage> {
       });
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              '2 sets automáticos: Set A: $bottomA base + $topPerSet topo = $totalA. '
-              'Set B: $bottomB base + $topPerSet topo = $totalB. '
-              'Total: $totalPlaced de $totalLogos logos.',
-              style: const TextStyle(color: Colors.white),
-            ),
-            backgroundColor: const Color(0xFF2E7D32),
-            duration: const Duration(seconds: 4),
-            action: SnackBarAction(label: 'OK', textColor: Colors.white, onPressed: () {}),
-          ),
+        _snack(
+          '2 sets automáticos: Set A: $bottomA base + $topPerSet topo = $totalA. '
+          'Set B: $bottomB base + $topPerSet topo = $totalB. '
+          'Total: $totalPlaced de $totalLogos logos.',
+          backgroundColor: const Color(0xFF2E7D32),
         );
       }
 
@@ -541,33 +524,19 @@ class _HomePageState extends State<HomePage> {
       });
 
       if (overflow && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Ambos os conjuntos estão cheios! ${allLogos.length - logosToDistribute} logo(s) não couberam. '
-              'Reduza o tamanho das logos.',
-              style: const TextStyle(color: Colors.white),
-            ),
-            backgroundColor: const Color(0xFFB71C1C),
-            duration: const Duration(seconds: 5),
-            action: SnackBarAction(label: 'OK', textColor: Colors.white, onPressed: () {}),
-          ),
+        _snack(
+          'Ambos os conjuntos estão cheios! ${allLogos.length - logosToDistribute} logo(s) não couberam. '
+          'Reduza o tamanho das logos.',
+          backgroundColor: const Color(0xFFB71C1C),
         );
         return false;
       }
       // If remainder > 0, one logo couldn't be placed evenly (would unbalance sets)
       if (remainder > 0 && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              '1 logo não pôde ser colocada — faria os conjuntos desiguais. '
-              'Reduza o tamanho ou remova uma logo para distribuir igualmente.',
-              style: const TextStyle(color: Colors.white),
-            ),
-            backgroundColor: const Color(0xFFB71C1C),
-            duration: const Duration(seconds: 5),
-            action: SnackBarAction(label: 'OK', textColor: Colors.white, onPressed: () {}),
-          ),
+        _snack(
+          '1 logo não pôde ser colocada — faria os conjuntos desiguais. '
+          'Reduza o tamanho ou remova uma logo para distribuir igualmente.',
+          backgroundColor: const Color(0xFFB71C1C),
         );
         return false;
       }
@@ -847,9 +816,10 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _initializeProjects() async {
-    // Start worker and wait for it to be ready before proceeding
+    // Start worker and wait for it to be ready before proceeding.
+    // First launch may take longer for isolate compilation.
     await _worker.start();
-    await _worker.ready().timeout(const Duration(seconds: 15), onTimeout: () {
+    await _worker.ready().timeout(const Duration(seconds: 30), onTimeout: () {
       throw Exception('Worker failed to start in time');
     });
 
@@ -1855,112 +1825,95 @@ class _HomePageState extends State<HomePage> {
     // Ensure worker is ready before starting renders (with timeout + retry)
     // First run may take longer for isolate startup
     try {
-      await _worker.ready().timeout(const Duration(seconds: 15));
+      await _worker.ready().timeout(const Duration(seconds: 30));
     } catch (_) {
       // Worker failed or timed out, try to restart once
       try {
         await _worker.restart();
-        await _worker.ready().timeout(const Duration(seconds: 10));
+        await _worker.ready().timeout(const Duration(seconds: 15));
       } catch (_) {
         if (mounted) setState(() => _renderingPreview = false);
         return;
       }
-    }
-    setState(() => _renderingPreview = true);
-    // Small copies of the logos, once (cached), so renders are cheap.
-    final allLogos = [
-      ..._bottomLogos,
-      ..._topLeftLogos,
-      if (_cornerLogo != null) _cornerLogo!,
-    ];
-    for (final e in allLogos) {
-      _previewLogo[e.id] ??= await compute(downscaleImage, (e.bytes, 512, true))
-          .timeout(const Duration(seconds: 20), onTimeout: () {
-        throw TimeoutException('Logo downscale timeout');
-      });
-      if (token != _previewToken) {
-        if (mounted) setState(() => _renderingPreview = false);
-        return;
-      }
-    }
-    await _ensureTextPngs();
-    if (token != _previewToken) {
-      if (mounted) setState(() => _renderingPreview = false);
-      return;
     }
 
-    final version = _previewVersion;
-    for (final path in _previewOrder()) {
-      if (_renderedVersion[path] == version) continue;
-      if (_previewFailed.contains(path)) continue;
-      if (!_photoPaths.contains(path)) continue; // removed meanwhile
-      try {
-        final Uint8List small;
-        final cached = _previewPhoto[path];
-        if (cached != null) {
-          small = cached;
-        } else {
-          final full = await File(path).readAsBytes();
-          if (token != _previewToken) {
-            if (mounted) setState(() => _renderingPreview = false);
-            return;
-          }
-          small = await compute<(Uint8List, int, bool), Uint8List>(
-              downscaleImage, (full, 1280, false))
-              .timeout(const Duration(seconds: 20), onTimeout: () {
-            throw TimeoutException('Photo downscale timeout');
-          });
-          if (token != _previewToken) {
-            if (mounted) setState(() => _renderingPreview = false);
-            return;
-          }
-          if (!_photoPaths.contains(path)) continue;
-          _previewPhoto[path] = small;
-        }
-        // Render with timeout + retry (worker isolate can hang/crash)
-        Uint8List? out;
+    // Use try-finally to ensure _renderingPreview is always reset
+    try {
+      setState(() => _renderingPreview = true);
+      // Small copies of the logos, once (cached), so renders are cheap.
+      final allLogos = [
+        ..._bottomLogos,
+        ..._topLeftLogos,
+        if (_cornerLogo != null) _cornerLogo!,
+      ];
+      for (final e in allLogos) {
+        _previewLogo[e.id] ??= await compute(downscaleImage, (e.bytes, 512, true))
+            .timeout(const Duration(seconds: 20), onTimeout: () {
+          throw TimeoutException('Logo downscale timeout');
+        });
+        if (token != _previewToken) return;
+      }
+      await _ensureTextPngs();
+      if (token != _previewToken) return;
+
+      final version = _previewVersion;
+      for (final path in _previewOrder()) {
+        if (_renderedVersion[path] == version) continue;
+        if (_previewFailed.contains(path)) continue;
+        if (!_photoPaths.contains(path)) continue; // removed meanwhile
         try {
-          out = await _worker.render(_previewRequest(path, small))
-              .timeout(const Duration(seconds: 10));
-        } on TimeoutException {
-          // Worker hung, try to restart once
+          final Uint8List small;
+          final cached = _previewPhoto[path];
+          if (cached != null) {
+            small = cached;
+          } else {
+            final full = await File(path).readAsBytes();
+            if (token != _previewToken) return;
+            small = await compute<(Uint8List, int, bool), Uint8List>(
+                downscaleImage, (full, 1280, false))
+                .timeout(const Duration(seconds: 20), onTimeout: () {
+              throw TimeoutException('Photo downscale timeout');
+            });
+            if (token != _previewToken) return;
+            if (!_photoPaths.contains(path)) continue;
+            _previewPhoto[path] = small;
+          }
+          // Render with timeout + retry (worker isolate can hang/crash)
+          Uint8List? out;
           try {
-            await _worker.restart();
-            await _worker.ready().timeout(const Duration(seconds: 5));
             out = await _worker.render(_previewRequest(path, small))
                 .timeout(const Duration(seconds: 10));
-          } catch (_) {
-            if (mounted) setState(() => _renderingPreview = false);
-            return;
+          } on TimeoutException {
+            // Worker hung, try to restart once
+            try {
+              await _worker.restart();
+              await _worker.ready().timeout(const Duration(seconds: 5));
+              out = await _worker.render(_previewRequest(path, small))
+                  .timeout(const Duration(seconds: 10));
+            } catch (_) {
+              return;
+            }
           }
-        }
-        if (token != _previewToken) {
-          if (mounted) setState(() => _renderingPreview = false);
-          return;
-        }
-        if (out == null) continue;
-        final Uint8List outBytes = out;
-        final aspect = await _aspectOf(outBytes);
-        if (token != _previewToken || !mounted) {
-          if (mounted) setState(() => _renderingPreview = false);
-          return;
-        }
-        if (!_photoPaths.contains(path)) continue;
-        setState(() {
-          _previews[path] = Preview(outBytes, aspect);
-          _renderedVersion[path] = version;
-        });
-      } catch (_) {
-        // A photo that can't be read/decoded must not block the others.
-        _previewFailed.add(path);
-        if (token != _previewToken) {
-          if (mounted) setState(() => _renderingPreview = false);
-          return;
+          if (token != _previewToken) return;
+          if (out == null) continue;
+          final Uint8List outBytes = out;
+          final aspect = await _aspectOf(outBytes);
+          if (token != _previewToken || !mounted) return;
+          if (!_photoPaths.contains(path)) continue;
+          setState(() {
+            _previews[path] = Preview(outBytes, aspect);
+            _renderedVersion[path] = version;
+          });
+        } catch (_) {
+          // A photo that can't be read/decoded must not block the others.
+          _previewFailed.add(path);
+          if (token != _previewToken) return;
         }
       }
-    }
-    if (mounted && token == _previewToken) {
-      setState(() => _renderingPreview = false);
+    } finally {
+      if (mounted && token == _previewToken) {
+        setState(() => _renderingPreview = false);
+      }
     }
   }
 
@@ -1994,6 +1947,29 @@ class _HomePageState extends State<HomePage> {
     final topLeftLogos = _topLeftLogosFor(index);
     final cornerLogo = _cornerLogoFor(index);
     final logoSet = _logoSetForIndex(index);
+
+    // Calculate the downscaled photo's shortest side for correct logo sizing.
+    // The preview uses downscaled photos (max 1280px), so logo sizes must be
+    // relative to the downscaled dimensions, not the original.
+    double? previewReferenceShortestSide;
+    if (_autoReferenceShortestSide != null) {
+      final dims = _photoDimensionsCache[path];
+      if (dims != null) {
+        final w = dims.$1.toDouble();
+        final h = dims.$2.toDouble();
+        // Downscale: longest side becomes 1280
+        double downscaledW, downscaledH;
+        if (w >= h) {
+          downscaledW = 1280;
+          downscaledH = h * 1280 / w;
+        } else {
+          downscaledH = 1280;
+          downscaledW = w * 1280 / h;
+        }
+        previewReferenceShortestSide = math.min(downscaledW, downscaledH);
+      }
+    }
+
     return WatermarkRequest(
       photo: ImageSrc('ps:$path', photoSmall),
       bottomLogos: bottomLogos.map(logo).toList(),
@@ -2027,8 +2003,8 @@ class _HomePageState extends State<HomePage> {
       bottomRightTopMargin: (logoSet?.bottomRightTopMargin ?? 2.0) / 100,
       topLeftBottomLogo: logoSet?.topLeftBottomLogo == null ? null : logo(logoSet!.topLeftBottomLogo!),
       topLeftBottomMargin: (logoSet?.topLeftBottomMargin ?? 2.0) / 100,
-      // Use reference shortest side for consistent logo sizing in auto mode
-      referenceShortestSide: _autoReferenceShortestSide,
+      // Use downscaled photo's shortest side for correct logo sizing in preview
+      referenceShortestSide: previewReferenceShortestSide,
     );
   }
 
@@ -2749,7 +2725,7 @@ class _HomePageState extends State<HomePage> {
     return '${two(d.day)}/${two(d.month)}/${d.year} ${two(d.hour)}:${two(d.minute)}';
   }
 
-  void _snack(String msg, {bool logOnly = false}) {
+  void _snack(String msg, {bool logOnly = false, Color? backgroundColor}) {
     final now = DateTime.now();
     final timeStr = '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}';
     setState(() {
@@ -2758,8 +2734,13 @@ class _HomePageState extends State<HomePage> {
       if (_messageLog.length > 100) _messageLog.removeRange(100, _messageLog.length);
     });
     if (!logOnly && mounted) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(msg), duration: const Duration(seconds: 3)));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(msg),
+          backgroundColor: backgroundColor,
+          duration: const Duration(seconds: 3),
+        ),
+      );
     }
   }
 
@@ -4372,29 +4353,15 @@ class _HomePageState extends State<HomePage> {
 
       // Show feedback about duplicates
       if (duplicates > 0 && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              '$duplicates logo(s) ignorada(s) — já existiam com o mesmo nome. '
-              '$added logo(s) nova(s) adicionada(s).',
-              style: const TextStyle(color: Colors.white),
-            ),
-            backgroundColor: const Color(0xFFFF9800),
-            duration: const Duration(seconds: 4),
-            action: SnackBarAction(label: 'OK', textColor: Colors.white, onPressed: () {}),
-          ),
+        _snack(
+          '$duplicates logo(s) ignorada(s) — já existiam com o mesmo nome. '
+          '$added logo(s) nova(s) adicionada(s).',
+          backgroundColor: const Color(0xFFFF9800),
         );
       } else if (added > 0 && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              '$added logo(s) adicionada(s) com sucesso.',
-              style: const TextStyle(color: Colors.white),
-            ),
-            backgroundColor: const Color(0xFF2E7D32),
-            duration: const Duration(seconds: 3),
-            action: SnackBarAction(label: 'OK', textColor: Colors.white, onPressed: () {}),
-          ),
+        _snack(
+          '$added logo(s) adicionada(s) com sucesso.',
+          backgroundColor: const Color(0xFF2E7D32),
         );
       }
 
@@ -5089,15 +5056,9 @@ class _HomePageState extends State<HomePage> {
     // Only apply if current image has special settings enabled
     if (!currentSettings.enabled) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text(
-              'A imagem atual não tem configurações especiais ativadas.',
-              style: TextStyle(color: Colors.white),
-            ),
-            backgroundColor: const Color(0xFFFF9800),
-            duration: const Duration(seconds: 3),
-          ),
+        _snack(
+          'A imagem atual não tem configurações especiais ativadas.',
+          backgroundColor: const Color(0xFFFF9800),
         );
       }
       return;
@@ -5119,15 +5080,9 @@ class _HomePageState extends State<HomePage> {
     _schedulePreview();
 
     if (mounted && applied > 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Configurações aplicadas a $applied imagem(ns).',
-            style: const TextStyle(color: Colors.white),
-          ),
-          backgroundColor: const Color(0xFF2E7D32),
-          duration: const Duration(seconds: 3),
-        ),
+      _snack(
+        'Configurações aplicadas a $applied imagem(ns).',
+        backgroundColor: const Color(0xFF2E7D32),
       );
     }
   }
