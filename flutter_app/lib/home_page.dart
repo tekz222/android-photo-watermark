@@ -167,9 +167,8 @@ class _HomePageState extends State<HomePage> {
     }
 
     // Available widths in pixels (using min photo dimensions to guarantee fit on ALL photos)
-    // For centered bottom logos: use minimal margins (1% each side)
-    final edgeMarginPct = 1.0; // 1% margin on each side for centered
-    final edgeMarginPx = edgeMarginPct / 100.0 * shortestSide;
+    // For centered bottom logos: use minimal margins (max 10px each side)
+    final edgeMarginPx = math.min(10.0, shortestSide * 0.01); // max 10px or 1% of shortest side
     final leftMarginPx = _leftMargin / 100.0 * shortestSide;
     // Top row: starts at leftMarginPx, ends at photoWidth*0.8 - edgeMarginPx (main section right edge)
     final availableWidthTop = photoWidth * 0.8 - edgeMarginPx - leftMarginPx;
@@ -341,31 +340,6 @@ class _HomePageState extends State<HomePage> {
         return count;
       }
 
-      // Helper: check if exactly N logos fit in bottom row (centered)
-      bool _checkNFitBottom(int startIdx, int n) {
-        if (n <= 0) return true;
-        final maxRowWidth = photoWidth - 2 * edgeMarginPx;
-        final rowWidth = _rowWidthFor(startIdx, n);
-        return rowWidth >= 0 && rowWidth <= maxRowWidth;
-      }
-
-      // Helper: check if exactly N logos fit in top row starting from startIdx
-      bool _checkNFitTop(int startIdx, int n) {
-        double currentRightEdge = leftMarginPx;
-        final topSectionRightEdge = photoWidth * 0.8 - edgeMarginPx;
-        for (int i = startIdx; i < startIdx + n && i < allLogos.length; i++) {
-          final logoWidth = logoWidths[i];
-          final count = i - startIdx;
-          final neededRightEdge = currentRightEdge + (count == 0 ? 0 : gapPx) + logoWidth;
-          if (neededRightEdge <= topSectionRightEdge) {
-            currentRightEdge = neededRightEdge;
-          } else {
-            return false;
-          }
-        }
-        return true;
-      }
-
       final totalLogos = allLogos.length;
 
       // STEP 1: Try 1 set first
@@ -405,7 +379,7 @@ class _HomePageState extends State<HomePage> {
       // STEP 2: Need 2 sets.
       // ALGORITHM: Maximize bottom usage first, then distribute remaining to tops equally.
       // 1. Fill both bottoms maximally (sequential from logo list)
-      // 2. Try to pull more logos from top pool into bottoms if space exists
+      // 2. Try to pull more logos from TOP POOL into bottoms if space exists
       // 3. Distribute remaining equally to tops
 
       // First pass: fill both bottoms sequentially
@@ -414,19 +388,39 @@ class _HomePageState extends State<HomePage> {
       int logosInBottoms = bottomA + bottomB;
       int remaining = totalLogos - logosInBottoms;
 
-      // Second pass: try to improve bottom filling by moving logos from top pool
-      // Check if Set A bottom can fit more (check from index 0)
-      while (remaining > 0 && _checkNFitBottom(0, bottomA + 1)) {
-        bottomA++;
-        remaining--;
-        logosInBottoms++;
-      }
-
-      // Check if Set B bottom can fit more (check from index bottomA)
-      while (remaining > 0 && _checkNFitBottom(bottomA, bottomB + 1)) {
-        bottomB++;
-        remaining--;
-        logosInBottoms++;
+      // Second pass: try to improve bottom filling by pulling logos from TOP POOL
+      // The top pool starts at index 'logosInBottoms'
+      // We'll try each remaining logo to see if it fits in either bottom row
+      final maxRowWidth = photoWidth - 2 * edgeMarginPx;
+      bool improved = true;
+      while (improved && remaining > 0) {
+        improved = false;
+        // Try to add a logo from top pool to Set A bottom
+        for (int i = logosInBottoms; i < totalLogos; i++) {
+          // Check if this logo fits in Set A bottom (which currently has bottomA logos from indices 0..bottomA-1)
+          // We need to check if bottomA + 1 logos fit when we insert this logo at the end
+          final testWidthA = _rowWidthFor(0, bottomA) + (bottomA == 0 ? 0 : gapPx) + logoWidths[i];
+          if (testWidthA <= maxRowWidth) {
+            bottomA++;
+            remaining--;
+            logosInBottoms++;
+            improved = true;
+            break;
+          }
+        }
+        if (improved) continue;
+        // Try to add a logo from top pool to Set B bottom
+        for (int i = logosInBottoms; i < totalLogos; i++) {
+          // Check if this logo fits in Set B bottom (which currently has bottomB logos from indices bottomA..bottomA+bottomB-1)
+          final testWidthB = _rowWidthFor(bottomA, bottomB) + (bottomB == 0 ? 0 : gapPx) + logoWidths[i];
+          if (testWidthB <= maxRowWidth) {
+            bottomB++;
+            remaining--;
+            logosInBottoms++;
+            improved = true;
+            break;
+          }
+        }
       }
 
       // Fill TOP rows EQUALLY (same count per set, or differ by 1 if odd remaining)
@@ -1618,11 +1612,13 @@ class _HomePageState extends State<HomePage> {
     }
     if (totalAspectRatio == 0) return null;
 
-    // For edge-to-edge filling: use minimal margins (1% each side instead of 0 for centered)
+    // For edge-to-edge filling: use minimal margins (max 10px each side for centered)
     // This ensures logos almost touch the edges but don't clip
-    final edgeMargin = centered ? 1.0 : leftMargin; // 1% for centered, or leftMargin for left-aligned
+    final edgeMarginPx = centered
+        ? math.min(10.0, referenceShortestSide * 0.01)
+        : referenceShortestSide * leftMargin / 100.0;
     // Use referenceShortestSide for margin/gap calculations to be consistent with percentage base
-    final mainSectionWidth = photoWidth * 0.8 - (edgeMargin + edgeMargin) / 100.0 * referenceShortestSide;
+    final mainSectionWidth = photoWidth * 0.8 - 2 * edgeMarginPx;
     final cornerSectionWidth = photoWidth * 0.2;
     // Total available width including corner section
     final availableWidth = mainSectionWidth + cornerSectionWidth;
