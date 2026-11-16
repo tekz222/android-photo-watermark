@@ -83,6 +83,8 @@ class _HomePageState extends State<HomePage> {
   Timer? _debounce;
   final ScrollController _thumbCtl = ScrollController();
   List<Map<String, dynamic>> _history = [];
+  // Message log for all notifications with timestamps
+  List<Map<String, dynamic>> _messageLog = [];
   String _previewSearch = ''; // Search query for filtering photos
   // Multi-select for applying per-image settings to multiple images
   bool _isSelectingImagesForSettings = false;
@@ -92,7 +94,7 @@ class _HomePageState extends State<HomePage> {
   // Logo arrangement mode: manual (user controls each row) or auto (distribute all logos)
   bool _autoArrangeMode = true;
 
-  // Margin visualization overlay (shows 0.5% edge margins on bottom row)
+  // Margin visualization overlay (shows 1% edge margins on bottom row)
   bool _showMarginOverlay = false;
 
   // Preview worker (shared across projects)
@@ -174,7 +176,7 @@ class _HomePageState extends State<HomePage> {
 
     // Available widths in pixels (using min photo dimensions to guarantee fit on ALL photos)
     // For centered bottom logos: use minimal margins (max 10px each side)
-    final edgeMarginPx = shortestSide * 0.005; // 0.5% margin on each side
+    final edgeMarginPx = shortestSide * 0.01; // 1% margin on each side
     final leftMarginPx = _leftMargin / 100.0 * shortestSide;
     // Top row: starts at leftMarginPx, ends at photoWidth*0.8 - edgeMarginPx (main section right edge)
     final availableWidthTop = photoWidth * 0.8 - edgeMarginPx - leftMarginPx;
@@ -1071,15 +1073,16 @@ class _HomePageState extends State<HomePage> {
       await File(savePath).writeAsBytes(zipBytes);
 
       if (!mounted) return;
-      _snack('Projeto exportado para: $savePath');
+      _snack('Projeto exportado para: $savePath', logOnly: mode == ExportMode.full);
     } catch (e) {
       if (!mounted) return;
-      _snack('Erro ao exportar: $e');
+      _snack('Erro ao exportar: $e', logOnly: mode == ExportMode.full);
     }
   }
 
   /// Imports a .jcv project file, restoring everything.
   Future<void> _importProject() async {
+    ExportMode? exportMode;
     try {
       // Use file_picker to allow picking .jcv files
       final result = await FilePicker.pickFiles(
@@ -1112,7 +1115,7 @@ class _HomePageState extends State<HomePage> {
       final settings = jsonDecode(utf8.decode(settingsFile.content as List<int>)) as Map<String, dynamic>;
 
       // Check export mode (default to full for backward compatibility)
-      final exportMode = ExportMode.values[(settings['exportMode'] as int?) ?? 1];
+      exportMode = ExportMode.values[(settings['exportMode'] as int?) ?? 1];
 
       // Clear current project (but keep photos if settingsOnly import)
       _previewToken++;
@@ -1262,11 +1265,11 @@ class _HomePageState extends State<HomePage> {
 
       if (!mounted) return;
       setState(() => _importing = false);
-      _snack('Projeto importado com ${_photoPaths.length} foto(s), ${_bottomLogos.length + _topLeftLogos.length} logo(s) e ${_texts.length} texto(s).');
+      _snack('Projeto importado com ${_photoPaths.length} foto(s), ${_bottomLogos.length + _topLeftLogos.length} logo(s) e ${_texts.length} texto(s).', logOnly: exportMode == ExportMode.full);
     } catch (e) {
       if (!mounted) return;
       setState(() => _importing = false);
-      _snack('Erro ao importar: $e');
+      _snack('Erro ao importar: $e', logOnly: exportMode == ExportMode.full);
     }
   }
 
@@ -1584,10 +1587,10 @@ class _HomePageState extends State<HomePage> {
     }
     if (totalAspectRatio == 0) return null;
 
-    // For edge-to-edge filling: use 0.5% margin on each side for centered
+    // For edge-to-edge filling: use 1% margin on each side for centered
     // This ensures logos almost touch the edges but don't clip
     final edgeMarginPx = centered
-        ? referenceShortestSide * 0.005
+        ? referenceShortestSide * 0.01
         : referenceShortestSide * leftMargin / 100.0;
     // Use referenceShortestSide for margin/gap calculations to be consistent with percentage base
     final mainSectionWidth = photoWidth * 0.8 - 2 * edgeMarginPx;
@@ -2714,10 +2717,18 @@ class _HomePageState extends State<HomePage> {
     return '${two(d.day)}/${two(d.month)}/${d.year} ${two(d.hour)}:${two(d.minute)}';
   }
 
-  void _snack(String msg) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(msg)));
+  void _snack(String msg, {bool logOnly = false}) {
+    final now = DateTime.now();
+    final timeStr = '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}';
+    setState(() {
+      _messageLog.insert(0, {'msg': msg, 'time': timeStr, 'timestamp': now.millisecondsSinceEpoch});
+      // Keep only last 100 messages
+      if (_messageLog.length > 100) _messageLog.removeRange(100, _messageLog.length);
+    });
+    if (!logOnly && mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(msg), duration: const Duration(seconds: 3)));
+    }
   }
 
   // ---- UI ----
@@ -2861,6 +2872,56 @@ class _HomePageState extends State<HomePage> {
             onPressed: !_processing ? _importProject : null,
             icon: const Icon(Icons.upload_outlined, size: 18),
             label: const Text('Importar'),
+          ),
+          const SizedBox(width: 4),
+          // Message log menu
+          MenuAnchor(
+            alignmentOffset: const Offset(0, 4),
+            style: const MenuStyle(
+              padding: WidgetStatePropertyAll(EdgeInsets.symmetric(vertical: 6)),
+            ),
+            menuChildren: _messageLog.isEmpty
+                ? [
+                    const MenuItemButton(
+                      child: Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 6),
+                        child: Text('Nenhuma mensagem ainda.'),
+                      ),
+                    ),
+                  ]
+                : [
+                    for (var i = 0; i < _messageLog.length && i < 50; i++)
+                      MenuItemButton(
+                        onPressed: () {},
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 6),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                _messageLog[i]['msg'] as String,
+                                style: const TextStyle(fontWeight: FontWeight.w500),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              Text(
+                                _messageLog[i]['time'] as String,
+                                style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.outline),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                  ],
+            builder: (context, controller, child) => TextButton.icon(
+              onPressed: _processing
+                  ? null
+                  : () =>
+                      controller.isOpen ? controller.close() : controller.open(),
+              icon: const Icon(Icons.notifications_outlined, size: 18),
+              label: const Text('Mensagens'),
+            ),
           ),
           const SizedBox(width: 4),
           MenuAnchor(
@@ -3884,11 +3945,18 @@ class _HomePageState extends State<HomePage> {
                     ),
                   ],
                 ),
-                child: Text(
-                  'Sets: ${_logoSetCount}  |  Total: ${allLogos.length}  |  Set A: ${_bottomPerSetCount} base + ${_topPerSetCount} top = ${_bottomPerSetCount + _topPerSetCount}  |  Set B: ${setBBottom.length} base + ${setBTop.length} top = ${setBBottom.length + setBTop.length}',
-                  style: small?.copyWith(fontSize: 13, fontWeight: FontWeight.w700, color: scheme.onPrimaryContainer, letterSpacing: 0.2),
-                  overflow: TextOverflow.ellipsis,
-                  maxLines: 1,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(minWidth: 0), // Allow shrinking
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                      child: Text(
+                        'Sets: ${_logoSetCount}  |  Total: ${allLogos.length}  |  Set A: ${_bottomPerSetCount} base + ${_topPerSetCount} top = ${_bottomPerSetCount + _topPerSetCount}  |  Set B: ${setBBottom.length} base + ${setBTop.length} top = ${setBBottom.length + setBTop.length}',
+                        style: small?.copyWith(fontSize: 13, fontWeight: FontWeight.w700, color: scheme.onPrimaryContainer, letterSpacing: 0.2),
+                      ),
+                    ),
+                  ),
                 ),
               ),
             const SizedBox(height: 8),
@@ -4197,7 +4265,7 @@ class _HomePageState extends State<HomePage> {
               ),
               const SizedBox(width: 8),
               Tooltip(
-                message: 'Mostra faixas de 0.5% nas laterais da base (bottom row)',
+                message: 'Mostra faixas de 1% nas laterais da base (bottom row)',
                 child: Icon(Icons.info_outline, size: 18, color: scheme.outline),
               ),
             ],
@@ -5649,14 +5717,14 @@ class _HomePageState extends State<HomePage> {
                                 pictureWidth = constraints.maxWidth;
                                 pictureHeight = pictureWidth / pictureAspect;
                               }
-                              final marginPx = pictureWidth * 0.005; // 0.5% of picture width
+                              final marginPx = pictureWidth * 0.01; // 1% of picture width
                               final bottomRowHeight = pictureHeight * 0.15; // Approx bottom row height (15% of photo height)
 
                               return Stack(
                                 fit: StackFit.expand,
                                 children: [
                                   picture,
-                                  // Margin visualization overlay (0.5% edge margins on bottom row)
+                                  // Margin visualization overlay (1% edge margins on bottom row)
                                   if (_showMarginOverlay && render != null && _hasAnyContent) ...[
                                     // Left margin strip
                                     Positioned(
@@ -5669,7 +5737,7 @@ class _HomePageState extends State<HomePage> {
                                         child: Center(
                                           child: RotatedBox(
                                             quarterTurns: 3,
-                                            child: Text('0.5%',
+                                            child: Text('1%',
                                                 style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
                                           ),
                                         ),
@@ -5686,7 +5754,7 @@ class _HomePageState extends State<HomePage> {
                                         child: Center(
                                           child: RotatedBox(
                                             quarterTurns: 3,
-                                            child: Text('0.5%',
+                                            child: Text('1%',
                                                 style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
                                           ),
                                         ),
