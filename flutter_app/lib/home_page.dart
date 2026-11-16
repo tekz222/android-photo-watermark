@@ -84,6 +84,9 @@ class _HomePageState extends State<HomePage> {
   final ScrollController _thumbCtl = ScrollController();
   List<Map<String, dynamic>> _history = [];
   String _previewSearch = ''; // Search query for filtering photos
+  // Multi-select for applying per-image settings to multiple images
+  bool _isSelectingImagesForSettings = false;
+  final Set<String> _selectedImagePathsForSettings = <String>{};
   late final AppLifecycleListener _lifecycle;
 
   // Logo arrangement mode: manual (user controls each row) or auto (distribute all logos)
@@ -3031,21 +3034,6 @@ class _HomePageState extends State<HomePage> {
                           },
                           enabled: !_currentImageHasCustomSettings),
                     ),
-                    if (!_controlsEnabled)
-                      const SizedBox(width: 8)
-                    else
-                      IconButton(
-                        icon: const Icon(Icons.auto_fix_high, size: 20),
-                        tooltip: 'Ajustar automaticamente (edge-to-edge)',
-                        onPressed: () => _autoArrange(
-                          items: _topLeftLogos,
-                          leftMargin: _leftMargin,
-                          rightMargin: _leftMargin, // top row uses left margin for both sides
-                          gap: _logoSpacing,
-                          centered: false,
-                          onSizeChanged: (v) => setState(() => _logoSize = v),
-                        ),
-                      ),
                   ],
                 ),
                 _slider('Espaço entre as logos (todas)', _logoSpacing, 0, 10,
@@ -3096,21 +3084,6 @@ class _HomePageState extends State<HomePage> {
                         (v) => setState(() => _logoSize = v),
                         enabled: !_currentImageHasCustomSettings),
                   ),
-                  if (!_controlsEnabled)
-                    const SizedBox(width: 8)
-                  else
-                    IconButton(
-                      icon: const Icon(Icons.auto_fix_high, size: 20),
-                      tooltip: 'Ajustar automaticamente (edge-to-edge)',
-                      onPressed: () => _autoArrange(
-                        items: _bottomLogos,
-                        leftMargin: _centered ? 0 : _leftMargin,
-                        rightMargin: _centered ? 0 : _leftMargin,
-                        gap: _logoSpacing,
-                        centered: _centered,
-                        onSizeChanged: (v) => setState(() => _logoSize = v),
-                      ),
-                    ),
                 ],
               ),
               _slider('Espaço entre as logos (todas)', _logoSpacing, 0, 10,
@@ -3197,6 +3170,44 @@ class _HomePageState extends State<HomePage> {
                     style: small)
               else if (_photoPaths.isNotEmpty)
                 Text('${_photoPaths.length} foto(s)', style: small),
+              if (_photoPaths.isNotEmpty && !_isSelectingImagesForSettings) ...[
+                const SizedBox(width: 12),
+                OutlinedButton.icon(
+                  onPressed: _controlsEnabled
+                      ? () {
+                          setState(() {
+                            _isSelectingImagesForSettings = true;
+                            _selectedImagePathsForSettings.clear();
+                          });
+                        }
+                      : null,
+                  icon: const Icon(Icons.checklist_outlined, size: 18),
+                  label: const Text('Selecionar para configs. especiais'),
+                  tooltip: 'Selecione múltiplas imagens para aplicar as configurações especiais da imagem atual',
+                ),
+              ],
+              if (_photoPaths.isNotEmpty && _isSelectingImagesForSettings) ...[
+                const SizedBox(width: 12),
+                FilledButton.icon(
+                  onPressed: _selectedImagePathsForSettings.isNotEmpty
+                      ? () => _applySettingsToSelectedImages()
+                      : null,
+                  icon: const Icon(Icons.content_copy, size: 18),
+                  label: Text('Aplicar a ${_selectedImagePathsForSettings.length} selecionada(s)'),
+                  style: FilledButton.styleFrom(backgroundColor: scheme.primary),
+                ),
+                const SizedBox(width: 8),
+                OutlinedButton.icon(
+                  onPressed: () {
+                    setState(() {
+                      _isSelectingImagesForSettings = false;
+                      _selectedImagePathsForSettings.clear();
+                    });
+                  },
+                  icon: const Icon(Icons.close, size: 18),
+                  label: const Text('Cancelar'),
+                ),
+              ],
             ],
           ),
           const SizedBox(height: 8),
@@ -3296,30 +3307,73 @@ class _HomePageState extends State<HomePage> {
                         );
                       }
                       final sel = i == _previewIndex;
-                      return _thumb(
-                        size: 60,
-                        enabled: _controlsEnabled,
-                        selected: sel,
-                        number: i + 1,
-                        child: Image.file(
-                          File(_photoPaths[i]),
-                          fit: BoxFit.cover,
-                          cacheWidth: 160,
-                        ),
-                        onTap: () => _selectPreview(i),
-                        onRemove: () {
-                          final path = _photoPaths[i];
-                          _previewToken++;
-                          setState(() {
-                            _photoPaths.removeAt(i);
-                            _previews.remove(path);
-                            _renderedVersion.remove(path);
-                            _previewFailed.remove(path);
-                          });
-                          _previewPhoto.remove(path);
-                          File(path).delete().ignore();
-                          _kickPreview();
-                        },
+                      final path = _photoPaths[i];
+                      final isSelectedForSettings = _isSelectingImagesForSettings && _selectedImagePathsForSettings.contains(path);
+                      return Stack(
+                        children: [
+                          _thumb(
+                            size: 60,
+                            enabled: _controlsEnabled && !_isSelectingImagesForSettings,
+                            selected: sel,
+                            number: i + 1,
+                            child: Image.file(
+                              File(path),
+                              fit: BoxFit.cover,
+                              cacheWidth: 160,
+                            ),
+                            onTap: _isSelectingImagesForSettings
+                                ? () {
+                                    setState(() {
+                                      if (_selectedImagePathsForSettings.contains(path)) {
+                                        _selectedImagePathsForSettings.remove(path);
+                                      } else {
+                                        _selectedImagePathsForSettings.add(path);
+                                      }
+                                    });
+                                  }
+                                : () => _selectPreview(i),
+                            onRemove: _isSelectingImagesForSettings
+                                ? null
+                                : () {
+                                    _previewToken++;
+                                    setState(() {
+                                      _photoPaths.removeAt(i);
+                                      _previews.remove(path);
+                                      _renderedVersion.remove(path);
+                                      _previewFailed.remove(path);
+                                    });
+                                    _previewPhoto.remove(path);
+                                    File(path).delete().ignore();
+                                    _kickPreview();
+                                  },
+                          ),
+                          if (_isSelectingImagesForSettings)
+                            Positioned(
+                              top: 4,
+                              right: 4,
+                              child: Container(
+                                decoration: const BoxDecoration(
+                                  color: Colors.black54,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Checkbox(
+                                  value: isSelectedForSettings,
+                                  onChanged: (_) {
+                                    setState(() {
+                                      if (_selectedImagePathsForSettings.contains(path)) {
+                                        _selectedImagePathsForSettings.remove(path);
+                                      } else {
+                                        _selectedImagePathsForSettings.add(path);
+                                      }
+                                    });
+                                  },
+                                  activeColor: scheme.primary,
+                                  checkColor: Colors.white,
+                                  side: BorderSide(color: scheme.outline, width: 2),
+                                ),
+                              ),
+                            ),
+                        ],
                       );
                     },
                   ),
@@ -4836,6 +4890,62 @@ class _HomePageState extends State<HomePage> {
         ],
       ),
     );
+  }
+
+  /// Apply the current image's special settings to all selected images.
+  Future<void> _applySettingsToSelectedImages() async {
+    if (_selectedImagePathsForSettings.isEmpty) return;
+    final scheme = Theme.of(context).colorScheme;
+    final paths = _filteredPhotoPaths;
+    if (paths.isEmpty) return;
+    final idx = _previewIndex.clamp(0, paths.length - 1);
+    final currentPath = paths[idx];
+    final currentSettings = _imageSettingsFor(currentPath);
+
+    // Only apply if current image has special settings enabled
+    if (!currentSettings.enabled) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text(
+              'A imagem atual não tem configurações especiais ativadas.',
+              style: TextStyle(color: Colors.white),
+            ),
+            backgroundColor: const Color(0xFFFF9800),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+      return;
+    }
+
+    int applied = 0;
+    for (final path in _selectedImagePathsForSettings) {
+      if (path == currentPath) continue; // Skip current image
+      _setImageSettings(path, currentSettings);
+      applied++;
+    }
+
+    // Exit selection mode
+    setState(() {
+      _isSelectingImagesForSettings = false;
+      _selectedImagePathsForSettings.clear();
+    });
+
+    _schedulePreview();
+
+    if (mounted && applied > 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Configurações aplicadas a $applied imagem(ns).',
+            style: const TextStyle(color: Colors.white),
+          ),
+          backgroundColor: const Color(0xFF2E7D32),
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
   }
 
   Widget _textsSection() {
