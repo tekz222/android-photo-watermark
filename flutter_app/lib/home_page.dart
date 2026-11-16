@@ -348,6 +348,51 @@ class _HomePageState extends State<HomePage> {
         return count;
       }
 
+      // Helper: check if exactly N logos fit starting from startIdx
+      bool _checkNFitBottom(int startIdx, int n) {
+        double currentRightEdge = edgeMarginPx;
+        bool usedCorner = false;
+        final mainSectionRightEdge = photoWidth * 0.8 - edgeMarginPx;
+        final cornerSectionRightEdge = photoWidth - edgeMarginPx;
+        final cornerSectionLeftEdge = photoWidth * 0.8 - edgeMarginPx;
+        for (int i = startIdx; i < startIdx + n && i < allLogos.length; i++) {
+          final logoWidth = logoWidths[i];
+          final count = i - startIdx;
+          final neededRightEdge = currentRightEdge + (count == 0 ? 0 : gapPx) + logoWidth;
+          if (neededRightEdge <= mainSectionRightEdge) {
+            currentRightEdge = neededRightEdge;
+          } else if (!usedCorner && neededRightEdge <= cornerSectionRightEdge) {
+            final logoLeftEdge = neededRightEdge - logoWidth;
+            if (logoLeftEdge >= cornerSectionLeftEdge) {
+              currentRightEdge = neededRightEdge;
+              usedCorner = true;
+            } else {
+              return false;
+            }
+          } else {
+            return false;
+          }
+        }
+        return true;
+      }
+
+      // Helper: check if exactly N logos fit in top row starting from startIdx
+      bool _checkNFitTop(int startIdx, int n) {
+        double currentRightEdge = leftMarginPx;
+        final topSectionRightEdge = photoWidth * 0.8 - edgeMarginPx;
+        for (int i = startIdx; i < startIdx + n && i < allLogos.length; i++) {
+          final logoWidth = logoWidths[i];
+          final count = i - startIdx;
+          final neededRightEdge = currentRightEdge + (count == 0 ? 0 : gapPx) + logoWidth;
+          if (neededRightEdge <= topSectionRightEdge) {
+            currentRightEdge = neededRightEdge;
+          } else {
+            return false;
+          }
+        }
+        return true;
+      }
+
       final totalLogos = allLogos.length;
 
       // STEP 1: Try 1 set first
@@ -397,36 +442,19 @@ class _HomePageState extends State<HomePage> {
       int remaining = totalLogos - logosInBottoms;
 
       // Second pass: try to improve bottom filling by moving logos from top pool
-      // Check if Set A bottom can fit more
-      int extraA = 0;
-      while (extraA < remaining) {
-        int testBottomA = bottomA + extraA + 1;
-        // Check if this fits in Set A bottom (using logos from index bottomA + extraA)
-        int fit = _fitCountBottom(bottomA + extraA);
-        if (fit >= extraA + 1) {
-          extraA++;
-        } else {
-          break;
-        }
+      // Check if Set A bottom can fit more (check from index 0)
+      while (remaining > 0 && _checkNFitBottom(0, bottomA + 1)) {
+        bottomA++;
+        remaining--;
+        logosInBottoms++;
       }
 
-      // Check if Set B bottom can fit more (from remaining after extraA)
-      int remainingAfterExtraA = remaining - extraA;
-      int extraB = 0;
-      while (extraB < remainingAfterExtraA) {
-        int testBottomB = bottomB + extraB + 1;
-        int fit = _fitCountBottom(bottomA + extraA + bottomB + extraB);
-        if (fit >= extraB + 1) {
-          extraB++;
-        } else {
-          break;
-        }
+      // Check if Set B bottom can fit more (check from index bottomA)
+      while (remaining > 0 && _checkNFitBottom(bottomA, bottomB + 1)) {
+        bottomB++;
+        remaining--;
+        logosInBottoms++;
       }
-
-      bottomA += extraA;
-      bottomB += extraB;
-      logosInBottoms = bottomA + bottomB;
-      remaining = totalLogos - logosInBottoms;
 
       // Fill TOP rows EQUALLY (same count per set, or differ by 1 if odd remaining)
       // Max top that fits in top row (must not touch corner logo)
