@@ -2,7 +2,3 @@
 /.idea
 *.iml
 /build
-# Downloaded release builds — never commit binaries.
-*.zip
-*.apk
-*.ipa
