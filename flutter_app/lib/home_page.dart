@@ -102,6 +102,9 @@ class _HomePageState extends State<HomePage> {
   // Used to ensure consistent logo sizing across photos of different dimensions.
   double? _autoReferenceShortestSide;
 
+  // Photo dimensions cache (width, height, shortestSide) - avoids re-reading files
+  final Map<String, (int, int, int)> _photoDimensionsCache = {};
+
   // Getters delegating to active project
   Project get _p => _projectManager.activeProject;
   List<String> get _photoPaths => _p.photoPaths;
@@ -144,15 +147,15 @@ class _HomePageState extends State<HomePage> {
     if (allLogos.isEmpty || _photoPaths.isEmpty) return true;
 
     // Calculate minimum available width across ALL photos to ensure logos fit on every photo
+    // Use cached dimensions to avoid re-reading files
     double minPhotoWidth = double.infinity;
     double minShortestSide = double.infinity;
     for (final path in _photoPaths) {
-      final bytes = await File(path).readAsBytes();
-      final decoded = img.decodeImage(bytes);
-      if (decoded != null) {
-        final w = decoded.width.toDouble();
-        final h = decoded.height.toDouble();
-        final s = math.min(w, h);
+      final dims = await _getPhotoDimensions(path);
+      if (dims != null) {
+        final w = dims.$1.toDouble();
+        final h = dims.$2.toDouble();
+        final s = dims.$3.toDouble();
         if (w < minPhotoWidth) minPhotoWidth = w;
         if (s < minShortestSide) minShortestSide = s;
       }
@@ -1134,6 +1137,7 @@ class _HomePageState extends State<HomePage> {
         _textSrc.clear();
         _textRatio.clear();
         _textSigCache.clear();
+        _photoDimensionsCache.clear();
       });
       _worker.clearCache();
 
@@ -1782,6 +1786,24 @@ class _HomePageState extends State<HomePage> {
       if (sel - d >= 0) order.add(_photoPaths[sel - d]);
     }
     return order;
+  }
+
+/// Get photo dimensions (width, height, shortestSide) from cache or read from file.
+  Future<(int, int, int)?> _getPhotoDimensions(String path) async {
+    final cached = _photoDimensionsCache[path];
+    if (cached != null) return cached;
+    try {
+      final bytes = await File(path).readAsBytes();
+      final decoded = img.decodeImage(bytes);
+      if (decoded != null) {
+        final w = decoded.width;
+        final h = decoded.height;
+        final s = math.min(w, h);
+        _photoDimensionsCache[path] = (w, h, s);
+        return (w, h, s);
+      }
+    } catch (_) {}
+    return null;
   }
 
   Future<void> _recomputePreviews() async {
@@ -3372,6 +3394,7 @@ class _HomePageState extends State<HomePage> {
                                       _previewFailed.remove(path);
                                     });
                                     _previewPhoto.remove(path);
+                                    _photoDimensionsCache.remove(path);
                                     File(path).delete().ignore();
                                     _kickPreview();
                                   },
