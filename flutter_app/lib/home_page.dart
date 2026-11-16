@@ -5612,46 +5612,67 @@ class _HomePageState extends State<HomePage> {
                         cursor: SystemMouseCursors.zoomIn,
                         child: GestureDetector(
                           onTap: () => _openFullscreen(idx),
-                          child: Stack(
-                            fit: StackFit.expand,
-                            children: [
-                              picture,
-                              // Margin visualization overlay (0.5% edge margins on bottom row)
-                              if (_showMarginOverlay && render != null && _hasAnyContent) ...[
-                                // Left margin strip (0.5% of width)
-                                Positioned(
-                                  left: 0,
-                                  bottom: 0,
-                                  width: MediaQuery.of(context).size.width * 0.005,
-                                  child: Container(
-                                    color: Colors.red.withValues(alpha: 0.3),
-                                    child: Center(
-                                      child: RotatedBox(
-                                        quarterTurns: 3,
-                                        child: Text('0.5% margin',
-                                            style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                          child: LayoutBuilder(
+                            builder: (context, constraints) {
+                              // Calculate the actual picture size (BoxFit.contain in AspectRatio)
+                              final pictureAspect = render?.aspect ?? 1.0;
+                              double pictureWidth, pictureHeight;
+                              if (constraints.maxWidth / constraints.maxHeight > pictureAspect) {
+                                // Constrained by height
+                                pictureHeight = constraints.maxHeight;
+                                pictureWidth = pictureHeight * pictureAspect;
+                              } else {
+                                // Constrained by width
+                                pictureWidth = constraints.maxWidth;
+                                pictureHeight = pictureWidth / pictureAspect;
+                              }
+                              final marginPx = pictureWidth * 0.005; // 0.5% of picture width
+                              final bottomRowHeight = pictureHeight * 0.15; // Approx bottom row height (15% of photo height)
+
+                              return Stack(
+                                fit: StackFit.expand,
+                                children: [
+                                  picture,
+                                  // Margin visualization overlay (0.5% edge margins on bottom row)
+                                  if (_showMarginOverlay && render != null && _hasAnyContent) ...[
+                                    // Left margin strip
+                                    Positioned(
+                                      left: (constraints.maxWidth - pictureWidth) / 2,
+                                      bottom: (constraints.maxHeight - pictureHeight) / 2,
+                                      width: marginPx,
+                                      height: bottomRowHeight,
+                                      child: Container(
+                                        color: Colors.red.withValues(alpha: 0.3),
+                                        child: Center(
+                                          child: RotatedBox(
+                                            quarterTurns: 3,
+                                            child: Text('0.5%',
+                                                style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                                          ),
+                                        ),
                                       ),
                                     ),
-                                  ),
-                                ),
-                                // Right margin strip (0.5% of width)
-                                Positioned(
-                                  right: 0,
-                                  bottom: 0,
-                                  width: MediaQuery.of(context).size.width * 0.005,
-                                  child: Container(
-                                    color: Colors.red.withValues(alpha: 0.3),
-                                    child: Center(
-                                      child: RotatedBox(
-                                        quarterTurns: 3,
-                                        child: Text('0.5% margin',
-                                            style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                                    // Right margin strip
+                                    Positioned(
+                                      right: (constraints.maxWidth - pictureWidth) / 2,
+                                      bottom: (constraints.maxHeight - pictureHeight) / 2,
+                                      width: marginPx,
+                                      height: bottomRowHeight,
+                                      child: Container(
+                                        color: Colors.red.withValues(alpha: 0.3),
+                                        child: Center(
+                                          child: RotatedBox(
+                                            quarterTurns: 3,
+                                            child: Text('0.5%',
+                                                style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                                          ),
+                                        ),
                                       ),
                                     ),
-                                  ),
-                                ),
-                              ],
-                            ],
+                                  ],
+                                ],
+                              );
+                            },
                           ),
                         ),
                       ),
