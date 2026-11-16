@@ -378,50 +378,15 @@ class _HomePageState extends State<HomePage> {
 
       // STEP 2: Need 2 sets.
       // ALGORITHM: Maximize bottom usage first, then distribute remaining to tops equally.
-      // 1. Fill both bottoms maximally (sequential from logo list)
-      // 2. Try to pull more logos from TOP POOL into bottoms if space exists
-      // 3. Distribute remaining equally to tops
+      // 1. Fill both bottoms MAXIMALLY first (sequential from logo list)
+      // 2. Distribute remaining equally to tops
 
-      // First pass: fill both bottoms sequentially
+      // Fill Set A bottom maximally
       int bottomA = _fitCountBottom(0);
+      // Fill Set B bottom maximally from remaining
       int bottomB = _fitCountBottom(bottomA);
       int logosInBottoms = bottomA + bottomB;
       int remaining = totalLogos - logosInBottoms;
-
-      // Second pass: try to improve bottom filling by pulling logos from TOP POOL
-      // The top pool starts at index 'logosInBottoms'
-      // We'll try each remaining logo to see if it fits in either bottom row
-      final maxRowWidth = photoWidth - 2 * edgeMarginPx;
-      bool improved = true;
-      while (improved && remaining > 0) {
-        improved = false;
-        // Try to add a logo from top pool to Set A bottom
-        for (int i = logosInBottoms; i < totalLogos; i++) {
-          // Check if this logo fits in Set A bottom (which currently has bottomA logos from indices 0..bottomA-1)
-          // We need to check if bottomA + 1 logos fit when we insert this logo at the end
-          final testWidthA = _rowWidthFor(0, bottomA) + (bottomA == 0 ? 0 : gapPx) + logoWidths[i];
-          if (testWidthA <= maxRowWidth) {
-            bottomA++;
-            remaining--;
-            logosInBottoms++;
-            improved = true;
-            break;
-          }
-        }
-        if (improved) continue;
-        // Try to add a logo from top pool to Set B bottom
-        for (int i = logosInBottoms; i < totalLogos; i++) {
-          // Check if this logo fits in Set B bottom (which currently has bottomB logos from indices bottomA..bottomA+bottomB-1)
-          final testWidthB = _rowWidthFor(bottomA, bottomB) + (bottomB == 0 ? 0 : gapPx) + logoWidths[i];
-          if (testWidthB <= maxRowWidth) {
-            bottomB++;
-            remaining--;
-            logosInBottoms++;
-            improved = true;
-            break;
-          }
-        }
-      }
 
       // Fill TOP rows EQUALLY (same count per set, or differ by 1 if odd remaining)
       // Max top that fits in top row (must not touch corner logo)
@@ -435,7 +400,7 @@ class _HomePageState extends State<HomePage> {
         topPerSet++; // Give the extra logo to Set A top (differ by 1 max)
       }
 
-      // Build the two sets
+      // Build the two sets - logos are taken sequentially from the list
       int logoIdx = 0;
       final setABottom = <LogoItem>[];
       final setBBottom = <LogoItem>[];
@@ -3771,26 +3736,30 @@ class _HomePageState extends State<HomePage> {
                 ),
               const SizedBox(width: 12),
               if (allLogos.isNotEmpty)
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: scheme.primaryContainer,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: scheme.primary.withOpacity(0.3), width: 1.5),
-                    boxShadow: [
-                      BoxShadow(
-                        color: scheme.primary.withOpacity(0.1),
-                        blurRadius: 4,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
+                Flexible(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: scheme.primaryContainer,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: scheme.primary.withOpacity(0.3), width: 1.5),
+                      boxShadow: [
+                        BoxShadow(
+                          color: scheme.primary.withOpacity(0.1),
+                          blurRadius: 4,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: Text(isSingle
+                        ? 'Total: ${allLogos.length}  |  Base: ${_bottomLogos.length}  |  Topo: ${_topLeftLogos.length}'
+                        : (isAutoMultiSet
+                            ? 'Sets: ${_logoSetCount}  |  Total: ${allLogos.length}  |  Set A: ${_bottomPerSetCount} base + ${_topPerSetCount} topo = ${_bottomPerSetCount + _topPerSetCount}  |  Set B: ${setBBottom.length} base + ${setBTop.length} topo = ${setBBottom.length + setBTop.length}'
+                            : 'Total: ${allLogos.length}  |  A: ${setABottom.length} base + ${setATop.length} topo = ${setABottom.length + setATop.length}  |  B: ${setBBottom.length} base + ${setBTop.length} topo = ${setBBottom.length + setBTop.length}'),
+                        style: small?.copyWith(fontSize: 13, fontWeight: FontWeight.w700, color: scheme.onPrimaryContainer, letterSpacing: 0.2),
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1),
                   ),
-                  child: Text(isSingle
-                      ? 'Total: ${allLogos.length}  |  Base: ${_bottomLogos.length}  |  Topo: ${_topLeftLogos.length}'
-                      : (isAutoMultiSet
-                          ? 'Sets: ${_logoSetCount}  |  Total: ${allLogos.length}  |  Set A: ${_bottomPerSetCount} base + ${_topPerSetCount} topo = ${_bottomPerSetCount + _topPerSetCount}  |  Set B: ${setBBottom.length} base + ${setBTop.length} topo = ${setBBottom.length + setBTop.length}'
-                          : 'Total: ${allLogos.length}  |  A: ${setABottom.length} base + ${setATop.length} topo = ${setABottom.length + setATop.length}  |  B: ${setBBottom.length} base + ${setBTop.length} topo = ${setBBottom.length + setBTop.length}'),
-                      style: small?.copyWith(fontSize: 13, fontWeight: FontWeight.w700, color: scheme.onPrimaryContainer, letterSpacing: 0.2)),
                 ),
             ],
           ),
