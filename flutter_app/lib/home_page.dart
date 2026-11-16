@@ -385,24 +385,60 @@ class _HomePageState extends State<HomePage> {
       }
 
       // STEP 2: Need 2 sets.
-      // Fill Set A bottom MAXIMALLY
+      // ALGORITHM: Maximize bottom usage first, then distribute remaining to tops equally.
+      // 1. Fill both bottoms maximally (sequential from logo list)
+      // 2. Try to pull more logos from top pool into bottoms if space exists
+      // 3. Distribute remaining equally to tops
+
+      // First pass: fill both bottoms sequentially
       int bottomA = _fitCountBottom(0);
-      // Fill Set B bottom MAXIMALLY from remaining logos
       int bottomB = _fitCountBottom(bottomA);
-
-      // Total logos used in bottoms
       int logosInBottoms = bottomA + bottomB;
-
-      // Remaining logos for top rows
       int remaining = totalLogos - logosInBottoms;
 
-      // Fill TOP rows EQUALLY (same count per set)
-      // Max top that fits in top row (same for both sets since they use same space, must not touch corner)
-      int maxTopFit = _fitCountTop(logosInBottoms);
+      // Second pass: try to improve bottom filling by moving logos from top pool
+      // Check if Set A bottom can fit more
+      int extraA = 0;
+      while (extraA < remaining) {
+        int testBottomA = bottomA + extraA + 1;
+        // Check if this fits in Set A bottom (using logos from index bottomA + extraA)
+        int fit = _fitCountBottom(bottomA + extraA);
+        if (fit >= extraA + 1) {
+          extraA++;
+        } else {
+          break;
+        }
+      }
 
-      // Equal tops: limited by remaining logos / 2 and space available
+      // Check if Set B bottom can fit more (from remaining after extraA)
+      int remainingAfterExtraA = remaining - extraA;
+      int extraB = 0;
+      while (extraB < remainingAfterExtraA) {
+        int testBottomB = bottomB + extraB + 1;
+        int fit = _fitCountBottom(bottomA + extraA + bottomB + extraB);
+        if (fit >= extraB + 1) {
+          extraB++;
+        } else {
+          break;
+        }
+      }
+
+      bottomA += extraA;
+      bottomB += extraB;
+      logosInBottoms = bottomA + bottomB;
+      remaining = totalLogos - logosInBottoms;
+
+      // Fill TOP rows EQUALLY (same count per set, or differ by 1 if odd remaining)
+      // Max top that fits in top row (must not touch corner logo)
+      int maxTopFit = _fitCountTop(logosInBottoms);
       int maxEqualTop = (remaining / 2).floor();
       int topPerSet = maxEqualTop.clamp(0, maxTopFit);
+
+      // After equal tops, if there's 1 remaining logo (odd total), give it to Set A top
+      int remainingAfterTops = remaining - (topPerSet * 2);
+      if (remainingAfterTops > 0 && topPerSet < maxTopFit) {
+        topPerSet++; // Give the extra logo to Set A top (differ by 1 max)
+      }
 
       // Build the two sets
       int logoIdx = 0;
@@ -419,12 +455,13 @@ class _HomePageState extends State<HomePage> {
       for (int i = 0; i < bottomB && logoIdx < allLogos.length; i++) {
         setBBottom.add(allLogos[logoIdx++]);
       }
-      // Fill Set A top (equal count)
+      // Fill Set A top
       for (int i = 0; i < topPerSet && logoIdx < allLogos.length; i++) {
         setATop.add(allLogos[logoIdx++]);
       }
-      // Fill Set B top (equal count)
-      for (int i = 0; i < topPerSet && logoIdx < allLogos.length; i++) {
+      // Fill Set B top (may be one less if odd total)
+      int topB = (remaining - topPerSet).clamp(0, topPerSet);
+      for (int i = 0; i < topB && logoIdx < allLogos.length; i++) {
         setBTop.add(allLogos[logoIdx++]);
       }
 
@@ -433,7 +470,7 @@ class _HomePageState extends State<HomePage> {
       final sets = [setA, setB];
 
       int totalA = bottomA + topPerSet;
-      int totalB = bottomB + topPerSet;
+      int totalB = bottomB + topB;
       int totalPlaced = totalA + totalB;
 
       setState(() {
@@ -3717,12 +3754,19 @@ class _HomePageState extends State<HomePage> {
                 ),
               const SizedBox(width: 12),
               if (allLogos.isNotEmpty)
-                Text(isSingle
-                    ? 'Base: ${_bottomLogos.length} | Topo: ${_topLeftLogos.length}'
-                    : (isAutoMultiSet
-                        ? 'Sets: ${_logoSetCount} | Base/set: ${_bottomPerSetCount} | Topo/set: ${_topPerSetCount}'
-                        : 'A: Base ${setABottom.length} Topo ${setATop.length} | B: Base ${setBBottom.length} Topo ${setBTop.length}'),
-                    style: small),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: scheme.primaryContainer,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(isSingle
+                      ? 'Total: ${allLogos.length}  |  Base: ${_bottomLogos.length}  |  Topo: ${_topLeftLogos.length}'
+                      : (isAutoMultiSet
+                          ? 'Sets: ${_logoSetCount}  |  Total: ${allLogos.length}  |  Set A: ${_bottomPerSetCount} base + ${_topPerSetCount} topo = ${_bottomPerSetCount + _topPerSetCount}  |  Set B: ${setBBottom.length} base + ${setBTop.length} topo = ${setBBottom.length + setBTop.length}'
+                          : 'Total: ${allLogos.length}  |  A: ${setABottom.length} base + ${setATop.length} topo = ${setABottom.length + setATop.length}  |  B: ${setBBottom.length} base + ${setBTop.length} topo = ${setBBottom.length + setBTop.length}'),
+                      style: small?.copyWith(fontWeight: FontWeight.w600, color: scheme.onPrimaryContainer)),
+                ),
             ],
           ),
           const SizedBox(height: 6),
