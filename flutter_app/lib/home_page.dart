@@ -178,8 +178,7 @@ class _HomePageState extends State<HomePage> {
     // For centered bottom logos: use minimal margins (max 10px each side)
     final edgeMarginPx = shortestSide * 0.01; // 1% margin on each side
     final leftMarginPx = _leftMargin / 100.0 * shortestSide;
-    // Top row: starts at leftMarginPx, ends at photoWidth*0.8 - edgeMarginPx (main section right edge)
-    final availableWidthTop = photoWidth * 0.8 - edgeMarginPx - leftMarginPx;
+    // Top row will stop before corner logo (calculated in _fitCountTop)
     final gapPx = _logoSpacing / 100.0 * shortestSide;
 
     // Corner section: right 20% of photo width reserved for main corner logo
@@ -188,14 +187,20 @@ class _HomePageState extends State<HomePage> {
     final mainSectionWidth = photoWidth * 0.8 - 2 * edgeMarginPx;
     final cornerSectionWidth = photoWidth * 0.2;
 
+    // Pre-compute logo widths at current size for all modes
+    final logoWidths = <double>[];
+    for (int i = 0; i < allLogos.length; i++) {
+      final ar = logoAspectRatios[i];
+      logoWidths.add(ar * shortestSide * _logoSize / 100.0);
+    }
+
     // Helper: calculate how many logos fit in a row at current size
     int _fitCount(int startIdx, double availableWidth) {
       double currentWidth = 0;
       int count = 0;
       for (int i = startIdx; i < allLogos.length; i++) {
-        final logoAr = logoAspectRatios[i];
-        final logoWidthAtCurrentHeight = logoAr * shortestSide * _logoSize / 100.0;
-        final neededWidth = currentWidth + logoWidthAtCurrentHeight + (count == 0 ? 0 : gapPx);
+        final logoWidth = logoWidths[i];
+        final neededWidth = currentWidth + logoWidth + (count == 0 ? 0 : gapPx);
         if (neededWidth <= availableWidth) {
           currentWidth = neededWidth;
           count++;
@@ -218,9 +223,8 @@ class _HomePageState extends State<HomePage> {
       final mainSectionRightEdge = photoWidth * 0.8 - edgeMarginPx;
       final cornerSectionRightEdge = photoWidth - edgeMarginPx;
       for (int i = startIdx; i < allLogos.length; i++) {
-        final logoAr = logoAspectRatios[i];
-        final logoWidthAtCurrentHeight = logoAr * shortestSide * _logoSize / 100.0;
-        final neededWidth = currentWidth + logoWidthAtCurrentHeight + (count == 0 ? 0 : gapPx);
+        final logoWidth = logoWidths[i];
+        final neededWidth = currentWidth + logoWidth + (count == 0 ? 0 : gapPx);
 
         // Check if we can fit in main section
         if (neededWidth <= mainSectionRightEdge) {
@@ -251,7 +255,8 @@ class _HomePageState extends State<HomePage> {
       // Use main section + corner section for bottom row to maximize filling
       int bottomCount = _fitCountWithCorner(0, mainSectionWidth, cornerSectionWidth);
       if (bottomCount == 0 && allLogos.isNotEmpty) bottomCount = 1;
-      int topCount = _fitCount(bottomCount, availableWidthTop);
+      // Use _fitCountTop which accounts for actual corner logo position
+      int topCount = _fitCountTop(bottomCount, logoWidths);
 
       final bottomLogos = allLogos.take(bottomCount).toList();
       final topLogos = allLogos.skip(bottomCount).take(topCount).toList();
@@ -288,13 +293,6 @@ class _HomePageState extends State<HomePage> {
       // 4. Then fill TOP rows equally (same count per set) - must NOT touch corner logo
       // 5. Corner logo reserved ~20% section on top-right - top logos stop at 80% mark
 
-      // Calculate individual logo widths at current size using pre-computed aspect ratios
-      final logoWidths = <double>[];
-      for (int i = 0; i < allLogos.length; i++) {
-        final ar = logoAspectRatios[i];
-        logoWidths.add(ar * shortestSide * _logoSize / 100.0);
-      }
-
       // Helper: calculate total row width for logos [startIdx, startIdx + n)
       // Returns total width including gaps, or -1 if exceeds available width
       double _rowWidthFor(int startIdx, int n) {
@@ -328,31 +326,11 @@ class _HomePageState extends State<HomePage> {
         return count;
       }
 
-      // Helper: count how many fit in top row (must NOT overlap corner logo)
-      // Top row is LEFT-ALIGNED at leftMarginPx, stops at photoWidth*0.8 - edgeMarginPx (80% mark)
-      // Corner logo occupies ~20% on the right (top-right), so top logos must not enter that area.
-      int _fitCountTop(int startIdx) {
-        double currentRightEdge = leftMarginPx;
-        int count = 0;
-        final topSectionRightEdge = photoWidth * 0.8 - edgeMarginPx; // Stop before corner section
-        for (int i = startIdx; i < allLogos.length; i++) {
-          final logoWidth = logoWidths[i];
-          final neededRightEdge = currentRightEdge + (count == 0 ? 0 : gapPx) + logoWidth;
-          if (neededRightEdge <= topSectionRightEdge) {
-            currentRightEdge = neededRightEdge;
-            count++;
-          } else {
-            break;
-          }
-        }
-        return count;
-      }
-
       final totalLogos = allLogos.length;
 
       // STEP 1: Try 1 set first
       int bottomPerSet1 = _fitCountBottom(0);
-      int topPerSet1 = _fitCountTop(bottomPerSet1);
+      int topPerSet1 = _fitCountTop(bottomPerSet1, logoWidths);
       int placedIn1Set = bottomPerSet1 + topPerSet1;
 
       if (placedIn1Set >= totalLogos) {
@@ -398,7 +376,7 @@ class _HomePageState extends State<HomePage> {
 
       // Fill TOP rows EQUALLY (same count per set, or differ by 1 if odd remaining)
       // Max top that fits in top row (must not touch corner logo)
-      int maxTopFit = _fitCountTop(logosInBottoms);
+      int maxTopFit = _fitCountTop(logosInBottoms, logoWidths);
       int maxEqualTop = (remaining / 2).floor();
       int topPerSet = maxEqualTop.clamp(0, maxTopFit);
 
@@ -477,7 +455,8 @@ class _HomePageState extends State<HomePage> {
       final bottomPerRow = _fitCountWithCorner(0, mainSectionWidth, cornerSectionWidth);
 
       // Step 2: Calculate capacity for ONE top row (start from 0, each set is independent)
-      final topPerRow = _fitCount(0, availableWidthTop);
+      // Use _fitCountTop which accounts for actual corner logo position
+      final topPerRow = _fitCountTop(0, logoWidths);
 
       // Maximum logos per set: bottomPerRow (bottom) + topPerRow (top)
       final maxPerSet = bottomPerRow + topPerRow;
@@ -729,6 +708,59 @@ class _HomePageState extends State<HomePage> {
   // Per-image settings getter/setter
   ImageSettings _imageSettingsFor(String photoPath) =>
       _p.imageSettings[photoPath] ?? ImageSettings();
+
+  /// Calculate how many top-left logos fit in a row before hitting the corner logo.
+  /// Uses actual corner logo position (same height as top logos) + 1% gap.
+  /// [startIdx] is the index in the combined logo list to start from.
+  /// [logoWidths] are pre-computed widths of all logos at current _logoSize.
+  int _fitCountTop(int startIdx, List<double> logoWidths) {
+    if (_photoPaths.isEmpty) return 0;
+
+    // Calculate minimum shortest side across all photos
+    double minShortestSide = double.infinity;
+    for (final path in _photoPaths) {
+      final dims = _photoDimensionsCache[path];
+      if (dims != null && dims.$3.toDouble() < minShortestSide) {
+        minShortestSide = dims.$3.toDouble();
+      }
+    }
+    if (minShortestSide == double.infinity) return 0;
+    final shortestSide = minShortestSide;
+
+    // Calculate dimensions using min photo to guarantee fit on ALL photos
+    final photoWidth = _photoDimensionsCache[_photoPaths.first]?.$1.toDouble() ?? shortestSide;
+    final leftMarginPx = _leftMargin / 100.0 * shortestSide;
+    final gapPx = _logoSpacing / 100.0 * shortestSide;
+
+    double currentRightEdge = leftMarginPx;
+    int count = 0;
+
+    // Calculate corner logo's left edge (if corner logo exists).
+    // Corner logo uses SAME height as top logos (_logoSize).
+    double cornerLogoLeftEdge = photoWidth; // default: no corner logo
+    if (logoWidths.isNotEmpty) {
+      // Use first logo's aspect ratio as estimate for corner logo
+      final cornerAspectRatio = logoWidths.isNotEmpty ? (logoWidths[0] / (shortestSide * _logoSize / 100.0)) : 1.0;
+      final cornerLogoWidth = cornerAspectRatio * shortestSide * _logoSize / 100.0;
+      final marginRightPx = _cornerMarginRight / 100.0 * shortestSide;
+      cornerLogoLeftEdge = photoWidth - marginRightPx - cornerLogoWidth;
+    }
+
+    final gapToCorner = shortestSide * 0.01; // 1% gap
+    final topSectionRightEdge = cornerLogoLeftEdge - gapToCorner;
+
+    for (int i = startIdx; i < logoWidths.length; i++) {
+      final logoWidth = logoWidths[i];
+      final neededRightEdge = currentRightEdge + (count == 0 ? 0 : gapPx) + logoWidth;
+      if (neededRightEdge <= topSectionRightEdge) {
+        currentRightEdge = neededRightEdge;
+        count++;
+      } else {
+        break;
+      }
+    }
+    return count;
+  }
 
   // Dual logo sets getters/setters
   LogoSetMode get _logoSetMode => _p.logoSetMode;

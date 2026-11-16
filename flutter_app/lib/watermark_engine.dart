@@ -376,6 +376,26 @@ Uint8List renderWatermark(WatermarkRequest r, {DecodedCache? cache}) {
   final topH = shortest * r.effectiveTopLeftHeight();
   final topRowTop = shortest * r.effectiveTopLeftTop();
   final topRowStartX = shortest * r.effectiveTopLeftLeft();
+
+  // Calculate corner logo position FIRST (if present) so top row can stop before it.
+  // Corner logo uses the SAME height as top logos for consistent sizing.
+  int cornerLogoLeftEdge = photo.width; // default: no corner logo, use full width
+  if (r.cornerLogo != null) {
+    final cornerLogoImg = decode(r.cornerLogo!);
+    if (cornerLogoImg != null) {
+      // Use same height as top logos (effectiveTopLeftHeight) for consistent sizing
+      final cornerH = (shortest * r.effectiveTopLeftHeight()).round().clamp(1, photo.height);
+      final resizedCorner = _resize(cornerLogoImg, height: cornerH);
+      final marginRight = (shortest * r.effectiveCornerMarginRight()).round();
+      // Corner logo's left edge = photo.width - marginRight - cornerWidth
+      cornerLogoLeftEdge = (photo.width - marginRight - resizedCorner!.width).round();
+    }
+  }
+
+  // Top row stops before corner logo with a small gap (1% of shortest side)
+  final gapToCorner = (shortest * 0.01).round();
+  final topRowMaxX = (r.cornerLogo != null) ? (cornerLogoLeftEdge - gapToCorner) : cornerSectionLeft;
+
   _drawRow(
     photo,
     r.topLeftLogos,
@@ -385,7 +405,7 @@ Uint8List renderWatermark(WatermarkRequest r, {DecodedCache? cache}) {
     top: topRowTop,
     opacity: r.rowOpacity,
     gap: topGap,
-    maxX: cornerSectionLeft, // Prevent top row from overlapping corner logo area
+    maxX: topRowMaxX.toDouble(),
   );
 
   // Extra logo for top-left row: below the leftmost logo.
@@ -491,7 +511,8 @@ Uint8List renderWatermark(WatermarkRequest r, {DecodedCache? cache}) {
   if (corner != null) {
     final logo = decode(corner);
     if (logo != null) {
-      final h = (shortest * r.effectiveCornerHeight()).round().clamp(1, photo.height);
+      // Use SAME height as top logos for consistent sizing
+      final h = (shortest * r.effectiveTopLeftHeight()).round().clamp(1, photo.height);
       final resized = _resize(logo, height: h);
       final marginTop = shortest * r.effectiveCornerMarginTop();
       final marginRight = shortest * r.effectiveCornerMarginRight();
