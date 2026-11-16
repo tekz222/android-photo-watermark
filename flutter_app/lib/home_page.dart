@@ -288,37 +288,32 @@ class _HomePageState extends State<HomePage> {
         logoWidths.add(ar * shortestSide * _logoSize / 100.0);
       }
 
-      // Helper: count how many fit in bottom row (can use corner section up to edgeMarginPx)
-      // Coordinate system: currentRightEdge tracks the RIGHT EDGE of the last placed logo.
-      // First logo starts at edgeMarginPx, so its right edge = edgeMarginPx + logoWidth.
-      // Main section: [edgeMarginPx, photoWidth*0.8 - edgeMarginPx]
-      // Corner section: [photoWidth*0.8 - edgeMarginPx, photoWidth - edgeMarginPx]
-      // Uses ALL available space up to photoWidth - edgeMarginPx (right margin)
+      // Helper: calculate total row width for logos [startIdx, startIdx + n)
+      // Returns total width including gaps, or -1 if exceeds available width
+      double _rowWidthFor(int startIdx, int n) {
+        if (n <= 0) return 0;
+        double w = 0;
+        for (int i = startIdx; i < startIdx + n && i < allLogos.length; i++) {
+          w += logoWidths[i];
+          if (i > startIdx) w += gapPx;
+        }
+        return w;
+      }
+
+      // Helper: count how many fit in bottom row (CENTERED render)
+      // Bottom row is centered: total row width must fit within [edgeMarginPx, photoWidth - edgeMarginPx]
+      // Max row width = photoWidth - 2 * edgeMarginPx
+      // No corner section constraint for bottom row (corner logo is at TOP-RIGHT, vertically separated)
       int _fitCountBottom(int startIdx) {
-        double currentRightEdge = edgeMarginPx;
+        double rowWidth = 0;
         int count = 0;
-        bool usedCorner = false;
-        final mainSectionRightEdge = photoWidth * 0.8 - edgeMarginPx;
-        final cornerSectionRightEdge = photoWidth - edgeMarginPx;
-        final cornerSectionLeftEdge = photoWidth * 0.8 - edgeMarginPx;
+        final maxRowWidth = photoWidth - 2 * edgeMarginPx;
         for (int i = startIdx; i < allLogos.length; i++) {
           final logoWidth = logoWidths[i];
-          final neededRightEdge = currentRightEdge + (count == 0 ? 0 : gapPx) + logoWidth;
-          // Check if logo fits in main section
-          if (neededRightEdge <= mainSectionRightEdge) {
-            currentRightEdge = neededRightEdge;
+          final neededWidth = rowWidth + (count == 0 ? 0 : gapPx) + logoWidth;
+          if (neededWidth <= maxRowWidth) {
+            rowWidth = neededWidth;
             count++;
-          }
-          // If not in main, try corner section (only if not used yet)
-          else if (!usedCorner && neededRightEdge <= cornerSectionRightEdge) {
-            final logoLeftEdge = neededRightEdge - logoWidth;
-            if (logoLeftEdge >= cornerSectionLeftEdge) {
-              currentRightEdge = neededRightEdge;
-              count++;
-              usedCorner = true;
-            } else {
-              break;
-            }
           } else {
             break;
           }
@@ -327,10 +322,8 @@ class _HomePageState extends State<HomePage> {
       }
 
       // Helper: count how many fit in top row (must NOT overlap corner logo)
-      // Top row limited to mainSectionWidth (80% of photo width = up to photoWidth*0.8 - edgeMarginPx)
-      // Corner logo occupies ~20% on the right, so top logos stop at photoWidth*0.8 - edgeMarginPx
-      // Coordinate system: currentRightEdge tracks the RIGHT EDGE of the last placed logo.
-      // First logo starts at leftMarginPx, so its right edge = leftMarginPx + logoWidth.
+      // Top row is LEFT-ALIGNED at leftMarginPx, stops at photoWidth*0.8 - edgeMarginPx (80% mark)
+      // Corner logo occupies ~20% on the right (top-right), so top logos must not enter that area.
       int _fitCountTop(int startIdx) {
         double currentRightEdge = leftMarginPx;
         int count = 0;
@@ -348,32 +341,12 @@ class _HomePageState extends State<HomePage> {
         return count;
       }
 
-      // Helper: check if exactly N logos fit starting from startIdx
+      // Helper: check if exactly N logos fit in bottom row (centered)
       bool _checkNFitBottom(int startIdx, int n) {
-        double currentRightEdge = edgeMarginPx;
-        bool usedCorner = false;
-        final mainSectionRightEdge = photoWidth * 0.8 - edgeMarginPx;
-        final cornerSectionRightEdge = photoWidth - edgeMarginPx;
-        final cornerSectionLeftEdge = photoWidth * 0.8 - edgeMarginPx;
-        for (int i = startIdx; i < startIdx + n && i < allLogos.length; i++) {
-          final logoWidth = logoWidths[i];
-          final count = i - startIdx;
-          final neededRightEdge = currentRightEdge + (count == 0 ? 0 : gapPx) + logoWidth;
-          if (neededRightEdge <= mainSectionRightEdge) {
-            currentRightEdge = neededRightEdge;
-          } else if (!usedCorner && neededRightEdge <= cornerSectionRightEdge) {
-            final logoLeftEdge = neededRightEdge - logoWidth;
-            if (logoLeftEdge >= cornerSectionLeftEdge) {
-              currentRightEdge = neededRightEdge;
-              usedCorner = true;
-            } else {
-              return false;
-            }
-          } else {
-            return false;
-          }
-        }
-        return true;
+        if (n <= 0) return true;
+        final maxRowWidth = photoWidth - 2 * edgeMarginPx;
+        final rowWidth = _rowWidthFor(startIdx, n);
+        return rowWidth >= 0 && rowWidth <= maxRowWidth;
       }
 
       // Helper: check if exactly N logos fit in top row starting from startIdx
@@ -1849,13 +1822,14 @@ class _HomePageState extends State<HomePage> {
       return;
     }
     // Ensure worker is ready before starting renders (with timeout + retry)
+    // First run may take longer for isolate startup
     try {
-      await _worker.ready().timeout(const Duration(seconds: 5));
+      await _worker.ready().timeout(const Duration(seconds: 15));
     } catch (_) {
       // Worker failed or timed out, try to restart once
       try {
         await _worker.restart();
-        await _worker.ready().timeout(const Duration(seconds: 5));
+        await _worker.ready().timeout(const Duration(seconds: 10));
       } catch (_) {
         if (mounted) setState(() => _renderingPreview = false);
         return;
@@ -1870,7 +1844,7 @@ class _HomePageState extends State<HomePage> {
     ];
     for (final e in allLogos) {
       _previewLogo[e.id] ??= await compute(downscaleImage, (e.bytes, 512, true))
-          .timeout(const Duration(seconds: 10), onTimeout: () {
+          .timeout(const Duration(seconds: 20), onTimeout: () {
         throw TimeoutException('Logo downscale timeout');
       });
       if (token != _previewToken) {
@@ -1902,7 +1876,7 @@ class _HomePageState extends State<HomePage> {
           }
           small = await compute<(Uint8List, int, bool), Uint8List>(
               downscaleImage, (full, 1280, false))
-              .timeout(const Duration(seconds: 10), onTimeout: () {
+              .timeout(const Duration(seconds: 20), onTimeout: () {
             throw TimeoutException('Photo downscale timeout');
           });
           if (token != _previewToken) {
