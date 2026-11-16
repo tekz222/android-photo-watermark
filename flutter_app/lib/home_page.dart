@@ -3183,7 +3183,6 @@ class _HomePageState extends State<HomePage> {
                       : null,
                   icon: const Icon(Icons.checklist_outlined, size: 18),
                   label: const Text('Selecionar para configs. especiais'),
-                  tooltip: 'Selecione múltiplas imagens para aplicar as configurações especiais da imagem atual',
                 ),
               ],
               if (_photoPaths.isNotEmpty && _isSelectingImagesForSettings) ...[
@@ -4538,7 +4537,7 @@ class _HomePageState extends State<HomePage> {
               child: Text('$number', style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold)),
             ),
           ),
-          if (enabled)
+          if (enabled && onRemove != null)
             Positioned(
               top: 2,
               right: 2,
@@ -6110,7 +6109,7 @@ class _HomePageState extends State<HomePage> {
 
   Widget _thumb({
     required Widget child,
-    required VoidCallback onRemove,
+    VoidCallback? onRemove,
     VoidCallback? onTap,
     bool enabled = true,
     bool selected = false,
@@ -6162,7 +6161,7 @@ class _HomePageState extends State<HomePage> {
                 ),
               ),
             ),
-          if (enabled)
+          if (enabled && onRemove != null)
             Positioned(
               top: 2,
               right: 2,
