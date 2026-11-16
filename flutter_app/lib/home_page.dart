@@ -92,6 +92,9 @@ class _HomePageState extends State<HomePage> {
   // Logo arrangement mode: manual (user controls each row) or auto (distribute all logos)
   bool _autoArrangeMode = true;
 
+  // Margin visualization overlay (shows 0.5% edge margins on bottom row)
+  bool _showMarginOverlay = false;
+
   // Preview worker (shared across projects)
   final PreviewWorker _worker = PreviewWorker();
 
@@ -168,7 +171,7 @@ class _HomePageState extends State<HomePage> {
 
     // Available widths in pixels (using min photo dimensions to guarantee fit on ALL photos)
     // For centered bottom logos: use minimal margins (max 10px each side)
-    final edgeMarginPx = math.min(10.0, shortestSide * 0.01); // max 10px or 1% of shortest side
+    final edgeMarginPx = shortestSide * 0.005; // 0.5% margin on each side
     final leftMarginPx = _leftMargin / 100.0 * shortestSide;
     // Top row: starts at leftMarginPx, ends at photoWidth*0.8 - edgeMarginPx (main section right edge)
     final availableWidthTop = photoWidth * 0.8 - edgeMarginPx - leftMarginPx;
@@ -1236,7 +1239,7 @@ class _HomePageState extends State<HomePage> {
           _cornerMarginRight = old;
         }
         _centered = settings['centered'] as bool? ?? false;
-        _logoSpacing = (settings['spacing'] as num?)?.toDouble() ?? 0.0;
+        _logoSpacing = (settings['spacing'] as num?)?.toDouble() ?? 0.5;
         _bottomGradient = settings['bottomGradient'] as bool? ?? false;
         _topGradient = settings['topGradient'] as bool? ?? false;
         _topGradientHeight = (settings['topGradientHeight'] as num?)?.toDouble() ?? 22.0;
@@ -1577,10 +1580,10 @@ class _HomePageState extends State<HomePage> {
     }
     if (totalAspectRatio == 0) return null;
 
-    // For edge-to-edge filling: use minimal margins (max 10px each side for centered)
+    // For edge-to-edge filling: use 0.5% margin on each side for centered
     // This ensures logos almost touch the edges but don't clip
     final edgeMarginPx = centered
-        ? math.min(10.0, referenceShortestSide * 0.01)
+        ? referenceShortestSide * 0.005
         : referenceShortestSide * leftMargin / 100.0;
     // Use referenceShortestSide for margin/gap calculations to be consistent with percentage base
     final mainSectionWidth = photoWidth * 0.8 - 2 * edgeMarginPx;
@@ -3734,33 +3737,6 @@ class _HomePageState extends State<HomePage> {
                   label: const Text('Limpar todas'),
                   style: OutlinedButton.styleFrom(foregroundColor: scheme.error),
                 ),
-              const SizedBox(width: 12),
-              if (allLogos.isNotEmpty)
-                Flexible(
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: scheme.primaryContainer,
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: scheme.primary.withOpacity(0.3), width: 1.5),
-                      boxShadow: [
-                        BoxShadow(
-                          color: scheme.primary.withOpacity(0.1),
-                          blurRadius: 4,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
-                    ),
-                    child: Text(isSingle
-                        ? 'Total: ${allLogos.length}  |  Base: ${_bottomLogos.length}  |  Topo: ${_topLeftLogos.length}'
-                        : (isAutoMultiSet
-                            ? 'Sets: ${_logoSetCount}  |  Total: ${allLogos.length}  |  Set A: ${_bottomPerSetCount} base + ${_topPerSetCount} topo = ${_bottomPerSetCount + _topPerSetCount}  |  Set B: ${setBBottom.length} base + ${setBTop.length} topo = ${setBBottom.length + setBTop.length}'
-                            : 'Total: ${allLogos.length}  |  A: ${setABottom.length} base + ${setATop.length} topo = ${setABottom.length + setATop.length}  |  B: ${setBBottom.length} base + ${setBTop.length} topo = ${setBBottom.length + setBTop.length}'),
-                        style: small?.copyWith(fontSize: 13, fontWeight: FontWeight.w700, color: scheme.onPrimaryContainer, letterSpacing: 0.2),
-                        overflow: TextOverflow.ellipsis,
-                        maxLines: 1),
-                  ),
-                ),
             ],
           ),
           const SizedBox(height: 6),
@@ -3770,8 +3746,8 @@ class _HomePageState extends State<HomePage> {
                 : isSingle
                     ? 'Todas as logos vão para a BASE primeiro. Se não couberem (respeitando margens e espaçamento), o excesso vai para o TOPO automaticamente.'
                     : (isAutoMultiSet
-                        ? 'Cria quantos sets forem necessários para caber TODAS as logos. Preenche BASE de cada set, depois TOPO. Ajuste o tamanho para reduzir número de sets.'
-                        : 'Logos são distribuídas igualmente entre Set A e Set B. Preenche BASE de ambos primeiro, depois TOPO de ambos. Ajuste o tamanho para caber mais.'),
+                        ? 'Cria quantos sets forem necessários para caber TODAS as logos. Preenche BASE de cada set, depois TOP. Ajuste o tamanho para reduzir número de sets.'
+                        : 'Logos são distribuídas igualmente entre Set A e Set B. Preenche BASE de ambos primeiro, depois TOP de ambos. Ajuste o tamanho para caber mais.'),
             style: small,
           ),
 
@@ -3870,9 +3846,32 @@ class _HomePageState extends State<HomePage> {
             ],
           ] else if (isAutoMultiSet) ...[
             // AutoMultiSet mode: show all sets from project.logoSets
+            if (allLogos.isNotEmpty)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                decoration: BoxDecoration(
+                  color: scheme.primaryContainer,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: scheme.primary.withOpacity(0.3), width: 1.5),
+                  boxShadow: [
+                    BoxShadow(
+                      color: scheme.primary.withOpacity(0.1),
+                      blurRadius: 4,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Text(
+                  'Sets: ${_logoSetCount}  |  Total: ${allLogos.length}  |  Set A: ${_bottomPerSetCount} base + ${_topPerSetCount} top = ${_bottomPerSetCount + _topPerSetCount}  |  Set B: ${setBBottom.length} base + ${setBTop.length} top = ${setBBottom.length + setBTop.length}',
+                  style: small?.copyWith(fontSize: 13, fontWeight: FontWeight.w700, color: scheme.onPrimaryContainer, letterSpacing: 0.2),
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
+                ),
+              ),
+            const SizedBox(height: 8),
             for (int i = 0; i < multiSets.length; i++) ...[
               const SizedBox(height: 8),
-              Text('CONJUNTO ${i + 1}', style: small?.copyWith(fontWeight: FontWeight.w600, color: scheme.primary)),
+              Text('SET ${i + 1}', style: small?.copyWith(fontWeight: FontWeight.w600, color: scheme.primary)),
               const SizedBox(height: 4),
               if (multiSets[i].bottomLogos.isNotEmpty) ...[
                 Text('BASE ${i + 1}', style: small?.copyWith(fontWeight: FontWeight.w500)),
@@ -4159,6 +4158,28 @@ class _HomePageState extends State<HomePage> {
           ],
 
           const SizedBox(height: 12),
+          // Margin visualization overlay toggle
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => setState(() => _showMarginOverlay = !_showMarginOverlay),
+                  icon: Icon(_showMarginOverlay ? Icons.visibility : Icons.visibility_off, size: 18),
+                  label: Text(_showMarginOverlay ? 'Ocultar margens' : 'Mostrar margens'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: _showMarginOverlay ? scheme.primary : scheme.onSurface,
+                    backgroundColor: _showMarginOverlay ? scheme.primaryContainer : null,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Tooltip(
+                message: 'Mostra faixas de 0.5% nas laterais da base (bottom row)',
+                child: Icon(Icons.info_outline, size: 18, color: scheme.outline),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
           _slider('Tamanho das logos (todas)', _logoSize, 5, 25,
               (v) {
                 setState(() => _logoSize = v);
@@ -5591,7 +5612,47 @@ class _HomePageState extends State<HomePage> {
                         cursor: SystemMouseCursors.zoomIn,
                         child: GestureDetector(
                           onTap: () => _openFullscreen(idx),
-                          child: picture,
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              picture,
+                              // Margin visualization overlay (0.5% edge margins on bottom row)
+                              if (_showMarginOverlay && render != null && _hasAnyContent) ...[
+                                // Left margin strip (0.5% of width)
+                                Positioned(
+                                  left: 0,
+                                  bottom: 0,
+                                  width: MediaQuery.of(context).size.width * 0.005,
+                                  child: Container(
+                                    color: Colors.red.withValues(alpha: 0.3),
+                                    child: Center(
+                                      child: RotatedBox(
+                                        quarterTurns: 3,
+                                        child: Text('0.5% margin',
+                                            style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                // Right margin strip (0.5% of width)
+                                Positioned(
+                                  right: 0,
+                                  bottom: 0,
+                                  width: MediaQuery.of(context).size.width * 0.005,
+                                  child: Container(
+                                    color: Colors.red.withValues(alpha: 0.3),
+                                    child: Center(
+                                      child: RotatedBox(
+                                        quarterTurns: 3,
+                                        child: Text('0.5% margin',
+                                            style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
                         ),
                       ),
                     ),
