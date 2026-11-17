@@ -664,6 +664,10 @@ class _HomePageState extends State<HomePage> {
       throw Exception('Worker failed to start in time');
     });
 
+    // Warm-up render to trigger JIT compilation in the background
+    // This prevents the first user-visible render from being slow
+    unawaited(_workerWarmUp());
+
     // Small warm-up delay to ensure isolate is fully initialized
     await Future.delayed(const Duration(milliseconds: 200));
 
@@ -1608,6 +1612,47 @@ class _HomePageState extends State<HomePage> {
 
   /// Renders the very first photo IMMEDIATELY (no debounce) so user sees
   /// something right away when adding photos to an empty project.
+  /// Warm-up render to trigger JIT compilation of the worker isolate.
+  /// Runs in background during app initialization so first user render is fast.
+  Future<void> _workerWarmUp() async {
+    try {
+      // Create a minimal dummy request to warm up the render pipeline
+      // Use a tiny 1x1 transparent PNG as dummy photo
+      const dummyPng = <int>[
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, // PNG signature
+        0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52, // IHDR chunk
+        0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, // 1x1
+        0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, 0x89,
+        0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, 0x54, // IDAT chunk
+        0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01,
+        0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, // IEND chunk
+        0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82
+      ];
+      await _worker.render(WatermarkRequest(
+        photo: ImageSrc('warmup', Uint8List.fromList(dummyPng)),
+        bottomLogos: const [],
+        topLeftLogos: const [],
+        cornerLogo: null,
+        bottomHeight: 0.22,
+        bottomMargin: 0.02,
+        bottomLeft: 0.01,
+        topLeftHeight: 0.22,
+        topLeftTop: 0.02,
+        topLeftLeft: 0.01,
+        cornerHeight: 0.22,
+        cornerMarginRight: 0.02,
+        rowOpacity: 0.9,
+        centered: true,
+        spacing: 0,
+        textOverlays: const [],
+        quality: 50,
+      )).timeout(const Duration(seconds: 30));
+    } catch (_) {
+      // Warm-up failed, but that's OK - the real render will handle it
+      debugPrint('Worker warm-up failed (non-fatal)');
+    }
+  }
+
   Future<void> _renderFirstPhotoImmediately() async {
     if (_photoPaths.isEmpty || !_hasAnyContent) return;
     // Cancel any pending debounced render
