@@ -307,11 +307,11 @@ class _HomePageState extends State<HomePage> {
         debugPrint('Logo $i: ${logoWidths[i].toStringAsFixed(1)}px');
       }
 
-      // ===== SIMPLE ROUND-ROBIN ALTERNATING DISTRIBUTION =====
-      // Fill bottom rows A,B,A,B... until BOTH are completely full (no more logos fit),
-      // then top rows A,B,A,B... until BOTH are completely full.
-      // Logos are processed in user order (not sorted), so we must check ALL remaining
-      // logos for each slot, not just the next one.
+      // ===== MAXIMIZE EACH SET INDEPENDENTLY =====
+      // For alternating mode: fill EACH set's bottom row to MAXIMUM capacity
+      // (all logos that fit), then each set's top row to maximum.
+      // This is NOT A,B,A,B... - it's "fill Set A bottom completely, then Set B bottom completely"
+      // because the goal is to use ALL bottom space before any logo goes to top.
 
       // Helper: can this logo fit in this set's bottom row?
       bool fitsInBottom(List<LogoItem> bottomLogos, LogoItem logo) {
@@ -330,79 +330,33 @@ class _HomePageState extends State<HomePage> {
         return used + needed <= topMaxWidth;
       }
 
-      // Helper: find the FIRST remaining logo that fits in the given row
-      LogoItem? findFittingLogo(Iterable<LogoItem> candidates, bool Function(List<LogoItem>, LogoItem) fits, List<LogoItem> target) {
-        for (final logo in candidates) {
-          if (fits(target, logo)) return logo;
-        }
-        return null;
-      }
-
-      // PHASE 1: Fill bottom rows - alternating A,B,A,B... until BOTH full
-      bool turnA = true;
-      while (true) {
-        bool anyProgress = false;
-
-        // Determine which set's turn it is
-        final isATurn = turnA;
-        final targetBottom = isATurn ? setABottom : setBBottom;
-        final otherBottom = isATurn ? setBBottom : setABottom;
-
-        // Try to find ANY remaining logo that fits in this set's bottom
-        final remaining = allLogos.where((l) => !placed.contains(l));
-        final fittingLogo = findFittingLogo(remaining, fitsInBottom, targetBottom);
-
-        if (fittingLogo != null) {
-          targetBottom.add(fittingLogo);
+      // Helper: repeatedly add the FIRST remaining logo that fits, until none fit
+      void fillRowToMax(List<LogoItem> targetRow, bool Function(List<LogoItem>, LogoItem) fits, String debugLabel) {
+        while (true) {
+          final remaining = allLogos.where((l) => !placed.contains(l));
+          LogoItem? fittingLogo;
+          for (final logo in remaining) {
+            if (fits(targetRow, logo)) {
+              fittingLogo = logo;
+              break;
+            }
+          }
+          if (fittingLogo == null) break;
+          targetRow.add(fittingLogo);
           placed.add(fittingLogo);
-          anyProgress = true;
-          debugPrint('Phase 1: Set${isATurn ? 'A' : 'B'} bottom + logo ${allLogos.indexOf(fittingLogo)} (${logoWidths[allLogos.indexOf(fittingLogo)].toStringAsFixed(1)}px)');
+          debugPrint('$debugLabel + logo ${allLogos.indexOf(fittingLogo)} (${logoWidths[allLogos.indexOf(fittingLogo)].toStringAsFixed(1)}px)');
         }
-
-        // If no logo fits in this set, check if OTHER set can still take logos
-        // If neither can take any more logos, bottom phase is done
-        final remainingAfter = allLogos.where((l) => !placed.contains(l));
-        final otherCanFit = findFittingLogo(remainingAfter, fitsInBottom, otherBottom) != null;
-        final thisCanFit = findFittingLogo(remainingAfter, fitsInBottom, targetBottom) != null;
-
-        if (!anyProgress && !thisCanFit && !otherCanFit) {
-          break; // Neither set can fit any more logos in bottom
-        }
-
-        turnA = !turnA;
       }
+
+      // PHASE 1: Fill Set A bottom to MAX, then Set B bottom to MAX
+      fillRowToMax(setABottom, fitsInBottom, 'Phase 1: SetA bottom');
+      fillRowToMax(setBBottom, fitsInBottom, 'Phase 1: SetB bottom');
 
       debugPrint('Phase 1 (bottom) done: SetA=${setABottom.length}, SetB=${setBBottom.length}');
 
-      // PHASE 2: Fill top rows - alternating A,B,A,B... until BOTH full
-      turnA = true;
-      while (true) {
-        bool anyProgress = false;
-
-        final isATurn = turnA;
-        final targetTop = isATurn ? setATop : setBTop;
-        final otherTop = isATurn ? setBTop : setATop;
-
-        final remaining = allLogos.where((l) => !placed.contains(l));
-        final fittingLogo = findFittingLogo(remaining, fitsInTop, targetTop);
-
-        if (fittingLogo != null) {
-          targetTop.add(fittingLogo);
-          placed.add(fittingLogo);
-          anyProgress = true;
-          debugPrint('Phase 2: Set${isATurn ? 'A' : 'B'} top + logo ${allLogos.indexOf(fittingLogo)} (${logoWidths[allLogos.indexOf(fittingLogo)].toStringAsFixed(1)}px)');
-        }
-
-        final remainingAfter = allLogos.where((l) => !placed.contains(l));
-        final otherCanFit = findFittingLogo(remainingAfter, fitsInTop, otherTop) != null;
-        final thisCanFit = findFittingLogo(remainingAfter, fitsInTop, targetTop) != null;
-
-        if (!anyProgress && !thisCanFit && !otherCanFit) {
-          break; // Neither set can fit any more logos in top
-        }
-
-        turnA = !turnA;
-      }
+      // PHASE 2: Fill Set A top to MAX, then Set B top to MAX
+      fillRowToMax(setATop, fitsInTop, 'Phase 2: SetA top');
+      fillRowToMax(setBTop, fitsInTop, 'Phase 2: SetB top');
 
       debugPrint('Phase 2 (top) done: SetA=${setATop.length}, SetB=${setBTop.length}');
 
