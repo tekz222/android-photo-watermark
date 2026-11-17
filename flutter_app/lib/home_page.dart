@@ -2909,15 +2909,6 @@ class _HomePageState extends State<HomePage> {
           const SizedBox(width: 4),
           TextButton.icon(
             onPressed: (!_processing &&
-                    (_photoPaths.isNotEmpty || _savedPaths.isNotEmpty))
-                ? _newProject
-                : null,
-            icon: const Icon(Icons.add_box_outlined, size: 18),
-            label: const Text('Novo projeto'),
-          ),
-          const SizedBox(width: 4),
-          TextButton.icon(
-            onPressed: (!_processing &&
                     (_photoPaths.isNotEmpty || _bottomLogos.isNotEmpty || _topLeftLogos.isNotEmpty || _cornerLogo != null || _texts.isNotEmpty))
                 ? _exportProject
                 : null,
@@ -3048,6 +3039,15 @@ class _HomePageState extends State<HomePage> {
               onTap: () => _switchProject(i),
               onClose: projects.length > 1 ? () => _removeProject(i) : null,
             ),
+          // "+" tab for new project
+          _ProjectTab(
+            isNew: true,
+            onTap: (!_processing &&
+                    (_photoPaths.isNotEmpty || _savedPaths.isNotEmpty))
+                ? _newProject
+                : null,
+            // Tooltip handled by _ProjectTab's hover behavior
+          ),
         ],
       ),
     );
@@ -6371,7 +6371,7 @@ class _ProjectTab extends StatelessWidget {
         ? scheme.onPrimaryContainer
         : scheme.onSurfaceVariant;
 
-    return Padding(
+    final tabContent = Padding(
       padding: const EdgeInsets.only(right: 6),
       child: InkWell(
         onTap: onTap,
@@ -6415,6 +6415,13 @@ class _ProjectTab extends StatelessWidget {
         ),
       ),
     );
+    if (isNew) {
+      return Tooltip(
+        message: 'Novo projeto',
+        child: tabContent,
+      );
+    }
+    return tabContent;
   }
 }
 
