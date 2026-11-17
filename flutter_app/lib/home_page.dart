@@ -811,6 +811,9 @@ class _HomePageState extends State<HomePage> {
       throw Exception('Worker failed to start in time');
     });
 
+    // Small warm-up delay to ensure isolate is fully initialized
+    await Future.delayed(const Duration(milliseconds: 200));
+
     await _projectManager.initialize();
     // If a specific project ID was passed, switch to that project
     if (widget.initialProjectId != null) {
@@ -820,6 +823,7 @@ class _HomePageState extends State<HomePage> {
         await _projectManager.setActive(index);
       }
     }
+    _initialized = true;
     _kickPreview();
   }
 
@@ -1814,6 +1818,12 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _recomputePreviews() async {
+    // Wait for initialization to complete before rendering
+    if (!_initialized) {
+      // If not initialized yet, wait a bit and retry
+      await Future.delayed(const Duration(milliseconds: 100));
+      if (!_initialized) return;
+    }
     final token = ++_previewToken;
     _worker.cancelPending(); // drop renders queued by an abandoned loop
     if (_photoPaths.isEmpty || !_hasAnyContent) {
@@ -1828,11 +1838,14 @@ class _HomePageState extends State<HomePage> {
     // First run may take longer for isolate startup
     try {
       await _worker.ready().timeout(const Duration(seconds: 30));
+      // Small warm-up delay for first render
+      await Future.delayed(const Duration(milliseconds: 100));
     } catch (_) {
       // Worker failed or timed out, try to restart once
       try {
         await _worker.restart();
         await _worker.ready().timeout(const Duration(seconds: 15));
+        await Future.delayed(const Duration(milliseconds: 100));
       } catch (_) {
         if (mounted) setState(() => _renderingPreview = false);
         return;
