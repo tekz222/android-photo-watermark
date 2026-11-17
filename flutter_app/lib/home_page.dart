@@ -322,22 +322,20 @@ class _HomePageState extends State<HomePage> {
         return true;
       }
 
-      // Helper: check if a logo fits in a top row given current logos in that row and bottom count
-      bool fitsInTop(List<LogoItem> currentTop, int bottomCount, LogoItem nextLogo) {
+      // Helper: check if a logo fits in a top row given the set's actual bottom logos and current top logos
+      bool fitsInTop(List<LogoItem> bottomLogos, List<LogoItem> currentTop, LogoItem nextLogo) {
         final testTop = [...currentTop, nextLogo];
         // Calculate total width needed for this set's top row
         // Top row starts from left, must stop before corner logo
-        // Corner logo position: photoWidth - cornerMarginRight - cornerWidth
-        // We'll use _fitCountTop logic: startIdx = bottomCount, check each logo
         double totalWidth = 0;
-        // First add bottom logos' width to get start position
-        for (int i = 0; i < bottomCount; i++) {
-          final logoW = logoWidths[i]; // bottom logos start from 0
+        // First add THIS SET'S bottom logos' widths to get start position
+        for (int i = 0; i < bottomLogos.length; i++) {
+          final logoW = logoWidths[allLogos.indexOf(bottomLogos[i])];
           totalWidth += logoW + (i > 0 ? gapPx : 0);
         }
-        // Now add top logos
+        // Now add THIS SET'S top logos
         for (int i = 0; i < testTop.length; i++) {
-          final logoW = logoWidths[bottomCount + i];
+          final logoW = logoWidths[allLogos.indexOf(testTop[i])];
           totalWidth += logoW + (i > 0 ? gapPx : 0);
         }
         // Check against corner logo position (approximate)
@@ -384,7 +382,7 @@ class _HomePageState extends State<HomePage> {
       while (idx < allLogos.length && (!aTopFull || !bTopFull)) {
         // Try Set A top
         if (!aTopFull && idx < allLogos.length) {
-          if (fitsInTop(setATop, setABottom.length, allLogos[idx])) {
+          if (fitsInTop(setABottom, setATop, allLogos[idx])) {
             setATop.add(allLogos[idx++]);
           } else {
             aTopFull = true;
@@ -392,7 +390,7 @@ class _HomePageState extends State<HomePage> {
         }
         // Try Set B top
         if (!bTopFull && idx < allLogos.length) {
-          if (fitsInTop(setBTop, setBBottom.length, allLogos[idx])) {
+          if (fitsInTop(setBBottom, setBTop, allLogos[idx])) {
             setBTop.add(allLogos[idx++]);
           } else {
             bTopFull = true;
