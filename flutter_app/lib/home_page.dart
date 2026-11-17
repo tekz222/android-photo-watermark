@@ -659,9 +659,9 @@ class _HomePageState extends State<HomePage> {
       throw Exception('Worker failed to start in time');
     });
 
-    // Warm-up render to trigger JIT compilation.
-    // AWAIT this so JIT compilation completes before user adds photos.
-    await _workerWarmUp();
+    // Warm-up render to trigger JIT compilation in the background.
+    // Do NOT await - let it run while we initialize the rest.
+    unawaited(_workerWarmUp());
 
     await _projectManager.initialize();
     // If a specific project ID was passed, switch to that project
@@ -1638,7 +1638,7 @@ class _HomePageState extends State<HomePage> {
         spacing: 0,
         textOverlays: const [],
         quality: 50,
-      )).timeout(const Duration(seconds: 30));
+      )).timeout(const Duration(seconds: 10)); // Reduced from 30s - dummy render should be fast
     } catch (_) {
       // Warm-up failed, but that's OK - the real render will handle it
       debugPrint('Worker warm-up failed (non-fatal)');
