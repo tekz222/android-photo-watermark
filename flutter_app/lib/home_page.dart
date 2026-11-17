@@ -112,11 +112,11 @@ class _HomePageState extends State<HomePage> {
 
   // Getters delegating to active project
   Project get _p => _projectManager.activeProject;
-  List<String> get _photoPaths => _initialized ? _p.photoPaths : [];
+  List<String> get _photoPaths => _p.photoPaths;
 
   /// Filtered photo paths based on search query (filename match, case-insensitive)
   List<String> get _filteredPhotoPaths {
-    if (!_initialized) return [];
+    if (!_initialized) return _photoPaths;
     if (_previewSearch.isEmpty) return _photoPaths;
     final query = _previewSearch.toLowerCase();
     return _photoPaths.where((p) => p.split('/').last.split('\\').last.toLowerCase().contains(query)).toList();
@@ -1719,7 +1719,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _renderFirstPhotoImmediately() async {
-    if (_photoPaths.isEmpty || !_hasAnyContent) return;
+    if (_photoPaths.isEmpty) return;
     // Cancel any pending debounced render
     _debounce?.cancel();
     // Invalidate any in-flight renders
