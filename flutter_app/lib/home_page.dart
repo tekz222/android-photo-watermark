@@ -279,122 +279,77 @@ class _HomePageState extends State<HomePage> {
         return false;
       }
     } else {
-      // ALTERNATING MODE: round-robin fill bottom rows first, then top rows
-      // DYNAMIC CAPACITY: Check if each logo fits in its target set's row
-      // using the ACTUAL logo widths that set will receive (not assuming index 0)
+      // ALTERNATING MODE: Fill bottom rows FIRST (maximize capacity), then top rows.
+      // Each logo tries: Set A bottom → Set B bottom → Set A top → Set B top.
+      // This ensures bottom rows are packed completely before using top rows.
       // Ensure Set A and B exist
       if (_logoSetA == null) _logoSetA = LogoSet(bottomLogos: [], topLeftLogos: []);
       if (_logoSetB == null) _logoSetB = LogoSet(bottomLogos: [], topLeftLogos: []);
 
-      // Track which logos go to each set for capacity calculation
       final setABottom = <LogoItem>[];
       final setBBottom = <LogoItem>[];
       final setATop = <LogoItem>[];
       final setBTop = <LogoItem>[];
 
-      int idx = 0;
-
       // Helper: check if a logo fits in a bottom row given current logos in that row
+      // Bottom row spans full width (main 80% + corner 20%), centered in main section
+      // but can extend into corner section. Capacity = full available width.
+      // Margins are 1% of shortestSide on each side (edgeMarginPx).
       bool fitsInBottom(List<LogoItem> currentBottom, LogoItem nextLogo) {
         final testBottom = [...currentBottom, nextLogo];
-        // Check if fits in main section (80%) or can use corner section
-        final mainSectionRightEdge = photoWidth * 0.8 - edgeMarginPx;
-        final cornerSectionRightEdge = photoWidth - edgeMarginPx;
-        bool usedCorner = false;
-        double currentWidth = 0;
+        double totalWidth = 0;
         for (int i = 0; i < testBottom.length; i++) {
           final logoW = logoWidths[allLogos.indexOf(testBottom[i])];
-          final neededWidth = currentWidth + logoW + (i > 0 ? gapPx : 0);
-          if (neededWidth <= mainSectionRightEdge) {
-            currentWidth = neededWidth;
-          } else if (!usedCorner && neededWidth <= cornerSectionRightEdge) {
-            final cornerSectionLeftEdge = photoWidth * 0.8 - edgeMarginPx;
-            if (neededWidth >= cornerSectionLeftEdge && neededWidth <= cornerSectionRightEdge) {
-              currentWidth = neededWidth;
-              usedCorner = true;
-            } else {
-              return false;
-            }
-          } else {
-            return false;
-          }
+          totalWidth += logoW + (i > 0 ? gapPx : 0);
         }
-        return true;
+        // Full available width for bottom row (photo width minus 1% margins on each side)
+        final maxWidth = photoWidth - edgeMarginPx * 2;
+        return totalWidth <= maxWidth;
       }
 
       // Helper: check if a logo fits in a top row given current top logos
       // Top row is LEFT-ALIGNED (starts from left margin), independent of bottom row
+      // Must stop before corner logo position (~80% of photo width)
       bool fitsInTop(List<LogoItem> currentTop, LogoItem nextLogo) {
         final testTop = [...currentTop, nextLogo];
-        // Calculate total width needed for top row starting from left margin
         double totalWidth = 0;
         for (int i = 0; i < testTop.length; i++) {
           final logoW = logoWidths[allLogos.indexOf(testTop[i])];
           totalWidth += logoW + (i > 0 ? gapPx : 0);
         }
-        // Check against corner logo position (approximate)
-        final cornerLogo = _cornerLogo;
-        double maxX;
-        if (cornerLogo != null) {
-          // Approximate corner logo left edge: photoWidth - marginRight - cornerWidth
-          // Conservative: main section only (80% - edgeMargin)
-          maxX = photoWidth * 0.8 - edgeMarginPx;
-        } else {
-          maxX = photoWidth - edgeMarginPx;
-        }
-        // Top row starts from left margin, so available width is maxX - leftMarginPx
-        final availableWidth = maxX - edgeMarginPx;
+        // Top row available width: from left margin to corner logo position (80%)
+        final availableWidth = photoWidth * 0.8 - edgeMarginPx * 2;
         return totalWidth <= availableWidth;
       }
 
-      // ===== PHASE 1: Fill bottom rows round-robin with DYNAMIC fitting =====
-      bool aBottomFull = false;
-      bool bBottomFull = false;
+      for (final logo in allLogos) {
+        bool placed = false;
 
-      while (idx < allLogos.length && (!aBottomFull || !bBottomFull)) {
-        // Try Set A bottom
-        if (!aBottomFull && idx < allLogos.length) {
-          if (fitsInBottom(setABottom, allLogos[idx])) {
-            setABottom.add(allLogos[idx++]);
-          } else {
-            aBottomFull = true;
-          }
+        // Try Set A bottom first
+        if (fitsInBottom(setABottom, logo)) {
+          setABottom.add(logo);
+          placed = true;
         }
         // Try Set B bottom
-        if (!bBottomFull && idx < allLogos.length) {
-          if (fitsInBottom(setBBottom, allLogos[idx])) {
-            setBBottom.add(allLogos[idx++]);
-          } else {
-            bBottomFull = true;
-          }
+        else if (fitsInBottom(setBBottom, logo)) {
+          setBBottom.add(logo);
+          placed = true;
         }
-        // If both full, break
-        if (aBottomFull && bBottomFull) break;
-      }
-
-      // ===== PHASE 2: Fill top rows round-robin with DYNAMIC fitting =====
-      bool aTopFull = false;
-      bool bTopFull = false;
-
-      while (idx < allLogos.length && (!aTopFull || !bTopFull)) {
         // Try Set A top
-        if (!aTopFull && idx < allLogos.length) {
-          if (fitsInTop(setATop, allLogos[idx])) {
-            setATop.add(allLogos[idx++]);
-          } else {
-            aTopFull = true;
-          }
+        else if (fitsInTop(setATop, logo)) {
+          setATop.add(logo);
+          placed = true;
         }
         // Try Set B top
-        if (!bTopFull && idx < allLogos.length) {
-          if (fitsInTop(setBTop, allLogos[idx])) {
-            setBTop.add(allLogos[idx++]);
-          } else {
-            bTopFull = true;
-          }
+        else if (fitsInTop(setBTop, logo)) {
+          setBTop.add(logo);
+          placed = true;
         }
-        // If both full, break
-        if (aTopFull && bTopFull) break;
+
+        if (!placed) {
+          // Logo couldn't fit anywhere - overflow
+          break;
+        }
       }
 
       final totalPlaced = setABottom.length + setBBottom.length + setATop.length + setBTop.length;
@@ -409,7 +364,6 @@ class _HomePageState extends State<HomePage> {
           bottomLogos: setBBottom,
           topLeftLogos: setBTop,
         );
-        // Also clear logoSets when in dual-set mode
         _p.logoSets = [];
       });
 
