@@ -152,24 +152,28 @@ class _HomePageState extends State<HomePage> {
   Future<bool> _autoDistributeLogos(List<LogoItem> allLogos) async {
     if (allLogos.isEmpty || _photoPaths.isEmpty) return true;
 
-    // Calculate minimum available width across ALL photos to ensure logos fit on every photo
-    // Use cached dimensions to avoid re-reading files
-    double minPhotoWidth = double.infinity;
+    // Use the CURRENT PREVIEW PHOTO's width for auto-distribute.
+    // This makes the preview photo perfect (bottom row full).
+    // Other photos get same logo heights; narrower ones get symmetric clipping (handled by rendering).
+    final previewIdx = _previewIndex.clamp(0, _photoPaths.length - 1);
+    final previewDims = await _getPhotoDimensions(_photoPaths[previewIdx]);
+    if (previewDims == null) return true;
+
+    final photoWidth = previewDims.$1.toDouble();
+    final previewShortestSide = previewDims.$3.toDouble();
+
+    // Also compute min shortest side across ALL photos for consistent logo sizing reference.
     double minShortestSide = double.infinity;
     for (final path in _photoPaths) {
       final dims = await _getPhotoDimensions(path);
       if (dims != null) {
-        final w = dims.$1.toDouble();
-        final h = dims.$2.toDouble();
         final s = dims.$3.toDouble();
-        if (w < minPhotoWidth) minPhotoWidth = w;
         if (s < minShortestSide) minShortestSide = s;
       }
     }
-    if (minPhotoWidth == double.infinity) return true;
+    if (minShortestSide == double.infinity) minShortestSide = previewShortestSide;
 
-    final photoWidth = minPhotoWidth;
-    final shortestSide = minShortestSide;
+    final shortestSide = previewShortestSide;
 
     // Calculate aspect ratios for all logos (use compute for heavy decoding)
     final logoAspectRatios = <double>[];
