@@ -1348,8 +1348,8 @@ class _HomePageState extends State<HomePage> {
       // ALWAYS reset importing flag, even on error
       if (mounted) {
         setState(() {
-          // pickMultiImage returns most recent first; reverse to show oldest first
-          _photoPaths.addAll(paths.reversed.toList());
+          // Sort by file creation date (oldest first)
+          _photoPaths.addAll(_sortPathsByDate(paths));
           _importing = false;
         });
       }
@@ -1417,8 +1417,8 @@ class _HomePageState extends State<HomePage> {
     } finally {
       if (mounted) {
         setState(() {
-          // pickMultiImage returns most recent first; reverse to show oldest first
-          _photoPaths.addAll(newPaths.reversed.toList());
+          // Sort by file creation date (oldest first)
+          _photoPaths.addAll(_sortPathsByDate(newPaths));
           _importing = false;
         });
       }
@@ -1429,6 +1429,20 @@ class _HomePageState extends State<HomePage> {
     }
     _kickPreview();
     if (_currentAlbum != null && !_processing) _saveAll();
+  }
+
+  /// Sort file paths by creation/modification date (oldest first).
+  List<String> _sortPathsByDate(List<String> paths) {
+    final files = paths.map((p) => File(p)).toList();
+    files.sort((a, b) {
+      final statA = a.statSync();
+      final statB = b.statSync();
+      // Use changed (creation time on Windows) or modified as fallback
+      final timeA = statA.changed;
+      final timeB = statB.changed;
+      return timeA.compareTo(timeB);
+    });
+    return files.map((f) => f.path).toList();
   }
 
   /// Normalized logo name for de-duplication: base filename, no extension,
