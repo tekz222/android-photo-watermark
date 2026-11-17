@@ -224,6 +224,11 @@ Win32Window::MessageHandler(HWND hwnd,
     case WM_DWMCOLORIZATIONCOLORCHANGED:
       UpdateTheme(hwnd);
       return 0;
+
+    case WM_ERASEBKGND:
+      // Prevent default gray background flash by using the window class background brush
+      // Return TRUE to indicate we handled the background erasing
+      return TRUE;
   }
 
   return DefWindowProc(window_handle_, message, wparam, lparam);

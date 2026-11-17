@@ -1559,6 +1559,24 @@ class _HomePageState extends State<HomePage> {
     // Render just the first photo (index 0) with high priority
     final path = _photoPaths.first;
     if (_previewPhoto.containsKey(path) && _previews.containsKey(path)) return; // already have it
+
+    // Ensure worker is ready before starting (first launch may take longer for isolate JIT)
+    try {
+      await _worker.ready().timeout(const Duration(seconds: 30));
+      // Small warm-up delay for first render
+      await Future.delayed(const Duration(milliseconds: 100));
+    } catch (_) {
+      // Worker failed or timed out, try to restart once
+      try {
+        await _worker.restart();
+        await _worker.ready().timeout(const Duration(seconds: 15));
+        await Future.delayed(const Duration(milliseconds: 100));
+      } catch (_) {
+        if (mounted) setState(() => _renderingPreview = false);
+        return;
+      }
+    }
+
     try {
       setState(() => _renderingPreview = true);
       // Downscale logos if needed (fast path - small count)
@@ -1590,13 +1608,13 @@ class _HomePageState extends State<HomePage> {
       Uint8List? out;
       try {
         out = await _worker.render(_previewRequest(path, smallBytes))
-            .timeout(const Duration(seconds: 10));
+            .timeout(const Duration(seconds: 15));
       } on TimeoutException {
         try {
           await _worker.restart();
           await _worker.ready().timeout(const Duration(seconds: 5));
           out = await _worker.render(_previewRequest(path, smallBytes))
-              .timeout(const Duration(seconds: 10));
+              .timeout(const Duration(seconds: 15));
         } catch (_) {
           if (mounted) setState(() => _renderingPreview = false);
           return;
