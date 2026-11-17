@@ -112,10 +112,11 @@ class _HomePageState extends State<HomePage> {
 
   // Getters delegating to active project
   Project get _p => _projectManager.activeProject;
-  List<String> get _photoPaths => _p.photoPaths;
+  List<String> get _photoPaths => _initialized ? _p.photoPaths : [];
 
   /// Filtered photo paths based on search query (filename match, case-insensitive)
   List<String> get _filteredPhotoPaths {
+    if (!_initialized) return [];
     if (_previewSearch.isEmpty) return _photoPaths;
     final query = _previewSearch.toLowerCase();
     return _photoPaths.where((p) => p.split('/').last.split('\\').last.toLowerCase().contains(query)).toList();
@@ -125,6 +126,7 @@ class _HomePageState extends State<HomePage> {
   // In single mode: prefers Set A if it exists (user edited via section 2), else project's bottomLogos.
   // In dual-set mode: uses Set A's bottomLogos.
   List<LogoItem> get _bottomLogos {
+    if (!_initialized) return [];
     if (_logoSetMode == LogoSetMode.single) {
       return _logoSetA?.bottomLogos ?? _p.bottomLogos;
     }
@@ -135,6 +137,7 @@ class _HomePageState extends State<HomePage> {
   // In single mode: prefers Set A if it exists, else project's topLeftLogos.
   // In dual-set mode: uses Set A's topLeftLogos.
   List<LogoItem> get _topLeftLogos {
+    if (!_initialized) return [];
     if (_logoSetMode == LogoSetMode.single) {
       return _logoSetA?.topLeftLogos ?? _p.topLeftLogos;
     }
@@ -388,78 +391,78 @@ class _HomePageState extends State<HomePage> {
     _autoReferenceShortestSide = minShortestSide;
     return true;
   }
-  LogoItem? get _cornerLogo => _p.cornerLogo;
-  set _cornerLogo(LogoItem? v) => _p.cornerLogo = v;
-  List<TextItem> get _texts => _p.texts;
-  Map<int, String> get _textImagePath => _p.textImagePath;
-  Map<int, ImageSrc> get _textSrc => _p.textSrc;
-  Map<int, double> get _textRatio => _p.textRatio;
-  Map<int, String> get _textSigCache => _p.textSigCache;
-  Map<String, dynamic>? get _textTemplate => _p.textTemplate;
-  set _textTemplate(Map<String, dynamic>? v) => _p.textTemplate = v;
+  LogoItem? get _cornerLogo => _initialized ? _p.cornerLogo : null;
+  set _cornerLogo(LogoItem? v) { if (_initialized) _p.cornerLogo = v; }
+  List<TextItem> get _texts => _initialized ? _p.texts : [];
+  Map<int, String> get _textImagePath => _initialized ? _p.textImagePath : {};
+  Map<int, ImageSrc> get _textSrc => _initialized ? _p.textSrc : {};
+  Map<int, double> get _textRatio => _initialized ? _p.textRatio : {};
+  Map<int, String> get _textSigCache => _initialized ? _p.textSigCache : {};
+  Map<String, dynamic>? get _textTemplate => _initialized ? _p.textTemplate : null;
+  set _textTemplate(Map<String, dynamic>? v) { if (_initialized) _p.textTemplate = v; }
 
   // Settings getters/setters
-  double get _logoSize => _p.logoSize;
-  set _logoSize(double v) => _p.logoSize = v;
-  double get _leftMargin => _p.leftMargin;
-  set _leftMargin(double v) => _p.leftMargin = v;
-  double get _logoOpacity => _p.logoOpacity;
-  set _logoOpacity(double v) => _p.logoOpacity = v;
-  double get _bottomMargin => _p.bottomMargin;
-  set _bottomMargin(double v) => _p.bottomMargin = v;
-  double get _topMargin => _p.topMargin;
-  set _topMargin(double v) => _p.topMargin = v;
+  double get _logoSize => _initialized ? _p.logoSize : 10.0;
+  set _logoSize(double v) { if (_initialized) _p.logoSize = v; }
+  double get _leftMargin => _initialized ? _p.leftMargin : 1.0;
+  set _leftMargin(double v) { if (_initialized) _p.leftMargin = v; }
+  double get _logoOpacity => _initialized ? _p.logoOpacity : 1.0;
+  set _logoOpacity(double v) { if (_initialized) _p.logoOpacity = v; }
+  double get _bottomMargin => _initialized ? _p.bottomMargin : 1.0;
+  set _bottomMargin(double v) { if (_initialized) _p.bottomMargin = v; }
+  double get _topMargin => _initialized ? _p.topMargin : 1.0;
+  set _topMargin(double v) { if (_initialized) _p.topMargin = v; }
   // cornerMarginTop removed - corner logo uses topMargin
-  double get _cornerMarginRight => _p.cornerMarginRight;
-  set _cornerMarginRight(double v) => _p.cornerMarginRight = v;
-  bool get _centered => true; // Bottom logos are always centered
-  set _centered(bool v) => _p.centered = v; // Keep for persistence
-  double get _logoSpacing => _p.logoSpacing;
-  set _logoSpacing(double v) => _p.logoSpacing = v;
-  bool get _bottomGradient => _p.bottomGradient;
-  set _bottomGradient(bool v) => _p.bottomGradient = v;
-  bool get _topGradient => _p.topGradient;
-  set _topGradient(bool v) => _p.topGradient = v;
-  double get _topGradientHeight => _p.topGradientHeight;
-  set _topGradientHeight(double v) => _p.topGradientHeight = v;
-  double get _bottomGradientHeight => _p.bottomGradientHeight;
-  set _bottomGradientHeight(double v) => _p.bottomGradientHeight = v;
-  int get _gradientColor => _p.gradientColor;
-  set _gradientColor(int v) => _p.gradientColor = v;
-  double get _gradientOpacity => _p.gradientOpacity;
-  set _gradientOpacity(double v) => _p.gradientOpacity = v;
+  double get _cornerMarginRight => _initialized ? _p.cornerMarginRight : 1.0;
+  set _cornerMarginRight(double v) { if (_initialized) _p.cornerMarginRight = v; }
+  bool get _centered => _initialized ? _p.centered : true;
+  set _centered(bool v) { if (_initialized) _p.centered = v; }
+  double get _logoSpacing => _initialized ? _p.logoSpacing : 1.0;
+  set _logoSpacing(double v) { if (_initialized) _p.logoSpacing = v; }
+  bool get _bottomGradient => _initialized ? _p.bottomGradient : false;
+  set _bottomGradient(bool v) { if (_initialized) _p.bottomGradient = v; }
+  bool get _topGradient => _initialized ? _p.topGradient : false;
+  set _topGradient(bool v) { if (_initialized) _p.topGradient = v; }
+  double get _topGradientHeight => _initialized ? _p.topGradientHeight : 15.0;
+  set _topGradientHeight(double v) { if (_initialized) _p.topGradientHeight = v; }
+  double get _bottomGradientHeight => _initialized ? _p.bottomGradientHeight : 15.0;
+  set _bottomGradientHeight(double v) { if (_initialized) _p.bottomGradientHeight = v; }
+  int get _gradientColor => _initialized ? _p.gradientColor : 0;
+  set _gradientColor(int v) { if (_initialized) _p.gradientColor = v; }
+  double get _gradientOpacity => _initialized ? _p.gradientOpacity : 1.0;
+  set _gradientOpacity(double v) { if (_initialized) _p.gradientOpacity = v; }
 
   // Save state getters/setters
-  Set<String> get _savedPaths => _p.savedPaths;
-  String? get _currentAlbum => _p.currentAlbum;
-  set _currentAlbum(String? v) => _p.currentAlbum = v;
-  ProcessResult? get _lastResult => _p.lastResult;
-  set _lastResult(ProcessResult? v) => _p.lastResult = v;
-  bool get _processing => _p.processing;
-  set _processing(bool v) => _p.processing = v;
-  bool get _cancelRequested => _p.cancelRequested;
-  set _cancelRequested(bool v) => _p.cancelRequested = v;
-  int get _done => _p.done;
-  set _done(int v) => _p.done = v;
-  int get _total => _p.total;
-  set _total(int v) => _p.total = v;
+  Set<String> get _savedPaths => _initialized ? _p.savedPaths : {};
+  String? get _currentAlbum => _initialized ? _p.currentAlbum : null;
+  set _currentAlbum(String? v) { if (_initialized) _p.currentAlbum = v; }
+  ProcessResult? get _lastResult => _initialized ? _p.lastResult : null;
+  set _lastResult(ProcessResult? v) { if (_initialized) _p.lastResult = v; }
+  bool get _processing => _initialized ? _p.processing : false;
+  set _processing(bool v) { if (_initialized) _p.processing = v; }
+  bool get _cancelRequested => _initialized ? _p.cancelRequested : false;
+  set _cancelRequested(bool v) { if (_initialized) _p.cancelRequested = v; }
+  int get _done => _initialized ? _p.done : 0;
+  set _done(int v) { if (_initialized) _p.done = v; }
+  int get _total => _initialized ? _p.total : 0;
+  set _total(int v) { if (_initialized) _p.total = v; }
 
   // Preview state getters/setters
-  int get _previewIndex => _p.previewIndex;
-  set _previewIndex(int v) => _p.previewIndex = v;
-  int get _previewVersion => _p.previewVersion;
-  set _previewVersion(int v) => _p.previewVersion = v;
-  int get _previewToken => _p.previewToken;
-  set _previewToken(int v) => _p.previewToken = v;
+  int get _previewIndex => _initialized ? _p.previewIndex : 0;
+  set _previewIndex(int v) { if (_initialized) _p.previewIndex = v; }
+  int get _previewVersion => _initialized ? _p.previewVersion : 0;
+  set _previewVersion(int v) { if (_initialized) _p.previewVersion = v; }
+  int get _previewToken => _initialized ? _p.previewToken : 0;
+  set _previewToken(int v) { if (_initialized) _p.previewToken = v; }
 
   // Preview caches getters
-  Map<String, Preview> get _previews => _p.previews;
-  Map<String, int> get _renderedVersion => _p.renderedVersion;
-  Set<String> get _previewFailed => _p.previewFailed;
-  Map<String, Uint8List> get _previewPhoto => _p.previewPhoto;
-  Map<int, Uint8List> get _previewLogo => _p.previewLogo;
-  Future<void> get _textJob => _p.textJob ?? Future<void>.value();
-  set _textJob(Future<void> v) => _p.textJob = v;
+  Map<String, Preview> get _previews => _initialized ? _p.previews : {};
+  Map<String, int> get _renderedVersion => _initialized ? _p.renderedVersion : {};
+  Set<String> get _previewFailed => _initialized ? _p.previewFailed : {};
+  Map<String, Uint8List> get _previewPhoto => _initialized ? _p.previewPhoto : {};
+  Map<int, Uint8List> get _previewLogo => _initialized ? _p.previewLogo : {};
+  Future<void> get _textJob => _initialized ? (_p.textJob ?? Future<void>.value()) : Future<void>.value();
+  set _textJob(Future<void> v) { if (_initialized) _p.textJob = v; }
 
   // Global directory preferences (shared)
   String? get _exportDir => _projectManager.exportDir;
@@ -535,12 +538,12 @@ class _HomePageState extends State<HomePage> {
   }
 
   // Dual logo sets getters/setters
-  LogoSetMode get _logoSetMode => _p.logoSetMode;
-  set _logoSetMode(LogoSetMode v) => _p.logoSetMode = v;
-  LogoSet? get _logoSetA => _p.logoSetA;
-  set _logoSetA(LogoSet? v) => _p.logoSetA = v;
-  LogoSet? get _logoSetB => _p.logoSetB;
-  set _logoSetB(LogoSet? v) => _p.logoSetB = v;
+  LogoSetMode get _logoSetMode => _initialized ? _p.logoSetMode : LogoSetMode.single;
+  set _logoSetMode(LogoSetMode v) { if (_initialized) _p.logoSetMode = v; }
+  LogoSet? get _logoSetA => _initialized ? _p.logoSetA : null;
+  set _logoSetA(LogoSet? v) { if (_initialized) _p.logoSetA = v; }
+  LogoSet? get _logoSetB => _initialized ? _p.logoSetB : null;
+  set _logoSetB(LogoSet? v) { if (_initialized) _p.logoSetB = v; }
 
   /// Returns the appropriate logo set for the given photo index based on [logoSetMode].
   LogoSet? _logoSetForIndex(int index) {
@@ -2699,6 +2702,9 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _page() {
+    if (!_initialized) {
+      return const Center(child: CircularProgressIndicator());
+    }
     final scheme = Theme.of(context).colorScheme;
     return Column(
         children: [
