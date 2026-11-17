@@ -350,8 +350,10 @@ class _HomePageState extends State<HomePage> {
         final logoW = logoWidths[allLogos.indexOf(logo)];
 
         // Calculate remaining capacity for each set's bottom row
-        double remainingA = photoWidth - setABottom.fold(0.0, (sum, l) => sum + logoWidths[allLogos.indexOf(l)]) - (setABottom.length > 0 ? gapPx * (setABottom.length - 1) : 0);
-        double remainingB = photoWidth - setBBottom.fold(0.0, (sum, l) => sum + logoWidths[allLogos.indexOf(l)]) - (setBBottom.length > 0 ? gapPx * (setBBottom.length - 1) : 0);
+        double usedA = setABottom.fold(0.0, (sum, l) => sum + logoWidths[allLogos.indexOf(l)]) + (setABottom.length > 0 ? gapPx * (setABottom.length - 1) : 0);
+        double usedB = setBBottom.fold(0.0, (sum, l) => sum + logoWidths[allLogos.indexOf(l)]) + (setBBottom.length > 0 ? gapPx * (setBBottom.length - 1) : 0);
+        double remainingA = photoWidth - usedA;
+        double remainingB = photoWidth - usedB;
 
         // Need space for this logo + gap if not first
         final neededA = setABottom.isEmpty ? logoW : logoW + gapPx;
@@ -360,27 +362,30 @@ class _HomePageState extends State<HomePage> {
         final canFitA = neededA <= remainingA;
         final canFitB = neededB <= remainingB;
 
-        if (!canFitA && !canFitB) continue; // Doesn't fit in either bottom row
+        if (!canFitA && !canFitB) {
+          debugPrint('Logo ${allLogos.indexOf(logo)} (${logoW.toStringAsFixed(1)}px) DOES NOT FIT: neededA=$neededA vs remA=$remainingA, neededB=$neededB vs remB=$remainingB');
+          continue; // Doesn't fit in either bottom row
+        }
 
-        // Place in set with more remaining space (or alternate if tied)
+        // Place in set with MORE remaining space to maximize packing
         bool placeInA;
         if (canFitA && !canFitB) {
           placeInA = true;
         } else if (!canFitA && canFitB) {
           placeInA = false;
         } else {
-          // Both can fit - place in the one with fewer logos (balance), or A if tied
-          placeInA = setABottom.length <= setBBottom.length;
+          // Both can fit - place in the one with more remaining space
+          placeInA = remainingA >= remainingB;
         }
 
         if (placeInA) {
           setABottom.add(logo);
           placed.add(logo);
-          debugPrint('SetA bottom: adding logo ${allLogos.indexOf(logo)} (${logoW.toStringAsFixed(1)}px)');
+          debugPrint('SetA bottom: adding logo ${allLogos.indexOf(logo)} (${logoW.toStringAsFixed(1)}px), used=$usedA, rem=$remainingA, setB used=$usedB, rem=$remainingB');
         } else {
           setBBottom.add(logo);
           placed.add(logo);
-          debugPrint('SetB bottom: adding logo ${allLogos.indexOf(logo)} (${logoW.toStringAsFixed(1)}px)');
+          debugPrint('SetB bottom: adding logo ${allLogos.indexOf(logo)} (${logoW.toStringAsFixed(1)}px), used=$usedB, rem=$remainingB, setA used=$usedA, rem=$remainingA');
         }
       }
 
@@ -397,8 +402,10 @@ class _HomePageState extends State<HomePage> {
         final logoW = logoWidths[allLogos.indexOf(logo)];
 
         // Calculate remaining capacity for each set's top row
-        double remainingA = topMaxWidth - setATop.fold(0.0, (sum, l) => sum + logoWidths[allLogos.indexOf(l)]) - (setATop.length > 0 ? gapPx * (setATop.length - 1) : 0);
-        double remainingB = topMaxWidth - setBTop.fold(0.0, (sum, l) => sum + logoWidths[allLogos.indexOf(l)]) - (setBTop.length > 0 ? gapPx * (setBTop.length - 1) : 0);
+        double usedA = setATop.fold(0.0, (sum, l) => sum + logoWidths[allLogos.indexOf(l)]) + (setATop.length > 0 ? gapPx * (setATop.length - 1) : 0);
+        double usedB = setBTop.fold(0.0, (sum, l) => sum + logoWidths[allLogos.indexOf(l)]) + (setBTop.length > 0 ? gapPx * (setBTop.length - 1) : 0);
+        double remainingA = topMaxWidth - usedA;
+        double remainingB = topMaxWidth - usedB;
 
         final neededA = setATop.isEmpty ? logoW : logoW + gapPx;
         final neededB = setBTop.isEmpty ? logoW : logoW + gapPx;
@@ -406,7 +413,10 @@ class _HomePageState extends State<HomePage> {
         final canFitA = neededA <= remainingA;
         final canFitB = neededB <= remainingB;
 
-        if (!canFitA && !canFitB) continue;
+        if (!canFitA && !canFitB) {
+          debugPrint('Logo ${allLogos.indexOf(logo)} (${logoW.toStringAsFixed(1)}px) DOES NOT FIT TOP: neededA=$neededA vs remA=$remainingA, neededB=$neededB vs remB=$remainingB');
+          continue;
+        }
 
         bool placeInA;
         if (canFitA && !canFitB) {
@@ -414,17 +424,18 @@ class _HomePageState extends State<HomePage> {
         } else if (!canFitA && canFitB) {
           placeInA = false;
         } else {
-          placeInA = setATop.length <= setBTop.length;
+          // Both can fit - place in the one with more remaining space
+          placeInA = remainingA >= remainingB;
         }
 
         if (placeInA) {
           setATop.add(logo);
           placed.add(logo);
-          debugPrint('SetA top: adding logo ${allLogos.indexOf(logo)} (${logoW.toStringAsFixed(1)}px)');
+          debugPrint('SetA top: adding logo ${allLogos.indexOf(logo)} (${logoW.toStringAsFixed(1)}px), used=$usedA, rem=$remainingA');
         } else {
           setBTop.add(logo);
           placed.add(logo);
-          debugPrint('SetB top: adding logo ${allLogos.indexOf(logo)} (${logoW.toStringAsFixed(1)}px)');
+          debugPrint('SetB top: adding logo ${allLogos.indexOf(logo)} (${logoW.toStringAsFixed(1)}px), used=$usedB, rem=$remainingB');
         }
       }
 
