@@ -295,9 +295,8 @@ class _HomePageState extends State<HomePage> {
       final setBTop = <LogoItem>[];
 
       // Helper: check if a logo fits in a bottom row given current logos in that row
-      // Bottom row spans full width (main 80% + corner 20%), centered in main section
-      // but can extend into corner section. Capacity = full available width.
-      // Margins are 1% of shortestSide on each side (edgeMarginPx).
+      // Bottom row is CENTERED on full photo width (uses full width, clips symmetrically if needed).
+      // The 1% edge margins don't apply to centered bottom row - it uses full photoWidth.
       bool fitsInBottom(List<LogoItem> currentBottom, LogoItem nextLogo) {
         final testBottom = [...currentBottom, nextLogo];
         double totalWidth = 0;
@@ -305,8 +304,9 @@ class _HomePageState extends State<HomePage> {
           final logoW = logoWidths[allLogos.indexOf(testBottom[i])];
           totalWidth += logoW + (i > 0 ? gapPx : 0);
         }
-        // Full available width for bottom row (photo width minus 1% margins on each side)
-        final maxWidth = photoWidth - edgeMarginPx * 2;
+        // Bottom row centered on full photo width - can use up to photoWidth
+        // (rendering allows symmetric clipping if row exceeds photoWidth)
+        final maxWidth = photoWidth;
         return totalWidth <= maxWidth;
       }
 
@@ -331,7 +331,7 @@ class _HomePageState extends State<HomePage> {
       // Debug: log capacities
       debugPrint('=== AUTO DISTRIBUTE DEBUG ===');
       debugPrint('photoWidth: $photoWidth, edgeMarginPx: $edgeMarginPx');
-      debugPrint('bottom maxWidth: ${photoWidth - edgeMarginPx * 2}');
+      debugPrint('bottom maxWidth: $photoWidth (centered, full width)');
       debugPrint('top maxWidth: ${photoWidth * 0.8 - edgeMarginPx * 2}');
       debugPrint('gapPx: $gapPx');
       for (int i = 0; i < allLogos.length; i++) {
@@ -364,7 +364,7 @@ class _HomePageState extends State<HomePage> {
           }
           if (best != null) {
             final currentWidth = currentBottom.fold(0.0, (sum, l) => sum + logoWidths[allLogos.indexOf(l)]) + (currentBottom.length > 0 ? gapPx * (currentBottom.length - 1) : 0);
-            debugPrint('$setName bottom: adding logo ${allLogos.indexOf(best)} (${bestWidth.toStringAsFixed(1)}px), current row: ${currentWidth.toStringAsFixed(1)}px, new total: ${(currentWidth + bestWidth + (currentBottom.isEmpty ? 0 : gapPx)).toStringAsFixed(1)}px / ${(photoWidth - edgeMarginPx * 2).toStringAsFixed(1)}px');
+            debugPrint('$setName bottom: adding logo ${allLogos.indexOf(best)} (${bestWidth.toStringAsFixed(1)}px), current row: ${currentWidth.toStringAsFixed(1)}px, new total: ${(currentWidth + bestWidth + (currentBottom.isEmpty ? 0 : gapPx)).toStringAsFixed(1)}px / ${photoWidth.toStringAsFixed(1)}px');
           } else {
             debugPrint('$setName bottom: FULL - no remaining logo fits');
           }
