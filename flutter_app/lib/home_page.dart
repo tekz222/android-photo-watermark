@@ -281,30 +281,15 @@ class _HomePageState extends State<HomePage> {
         return false;
       }
     } else if (_logoSetMode == LogoSetMode.autoMultiSet) {
-      // AUTO MULTI-SET MODE: Max 2 sets (A and B).
-      // ALGORITHM (per user requirement):
-      // 1. Fill Set A bottom MAXIMALLY - tight packing with actual logo widths, minimal edge gap
-      // 2. Fill Set B bottom MAXIMALLY from remaining logos - tight packing, minimal edge gap
-      // 3. Bottom counts DON'T need to be equal between sets - just fill each completely
-      // 4. Then fill TOP rows equally (same count per set) - must NOT touch corner logo
-      // 5. Corner logo reserved ~20% section on top-right - top logos stop at 80% mark
-
-      // Helper: calculate total row width for logos [startIdx, startIdx + n)
-      // Returns total width including gaps, or -1 if exceeds available width
-      double _rowWidthFor(int startIdx, int n) {
-        if (n <= 0) return 0;
-        double w = 0;
-        for (int i = startIdx; i < startIdx + n && i < allLogos.length; i++) {
-          w += logoWidths[i];
-          if (i > startIdx) w += gapPx;
-        }
-        return w;
-      }
+      // AUTO MULTI-SET MODE: Create as many sets as needed to fit ALL logos.
+      // ALGORITHM:
+      // 1. Fill bottom rows MAXIMALLY first across sets (sequential from logo list)
+      // 2. Then fill TOP rows EQUALLY (same count per set) - must NOT touch corner logo
+      // 3. Create additional sets as needed until all logos are placed
 
       // Helper: count how many fit in bottom row (CENTERED render)
       // Bottom row is centered: total row width must fit within [edgeMarginPx, photoWidth - edgeMarginPx]
       // Max row width = photoWidth - 2 * edgeMarginPx
-      // No corner section constraint for bottom row (corner logo is at TOP-RIGHT, vertically separated)
       int _fitCountBottom(int startIdx) {
         double rowWidth = 0;
         int count = 0;
@@ -352,74 +337,77 @@ class _HomePageState extends State<HomePage> {
         return true;
       }
 
-      // STEP 2: Need 2 sets.
-      // ALGORITHM: Maximize bottom usage first, then distribute remaining to tops equally.
-      // 1. Fill both bottoms MAXIMALLY first (sequential from logo list)
-      // 2. Distribute remaining equally to tops
-
-      // Fill Set A bottom maximally
-      int bottomA = _fitCountBottom(0);
-      // Fill Set B bottom maximally from remaining
-      int bottomB = _fitCountBottom(bottomA);
-      int logosInBottoms = bottomA + bottomB;
+      // STEP 2: Need multiple sets.
+      // Fill bottom rows MAXIMALLY across all sets first.
+      final bottomCounts = <int>[];
+      int logoIdx = 0;
+      while (logoIdx < totalLogos) {
+        int bottomCount = _fitCountBottom(logoIdx);
+        if (bottomCount == 0) bottomCount = 1; // Force at least 1 if any logos remain
+        bottomCounts.add(bottomCount);
+        logoIdx += bottomCount;
+      }
+      int numSets = bottomCounts.length;
+      int logosInBottoms = bottomCounts.reduce((a, b) => a + b);
       int remaining = totalLogos - logosInBottoms;
 
-      // Fill TOP rows EQUALLY (same count per set, or differ by 1 if odd remaining)
+      // Now distribute remaining logos to TOP rows EQUALLY across all sets
       // Max top that fits in top row (must not touch corner logo)
       int maxTopFit = _fitCountTop(logosInBottoms, logoWidths);
-      int maxEqualTop = (remaining / 2).floor();
-      int topPerSet = maxEqualTop.clamp(0, maxTopFit);
 
-      // After equal tops, if there's 1 remaining logo (odd total), give it to Set A top
-      int remainingAfterTops = remaining - (topPerSet * 2);
-      if (remainingAfterTops > 0 && topPerSet < maxTopFit) {
-        topPerSet++; // Give the extra logo to Set A top (differ by 1 max)
+      // Calculate equal top count per set
+      int topPerSet = (remaining / numSets).floor().clamp(0, maxTopFit);
+
+      // Distribute any extra logos (remainder) to first sets (max 1 extra per set)
+      int extraTopLogos = remaining - (topPerSet * numSets);
+      final topCounts = List<int>.filled(numSets, topPerSet);
+      for (int i = 0; i < extraTopLogos && i < numSets && topCounts[i] < maxTopFit; i++) {
+        topCounts[i]++;
       }
 
-      // Build the two sets - logos are taken sequentially from the list
-      int logoIdx = 0;
-      final setABottom = <LogoItem>[];
-      final setBBottom = <LogoItem>[];
-      final setATop = <LogoItem>[];
-      final setBTop = <LogoItem>[];
+      // Build the sets - logos are taken sequentially from the list
+      logoIdx = 0;
+      final sets = <LogoSet>[];
 
-      // Fill Set A bottom
-      for (int i = 0; i < bottomA && logoIdx < allLogos.length; i++) {
-        setABottom.add(allLogos[logoIdx++]);
-      }
-      // Fill Set B bottom
-      for (int i = 0; i < bottomB && logoIdx < allLogos.length; i++) {
-        setBBottom.add(allLogos[logoIdx++]);
-      }
-      // Fill Set A top
-      for (int i = 0; i < topPerSet && logoIdx < allLogos.length; i++) {
-        setATop.add(allLogos[logoIdx++]);
-      }
-      // Fill Set B top (may be one less if odd total)
-      int topB = (remaining - topPerSet).clamp(0, topPerSet);
-      for (int i = 0; i < topB && logoIdx < allLogos.length; i++) {
-        setBTop.add(allLogos[logoIdx++]);
+      for (int setIdx = 0; setIdx < numSets; setIdx++) {
+        final setBottom = <LogoItem>[];
+        final setTop = <LogoItem>[];
+
+        // Fill bottom for this set
+        for (int i = 0; i < bottomCounts[setIdx] && logoIdx < allLogos.length; i++) {
+          setBottom.add(allLogos[logoIdx++]);
+        }
+        // Fill top for this set
+        for (int i = 0; i < topCounts[setIdx] && logoIdx < allLogos.length; i++) {
+          setTop.add(allLogos[logoIdx++]);
+        }
+
+        sets.add(LogoSet(bottomLogos: setBottom, topLeftLogos: setTop));
       }
 
-      final setA = LogoSet(bottomLogos: setABottom, topLeftLogos: setATop);
-      final setB = LogoSet(bottomLogos: setBBottom, topLeftLogos: setBTop);
-      final sets = [setA, setB];
-
-      int totalA = bottomA + topPerSet;
-      int totalB = bottomB + topB;
-      int totalPlaced = totalA + totalB;
+      // Calculate totals for logging
+      int totalPlaced = 0;
+      for (int i = 0; i < numSets; i++) {
+        totalPlaced += bottomCounts[i] + topCounts[i];
+      }
 
       setState(() {
         _p.logoSets = sets;
-        _logoSetA = setA;
-        _logoSetB = setB;
+        _logoSetA = sets.isNotEmpty ? sets[0] : LogoSet(bottomLogos: [], topLeftLogos: []);
+        _logoSetB = sets.length > 1 ? sets[1] : LogoSet(bottomLogos: [], topLeftLogos: []);
       });
 
       if (mounted) {
+        final details = StringBuffer();
+        details.write('$numSets sets automáticos: ');
+        for (int i = 0; i < numSets; i++) {
+          details.write('Set ${String.fromCharCode(65 + i)}: ${bottomCounts[i]} base + ${topCounts[i]} topo = ${bottomCounts[i] + topCounts[i]}');
+          if (i < numSets - 1) details.write('; ');
+        }
+        details.write('. Total: $totalPlaced de $totalLogos logos.');
+
         _snack(
-          '2 sets automáticos: Set A: $bottomA base + $topPerSet topo = $totalA. '
-          'Set B: $bottomB base + $topPerSet topo = $totalB. '
-          'Total: $totalPlaced de $totalLogos logos.',
+          details.toString(),
           backgroundColor: const Color(0xFF2E7D32),
         );
       }
