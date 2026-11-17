@@ -2766,7 +2766,7 @@ class _HomePageState extends State<HomePage> {
     return '${two(d.day)}/${two(d.month)}/${d.year} ${two(d.hour)}:${two(d.minute)}';
   }
 
-  void _snack(String msg, {bool logOnly = false, Color? backgroundColor}) {
+  void _snack(String msg, {bool logOnly = false, Color? backgroundColor, Color? textColor}) {
     final now = DateTime.now();
     final timeStr = '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}';
     setState(() {
@@ -2777,7 +2777,7 @@ class _HomePageState extends State<HomePage> {
     if (!logOnly && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(msg),
+          content: Text(msg, style: TextStyle(color: textColor ?? Colors.white)),
           backgroundColor: backgroundColor,
           duration: const Duration(seconds: 3),
         ),
