@@ -441,6 +441,41 @@ class _HomePageState extends State<HomePage> {
 
       debugPrint('Phase 2 complete. SetA top: ${setATop.length}, SetB top: ${setBTop.length}');
 
+      // ===== PHASE 3: Move logos from top to bottom if space available =====
+      // Check remaining space in each set's bottom row, see if any top logos can fit there
+      for (final setName in ['SetA', 'SetB']) {
+        final bottom = setName == 'SetA' ? setABottom : setBBottom;
+        final top = setName == 'SetA' ? setATop : setBTop;
+
+        bool moved = true;
+        while (moved) {
+          moved = false;
+          // Calculate remaining space in bottom row
+          double usedBottom = bottom.fold(0.0, (sum, l) => sum + logoWidths[allLogos.indexOf(l)]) + (bottom.length > 0 ? gapPx * (bottom.length - 1) : 0);
+          double remainingBottom = photoWidth - usedBottom;
+
+          // Check each top logo (smallest first) to see if it fits in bottom
+          final topLogosSorted = List<LogoItem>.from(top);
+          topLogosSorted.sort((a, b) => logoWidths[allLogos.indexOf(a)].compareTo(logoWidths[allLogos.indexOf(b)]));
+
+          for (final logo in topLogosSorted) {
+            final logoW = logoWidths[allLogos.indexOf(logo)];
+            final needed = bottom.isEmpty ? logoW : logoW + gapPx;
+            if (needed <= remainingBottom) {
+              // Move from top to bottom
+              top.remove(logo);
+              bottom.add(logo);
+              moved = true;
+              debugPrint('$setName: MOVED logo ${allLogos.indexOf(logo)} (${logoW.toStringAsFixed(1)}px) from TOP to BOTTOM. Bottom rem was ${remainingBottom.toStringAsFixed(1)}px, needed $needed');
+              break; // Recalculate after move
+            }
+          }
+        }
+      }
+
+      debugPrint('Phase 3 complete. SetA bottom: ${setABottom.length}, SetA top: ${setATop.length}');
+      debugPrint('Phase 3 complete. SetB bottom: ${setBBottom.length}, SetB top: ${setBTop.length}');
+
       final totalPlaced = setABottom.length + setBBottom.length + setATop.length + setBTop.length;
       final overflow = totalPlaced < allLogos.length;
 
