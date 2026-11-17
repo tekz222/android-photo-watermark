@@ -337,10 +337,11 @@ Uint8List renderWatermark(WatermarkRequest r, {DecodedCache? cache}) {
   final shortest = r.referenceShortestSide ??
       (photo.width < photo.height ? photo.width : photo.height).toDouble();
 
-  // Slightly reduce logo size on square (1:1) and horizontal images.
-  // Vertical images keep the full size. Factor: 0.92 = 8% smaller.
+  // Gradually reduce logo size as aspect ratio increases (more horizontal).
+  // 9:16 (0.5625) vertical = 1.0 (reference), 1:1 = ~0.9, 16:9 (1.777) = ~0.8
   final aspectRatio = photo.width / photo.height;
-  final logoSizeFactor = aspectRatio >= 1.0 ? 0.92 : 1.0;
+  const refAspect = 9 / 16; // 0.5625 - vertical reference
+  final logoSizeFactor = (refAspect / aspectRatio).clamp(0.75, 1.0);
 
   // Draw top gradient if enabled.
   if (r.topGradient) {
