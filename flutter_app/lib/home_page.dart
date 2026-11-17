@@ -294,37 +294,6 @@ class _HomePageState extends State<HomePage> {
       final setATop = <LogoItem>[];
       final setBTop = <LogoItem>[];
 
-      // Helper: check if a logo fits in a bottom row given current logos in that row
-      // Bottom row is CENTERED on full photo width (uses full width, clips symmetrically if needed).
-      // The 1% edge margins don't apply to centered bottom row - it uses full photoWidth.
-      bool fitsInBottom(List<LogoItem> currentBottom, LogoItem nextLogo) {
-        final testBottom = [...currentBottom, nextLogo];
-        double totalWidth = 0;
-        for (int i = 0; i < testBottom.length; i++) {
-          final logoW = logoWidths[allLogos.indexOf(testBottom[i])];
-          totalWidth += logoW + (i > 0 ? gapPx : 0);
-        }
-        // Bottom row centered on full photo width - can use up to photoWidth
-        // (rendering allows symmetric clipping if row exceeds photoWidth)
-        final maxWidth = photoWidth;
-        return totalWidth <= maxWidth;
-      }
-
-      // Helper: check if a logo fits in a top row given current top logos
-      // Top row is LEFT-ALIGNED (starts from left margin), independent of bottom row
-      // Must stop before corner logo position (~80% of photo width)
-      bool fitsInTop(List<LogoItem> currentTop, LogoItem nextLogo) {
-        final testTop = [...currentTop, nextLogo];
-        double totalWidth = 0;
-        for (int i = 0; i < testTop.length; i++) {
-          final logoW = logoWidths[allLogos.indexOf(testTop[i])];
-          totalWidth += logoW + (i > 0 ? gapPx : 0);
-        }
-        // Top row available width: from left margin to corner logo position (80%)
-        final availableWidth = photoWidth * 0.8 - edgeMarginPx * 2;
-        return totalWidth <= availableWidth;
-      }
-
       // Track which logos are placed
       final placed = <LogoItem>{};
 
