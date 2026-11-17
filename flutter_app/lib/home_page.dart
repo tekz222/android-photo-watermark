@@ -1819,10 +1819,18 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _recomputePreviews() async {
     // Wait for initialization to complete before rendering
+    // On first launch, worker isolate needs time to JIT compile
     if (!_initialized) {
-      // If not initialized yet, wait a bit and retry
-      await Future.delayed(const Duration(milliseconds: 100));
-      if (!_initialized) return;
+      // Wait up to 10 seconds for initialization to complete
+      int waitTime = 0;
+      while (!_initialized && waitTime < 10000) {
+        await Future.delayed(const Duration(milliseconds: 100));
+        waitTime += 100;
+      }
+      if (!_initialized) {
+        if (mounted) setState(() => _renderingPreview = false);
+        return;
+      }
     }
     final token = ++_previewToken;
     _worker.cancelPending(); // drop renders queued by an abandoned loop
