@@ -4815,20 +4815,24 @@ class _HomePageState extends State<HomePage> {
                 (v) => _setImageSettings(path, effectiveSettings.copyWith(cornerLogoMarginRight: v))),
             const SizedBox(height: 12),
 
-            // Gradient Heights
-            Text('Altura dos gradientes', style: small?.copyWith(fontWeight: FontWeight.w600)),
-            const SizedBox(height: 4),
-            if (effectiveSettings.useGlobalGradientHeight) ...[
-              _slider('Altura (ambos: topo e base)', effectiveSettings.topGradientHeight ?? _topGradientHeight, 1, 50,
-                  (v) => _setImageSettings(path, effectiveSettings.copyWith(
-                    topGradientHeight: v,
-                    bottomGradientHeight: v,
-                  ))),
-            ] else ...[
-              _slider('Altura (topo)', effectiveSettings.topGradientHeight ?? _topGradientHeight, 1, 50,
-                  (v) => _setImageSettings(path, effectiveSettings.copyWith(topGradientHeight: v))),
-              _slider('Altura (base)', effectiveSettings.bottomGradientHeight ?? _bottomGradientHeight, 1, 50,
-                  (v) => _setImageSettings(path, effectiveSettings.copyWith(bottomGradientHeight: v))),
+            // Gradient Heights - only show if global gradients are enabled
+            if (_topGradient || _bottomGradient) ...[
+              Text('Altura dos gradientes', style: small?.copyWith(fontWeight: FontWeight.w600)),
+              const SizedBox(height: 4),
+              if (effectiveSettings.useGlobalGradientHeight) ...[
+                _slider('Altura (ambos: topo e base)', effectiveSettings.topGradientHeight ?? _topGradientHeight, 1, 50,
+                    (v) => _setImageSettings(path, effectiveSettings.copyWith(
+                      topGradientHeight: v,
+                      bottomGradientHeight: v,
+                    ))),
+              ] else ...[
+                if (_topGradient)
+                  _slider('Altura (topo)', effectiveSettings.topGradientHeight ?? _topGradientHeight, 1, 50,
+                      (v) => _setImageSettings(path, effectiveSettings.copyWith(topGradientHeight: v))),
+                if (_bottomGradient)
+                  _slider('Altura (base)', effectiveSettings.bottomGradientHeight ?? _bottomGradientHeight, 1, 50,
+                      (v) => _setImageSettings(path, effectiveSettings.copyWith(bottomGradientHeight: v))),
+              ],
             ],
           ],
           if (!enabled && _hasAnyContent) ...[
@@ -5899,6 +5903,7 @@ class _HomePageState extends State<HomePage> {
           itemCount: paths.length,
           placeholders: placeholders,
           loader: (i) => _renderFull(paths[i]),
+          showMarginOverlay: _showMarginOverlay,
         ),
       ),
     );
@@ -5928,6 +5933,7 @@ class _HomePageState extends State<HomePage> {
           itemCount: images.length,
           placeholders: images, // already full-res; show immediately
           loader: (i) async => images[i],
+          showMarginOverlay: _showMarginOverlay,
         ),
       ),
     );
@@ -7093,6 +7099,7 @@ class _FullscreenViewer extends StatefulWidget {
     required this.itemCount,
     required this.loader,
     this.placeholders,
+    this.showMarginOverlay = false,
   });
 
   final int initialPage;
@@ -7102,6 +7109,9 @@ class _FullscreenViewer extends StatefulWidget {
   /// Optional already-available images shown immediately (e.g. low-res
   /// previews) while [loader] produces the sharp version.
   final List<Uint8List?>? placeholders;
+
+  /// Whether to show margin visualization overlay (1% edge margins on bottom row).
+  final bool showMarginOverlay;
 
   @override
   State<_FullscreenViewer> createState() => _FullscreenViewerState();
@@ -7342,6 +7352,43 @@ class _FullscreenViewerState extends State<_FullscreenViewer> {
                                     gaplessPlayback: true,
                                     filterQuality: FilterQuality.medium),
                               ),
+                              // Margin visualization overlay (1% edge margins on bottom row)
+                              if (widget.showMarginOverlay && current) ...[
+                                // Left margin strip (1% of picture width, bottom 15% of picture height)
+                                Positioned(
+                                  left: origin.dx,
+                                  top: origin.dy + fit.height * s * 0.85, // bottom 15%
+                                  width: fit.width * s * 0.01, // 1% of picture width
+                                  height: fit.height * s * 0.15,
+                                  child: Container(
+                                    color: Colors.red.withValues(alpha: 0.3),
+                                    child: Center(
+                                      child: RotatedBox(
+                                        quarterTurns: 3,
+                                        child: Text('1%',
+                                            style: TextStyle(color: Colors.white, fontSize: 10 * s, fontWeight: FontWeight.bold)),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                // Right margin strip
+                                Positioned(
+                                  right: origin.dx + fit.width * s - fit.width * s * 0.01, // right edge minus 1%
+                                  top: origin.dy + fit.height * s * 0.85,
+                                  width: fit.width * s * 0.01,
+                                  height: fit.height * s * 0.15,
+                                  child: Container(
+                                    color: Colors.red.withValues(alpha: 0.3),
+                                    child: Center(
+                                      child: RotatedBox(
+                                        quarterTurns: 3,
+                                        child: Text('1%',
+                                            style: TextStyle(color: Colors.white, fontSize: 10 * s, fontWeight: FontWeight.bold)),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ],
                           ),
                         ),
