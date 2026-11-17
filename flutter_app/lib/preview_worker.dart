@@ -15,7 +15,8 @@ class PreviewWorker {
   SendPort? _send;
   final ReceivePort _receive = ReceivePort();
   final List<_Job> _queue = [];
-  _Job? _inFlight;
+  final Map<int, _Job> _inFlight = {};
+  static const int _maxConcurrent = 4; // Process up to 4 renders in parallel
   int _nextId = 0;
   bool _disposed = false;
   Object? _spawnError;
@@ -30,10 +31,10 @@ class PreviewWorker {
         }
         _pump();
       } else if (msg is List && msg.length == 2) {
-        final job = _inFlight;
-        if (job != null && job.id == msg[0]) {
-          _inFlight = null;
-          if (!job.done.isCompleted) job.done.complete(msg[1] as Uint8List?);
+        final id = msg[0] as int;
+        final job = _inFlight.remove(id);
+        if (job != null && !job.done.isCompleted) {
+          job.done.complete(msg[1] as Uint8List?);
         }
         _pump();
       }
@@ -74,7 +75,7 @@ class PreviewWorker {
   }
 
   /// Drops every request that hasn't been sent yet (they complete with null).
-  /// The one already rendering still finishes.
+  /// The ones already rendering still finish.
   void cancelPending() {
     for (final j in _queue) {
       if (!j.done.isCompleted) j.done.complete(null);
@@ -90,10 +91,12 @@ class PreviewWorker {
       }
       _pendingPuts.clear();
     }
-    if (_inFlight != null || _queue.isEmpty) return;
-    final job = _queue.removeAt(0);
-    _inFlight = job;
-    _send!.send([job.id, job.request]);
+    // Send up to _maxConcurrent jobs
+    while (_inFlight.length < _maxConcurrent && _queue.isNotEmpty) {
+      final job = _queue.removeAt(0);
+      _inFlight[job.id] = job;
+      _send!.send([job.id, job.request]);
+    }
   }
 
   /// Drops every cached decoded image (e.g. on "Novo projeto").
@@ -116,9 +119,10 @@ class PreviewWorker {
   void dispose() {
     _disposed = true;
     cancelPending();
-    final job = _inFlight;
-    if (job != null && !job.done.isCompleted) job.done.complete(null);
-    _inFlight = null;
+    for (final job in _inFlight.values) {
+      if (!job.done.isCompleted) job.done.complete(null);
+    }
+    _inFlight.clear();
     _isolate?.kill(priority: Isolate.immediate);
     _receive.close();
   }

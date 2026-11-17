@@ -282,9 +282,9 @@ class _HomePageState extends State<HomePage> {
         return false;
       }
     } else {
-      // ALTERNATING MODE: Fill bottom rows FIRST (maximize capacity), then top rows.
-      // Each logo tries: Set A bottom → Set B bottom → Set A top → Set B top.
-      // This ensures bottom rows are packed completely before using top rows.
+      // ALTERNATING MODE: Maximize each set's bottom row independently,
+      // then each set's top row. Alternate which set gets the next logo
+      // to keep counts balanced.
       // Ensure Set A and B exist
       if (_logoSetA == null) _logoSetA = LogoSet(bottomLogos: [], topLeftLogos: []);
       if (_logoSetB == null) _logoSetB = LogoSet(bottomLogos: [], topLeftLogos: []);
@@ -325,34 +325,114 @@ class _HomePageState extends State<HomePage> {
         return totalWidth <= availableWidth;
       }
 
-      for (final logo in allLogos) {
-        bool placed = false;
+      // Track which logos are placed
+      final placed = <LogoItem>{};
 
-        // Try Set A bottom first
-        if (fitsInBottom(setABottom, logo)) {
-          setABottom.add(logo);
-          placed = true;
+      // ===== PHASE 1: Pack bottom rows to maximum capacity =====
+      // For each set, repeatedly add the smallest remaining logo that fits
+      // Alternate between sets to balance counts
+      bool aBottomFull = false;
+      bool bBottomFull = false;
+      bool tryAFirst = true; // Alternate priority
+
+      while (!aBottomFull || !bBottomFull) {
+        bool progress = false;
+
+        // Helper: find smallest unplaced logo that fits in given bottom row
+        LogoItem? findSmallestFit(List<LogoItem> currentBottom) {
+          LogoItem? best;
+          double bestWidth = double.infinity;
+          for (final logo in allLogos) {
+            if (placed.contains(logo)) continue;
+            if (fitsInBottom(currentBottom, logo)) {
+              final w = logoWidths[allLogos.indexOf(logo)];
+              if (w < bestWidth) {
+                bestWidth = w;
+                best = logo;
+              }
+            }
+          }
+          return best;
         }
+
+        // Try Set A bottom
+        if (!aBottomFull) {
+          final logo = findSmallestFit(setABottom);
+          if (logo != null) {
+            setABottom.add(logo);
+            placed.add(logo);
+            progress = true;
+          } else {
+            aBottomFull = true;
+          }
+        }
+
         // Try Set B bottom
-        else if (fitsInBottom(setBBottom, logo)) {
-          setBBottom.add(logo);
-          placed = true;
-        }
-        // Try Set A top
-        else if (fitsInTop(setATop, logo)) {
-          setATop.add(logo);
-          placed = true;
-        }
-        // Try Set B top
-        else if (fitsInTop(setBTop, logo)) {
-          setBTop.add(logo);
-          placed = true;
+        if (!bBottomFull) {
+          final logo = findSmallestFit(setBBottom);
+          if (logo != null) {
+            setBBottom.add(logo);
+            placed.add(logo);
+            progress = true;
+          } else {
+            bBottomFull = true;
+          }
         }
 
-        if (!placed) {
-          // Logo couldn't fit anywhere - overflow
-          break;
+        if (!progress) break; // Neither can accept more
+        tryAFirst = !tryAFirst;
+      }
+
+      // ===== PHASE 2: Pack top rows to maximum capacity =====
+      bool aTopFull = false;
+      bool bTopFull = false;
+      tryAFirst = true;
+
+      while (!aTopFull || !bTopFull) {
+        bool progress = false;
+
+        LogoItem? findSmallestFitTop(List<LogoItem> currentTop) {
+          LogoItem? best;
+          double bestWidth = double.infinity;
+          for (final logo in allLogos) {
+            if (placed.contains(logo)) continue;
+            if (fitsInTop(currentTop, logo)) {
+              final w = logoWidths[allLogos.indexOf(logo)];
+              if (w < bestWidth) {
+                bestWidth = w;
+                best = logo;
+              }
+            }
+          }
+          return best;
         }
+
+        // Try Set A top
+        if (!aTopFull) {
+          final logo = findSmallestFitTop(setATop);
+          if (logo != null) {
+            setATop.add(logo);
+            placed.add(logo);
+            progress = true;
+          } else {
+            aTopFull = true;
+          }
+        }
+
+        // Try Set B top
+        if (!bTopFull) {
+          final logo = findSmallestFitTop(setBTop);
+          if (logo != null) {
+            setBTop.add(logo);
+            placed.add(logo);
+            progress = true;
+          } else {
+            bTopFull = true;
+          }
+        }
+
+        if (!progress) break;
+        tryAFirst = !tryAFirst;
       }
 
       final totalPlaced = setABottom.length + setBBottom.length + setATop.length + setBTop.length;
