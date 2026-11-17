@@ -279,88 +279,73 @@ class _HomePageState extends State<HomePage> {
         return false;
       }
     } else {
-      // DUAL-SET MODE: alternating
-      // RULE: Both sets must have SAME count in bottom row, and SAME count in top row.
-      // Fill bottom rows first (balanced), then top rows (balanced).
+      // ALTERNATING MODE: round-robin fill bottom rows first, then top rows
+      // Each set's bottom row fills independently to its max capacity
+      // Then each set's top row fills independently (respecting corner logo)
       // Ensure Set A and B exist
       if (_logoSetA == null) _logoSetA = LogoSet(bottomLogos: [], topLeftLogos: []);
       if (_logoSetB == null) _logoSetB = LogoSet(bottomLogos: [], topLeftLogos: []);
 
-      // Step 1: Calculate capacity for ONE bottom row (using corner space if available)
-      final bottomPerRow = _fitCountWithCorner(0, mainSectionWidth, cornerSectionWidth);
+      // Calculate max capacity for EACH bottom row independently (using corner space)
+      // Both sets use the same calculation since they have same layout
+      final maxBottomA = _fitCountWithCorner(0, mainSectionWidth, cornerSectionWidth);
+      final maxBottomB = maxBottomA; // Same layout, same capacity
 
-      // Step 2: Calculate capacity for ONE top row (start from 0, each set is independent)
-      // Use _fitCountTop which accounts for actual corner logo position
-      final topPerRow = _fitCountTop(0, logoWidths);
+      // Calculate max capacity for EACH top row independently
+      // Each set starts fresh at index 0 for top row calculation
+      // (Actual top capacity will be calculated after bottom rows are filled)
+      // maxTopA is not used directly; actualMaxTopA is calculated after bottom fill
 
-      // Maximum logos per set: bottomPerRow (bottom) + topPerRow (top)
-      final maxPerSet = bottomPerRow + topPerRow;
-      final maxTotal = maxPerSet * 2; // Both sets combined
-
-      final logosToDistribute = allLogos.length.clamp(0, maxTotal);
-      final overflow = logosToDistribute < allLogos.length;
-
-      // We need to distribute logos so both sets have EQUAL bottom count and EQUAL top count
-      // Strategy: Try to maximize the number of logos per set while keeping balance
-      // Each set gets: bottomCount (same for both) + topCount (same for both)
-      // Total logos = 2 * (bottomCount + topCount) [or +1 if odd total]
-
-      // Find the maximum balanced distribution
-      int bestBottomPerSet = 0;
-      int bestTopPerSet = 0;
-      int bestTotalPerSet = 0;
-
-      // Try all possible bottom counts from max down to 0
-      for (int b = bottomPerRow; b >= 0; b--) {
-        // For this bottom count, max top per set
-        final maxTopForThisBottom = topPerRow;
-        // Total logos needed for both sets = 2 * (b + t)
-        // We want to maximize b + t while 2*(b+t) <= logosToDistribute
-        final remainingForTop = logosToDistribute - 2 * b;
-        if (remainingForTop < 0) continue; // Not enough logos for this bottom count
-        final t = (remainingForTop / 2).floor().clamp(0, maxTopForThisBottom);
-        final totalPerSet = b + t;
-        if (totalPerSet > bestTotalPerSet) {
-          bestTotalPerSet = totalPerSet;
-          bestBottomPerSet = b;
-          bestTopPerSet = t;
-        }
-      }
-
-      // If we couldn't place any logos in balanced way
-      if (bestTotalPerSet == 0 && allLogos.isNotEmpty) {
-        // At least put 1 in each bottom if possible
-        bestBottomPerSet = bottomPerRow > 0 ? 1 : 0;
-      }
-
-      final bottomPerSet = bestBottomPerSet;
-      final topPerSet = bestTopPerSet;
-      final totalPlaced = 2 * (bottomPerSet + topPerSet);
-      final remainder = logosToDistribute - totalPlaced; // 0 or 1 (if odd)
-
-      // Build the lists for each set
+      // Round-robin fill bottom rows: A bottom, B bottom, A bottom, B bottom...
       final setABottom = <LogoItem>[];
       final setBBottom = <LogoItem>[];
       final setATop = <LogoItem>[];
       final setBTop = <LogoItem>[];
 
       int idx = 0;
-      // Fill Set A bottom
-      for (int i = 0; i < bottomPerSet; i++) {
-        if (idx < allLogos.length) setABottom.add(allLogos[idx++]);
+      int placedBottomA = 0;
+      int placedBottomB = 0;
+
+      // Fill bottom rows round-robin until both are full or no more logos
+      while (idx < allLogos.length && (placedBottomA < maxBottomA || placedBottomB < maxBottomB)) {
+        // Add to Set A bottom if not full
+        if (placedBottomA < maxBottomA && idx < allLogos.length) {
+          setABottom.add(allLogos[idx++]);
+          placedBottomA++;
+        }
+        // Add to Set B bottom if not full
+        if (placedBottomB < maxBottomB && idx < allLogos.length) {
+          setBBottom.add(allLogos[idx++]);
+          placedBottomB++;
+        }
       }
-      // Fill Set B bottom
-      for (int i = 0; i < bottomPerSet; i++) {
-        if (idx < allLogos.length) setBBottom.add(allLogos[idx++]);
+
+      // Now fill top rows round-robin: A top, B top, A top, B top...
+      // Each set's top row capacity depends on how many bottom logos it has
+      // (because _fitCountTop uses startIdx to know which logos are already placed)
+      // But we calculate capacity based on the actual bottom count for each set
+      int placedTopA = 0;
+      int placedTopB = 0;
+
+      // Calculate actual top capacity for each set based on their bottom count
+      final actualMaxTopA = _fitCountTop(placedBottomA, logoWidths);
+      final actualMaxTopB = _fitCountTop(placedBottomB, logoWidths);
+
+      while (idx < allLogos.length && (placedTopA < actualMaxTopA || placedTopB < actualMaxTopB)) {
+        // Add to Set A top if not full
+        if (placedTopA < actualMaxTopA && idx < allLogos.length) {
+          setATop.add(allLogos[idx++]);
+          placedTopA++;
+        }
+        // Add to Set B top if not full
+        if (placedTopB < actualMaxTopB && idx < allLogos.length) {
+          setBTop.add(allLogos[idx++]);
+          placedTopB++;
+        }
       }
-      // Fill Set A top
-      for (int i = 0; i < topPerSet; i++) {
-        if (idx < allLogos.length) setATop.add(allLogos[idx++]);
-      }
-      // Fill Set B top
-      for (int i = 0; i < topPerSet; i++) {
-        if (idx < allLogos.length) setBTop.add(allLogos[idx++]);
-      }
+
+      final totalPlaced = setABottom.length + setBBottom.length + setATop.length + setBTop.length;
+      final overflow = totalPlaced < allLogos.length;
 
       setState(() {
         _logoSetA = _logoSetA!.copyWith(
@@ -377,17 +362,8 @@ class _HomePageState extends State<HomePage> {
 
       if (overflow && mounted) {
         _snack(
-          'Ambos os conjuntos estão cheios! ${allLogos.length - logosToDistribute} logo(s) não couberam. '
+          'Ambos os conjuntos estão cheios! ${allLogos.length - totalPlaced} logo(s) não couberam. '
           'Reduza o tamanho das logos.',
-          backgroundColor: const Color(0xFFB71C1C),
-        );
-        return false;
-      }
-      // If remainder > 0, one logo couldn't be placed evenly (would unbalance sets)
-      if (remainder > 0 && mounted) {
-        _snack(
-          '1 logo não pôde ser colocada — faria os conjuntos desiguais. '
-          'Reduza o tamanho ou remova uma logo para distribuir igualmente.',
           backgroundColor: const Color(0xFFB71C1C),
         );
         return false;
@@ -426,8 +402,7 @@ class _HomePageState extends State<HomePage> {
   set _bottomMargin(double v) => _p.bottomMargin = v;
   double get _topMargin => _p.topMargin;
   set _topMargin(double v) => _p.topMargin = v;
-  double get _cornerMarginTop => _p.cornerMarginTop;
-  set _cornerMarginTop(double v) => _p.cornerMarginTop = v;
+  // cornerMarginTop removed - corner logo uses topMargin
   double get _cornerMarginRight => _p.cornerMarginRight;
   set _cornerMarginRight(double v) => _p.cornerMarginRight = v;
   bool get _centered => true; // Bottom logos are always centered
@@ -808,7 +783,6 @@ class _HomePageState extends State<HomePage> {
         'opacity': _logoOpacity,
         'bottomMargin': _bottomMargin,
         'topMargin': _topMargin,
-        'cornerMarginTop': _cornerMarginTop,
         'cornerMarginRight': _cornerMarginRight,
         'centered': _centered,
         'spacing': _logoSpacing,
@@ -1055,14 +1029,8 @@ class _HomePageState extends State<HomePage> {
         _logoOpacity = (settings['opacity'] as num?)?.toDouble() ?? 90.0;
         _bottomMargin = (settings['bottomMargin'] as num?)?.toDouble() ?? 2.0;
         _topMargin = (settings['topMargin'] as num?)?.toDouble() ?? 2.0;
-        _cornerMarginTop = (settings['cornerMarginTop'] as num?)?.toDouble() ?? 2.0;
+
         _cornerMarginRight = (settings['cornerMarginRight'] as num?)?.toDouble() ?? 2.0;
-        // Backward compatibility: if old cornerMargin exists, use it for both
-        if (settings['cornerMargin'] != null) {
-          final old = (settings['cornerMargin'] as num).toDouble();
-          _cornerMarginTop = old;
-          _cornerMarginRight = old;
-        }
         _centered = settings['centered'] as bool? ?? false;
         _logoSpacing = (settings['spacing'] as num?)?.toDouble() ?? 0.5;
         _bottomGradient = settings['bottomGradient'] as bool? ?? false;
@@ -1871,7 +1839,6 @@ class _HomePageState extends State<HomePage> {
       topLeftTop: _topMargin / 100,
       topLeftLeft: _leftMargin / 100,
       cornerHeight: _logoSize / 100,
-      cornerMarginTop: _cornerMarginTop / 100,
       cornerMarginRight: _cornerMarginRight / 100,
       rowOpacity: _logoOpacity / 100,
       centered: true,
@@ -1917,7 +1884,6 @@ class _HomePageState extends State<HomePage> {
       topLeftTop: _topMargin / 100,
       topLeftLeft: _leftMargin / 100,
       cornerHeight: _logoSize / 100,
-      cornerMarginTop: _cornerMarginTop / 100,
       cornerMarginRight: _cornerMarginRight / 100,
       rowOpacity: _logoOpacity / 100,
       centered: true,
@@ -4503,9 +4469,7 @@ class _HomePageState extends State<HomePage> {
           const SizedBox(height: 6),
           Text('Uma única logo no canto superior direito.', style: small),
           if (_cornerLogo != null) ...[
-            _slider('Distância do topo', _cornerMarginTop, 0, 30,
-                (v) => setState(() => _cornerMarginTop = v),
-                enabled: !_currentImageHasCustomSettings),
+
             _slider('Distância da direita', _cornerMarginRight, 0, 30,
                 (v) => setState(() => _cornerMarginRight = v),
                 enabled: !_currentImageHasCustomSettings),
@@ -4553,7 +4517,7 @@ class _HomePageState extends State<HomePage> {
         bottomLogoMargin: _bottomMargin,
         topLeftLogoMarginTop: _topMargin,
         topLeftLogoMarginLeft: _leftMargin,
-        cornerLogoMarginTop: _cornerMarginTop,
+
         cornerLogoMarginRight: _cornerMarginRight,
       );
       _setImageSettings(path, effectiveSettings);
@@ -4656,10 +4620,8 @@ class _HomePageState extends State<HomePage> {
                 (v) => _setImageSettings(path, effectiveSettings.copyWith(topLeftLogoMarginLeft: v))),
             const SizedBox(height: 8),
 
-            // Corner logo margins - always per-section
+            // Corner logo margins - uses top margin (same as top row)
             Text('Logo principal (canto superior direito)', style: small?.copyWith(fontWeight: FontWeight.w600)),
-            _slider('Distância do topo', effectiveSettings.cornerLogoMarginTop ?? _cornerMarginTop, 0, 40,
-                (v) => _setImageSettings(path, effectiveSettings.copyWith(cornerLogoMarginTop: v))),
             _slider('Distância da direita', effectiveSettings.cornerLogoMarginRight ?? _cornerMarginRight, 0, 40,
                 (v) => _setImageSettings(path, effectiveSettings.copyWith(cornerLogoMarginRight: v))),
             const SizedBox(height: 12),

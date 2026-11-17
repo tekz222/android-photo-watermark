@@ -31,7 +31,6 @@ class Project {
     this.bottomMargin = 2.0,
     this.topMargin = 2.0,
     this.cornerHeight = 22.0,
-    this.cornerMarginTop = 2.0,
     this.cornerMarginRight = 2.0,
     this.centered = true,
     this.logoSpacing = 0.0,
@@ -97,7 +96,6 @@ class Project {
   double bottomMargin;
   double topMargin;
   double cornerHeight;
-  double cornerMarginTop;
   double cornerMarginRight;
   bool centered;
   double logoSpacing;
@@ -197,7 +195,6 @@ class Project {
       bottomMargin: bottomMargin,
       topMargin: topMargin,
       cornerHeight: cornerHeight,
-      cornerMarginTop: cornerMarginTop,
       cornerMarginRight: cornerMarginRight,
       centered: centered,
       logoSpacing: logoSpacing,
@@ -273,7 +270,6 @@ class Project {
       'bottomMargin': bottomMargin,
       'topMargin': topMargin,
       'cornerHeight': cornerHeight,
-      'cornerMarginTop': cornerMarginTop,
       'cornerMarginRight': cornerMarginRight,
       'centered': centered,
       'logoSpacing': logoSpacing,
@@ -365,7 +361,6 @@ class Project {
       bottomMargin: (json['bottomMargin'] as num?)?.toDouble() ?? 2.0,
       topMargin: (json['topMargin'] as num?)?.toDouble() ?? 2.0,
       cornerHeight: (json['cornerHeight'] as num?)?.toDouble() ?? 22.0,
-      cornerMarginTop: (json['cornerMarginTop'] as num?)?.toDouble() ?? 2.0,
       cornerMarginRight: (json['cornerMarginRight'] as num?)?.toDouble() ?? 2.0,
       centered: json['centered'] as bool? ?? false,
       logoSpacing: (json['logoSpacing'] as num?)?.toDouble() ?? 0.0,
@@ -620,7 +615,7 @@ class ProjectManager {
           bottomMargin: project.bottomMargin,
           topMargin: project.topMargin,
           cornerHeight: project.cornerHeight,
-          cornerMarginTop: project.cornerMarginTop,
+
           cornerMarginRight: project.cornerMarginRight,
           centered: project.centered,
           logoSpacing: project.logoSpacing,

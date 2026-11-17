@@ -150,7 +150,6 @@ class ImageSettings {
     this.bottomLogoMargin,
     this.topLeftLogoMarginTop,
     this.topLeftLogoMarginLeft,
-    this.cornerLogoMarginTop,
     this.cornerLogoMarginRight,
     // Spacing override
     this.logoSpacing,
@@ -186,7 +185,6 @@ class ImageSettings {
 
   // Corner logo (top-right)
   final double? cornerLogoSize;        // fraction of shortest side (default: cornerHeight)
-  final double? cornerLogoMarginTop;   // fraction of shortest side (default: cornerMarginTop)
   final double? cornerLogoMarginRight; // fraction of shortest side (default: cornerMarginRight)
 
   // Spacing between logos in a row
@@ -230,7 +228,6 @@ class ImageSettings {
     'topLeftLogoMarginTop': topLeftLogoMarginTop,
     'topLeftLogoMarginLeft': topLeftLogoMarginLeft,
     'cornerLogoSize': cornerLogoSize,
-    'cornerLogoMarginTop': cornerLogoMarginTop,
     'cornerLogoMarginRight': cornerLogoMarginRight,
     'logoSpacing': logoSpacing,
     'topGradientHeight': topGradientHeight,
@@ -255,7 +252,6 @@ class ImageSettings {
     topLeftLogoMarginTop: (json['topLeftLogoMarginTop'] as num?)?.toDouble(),
     topLeftLogoMarginLeft: (json['topLeftLogoMarginLeft'] as num?)?.toDouble(),
     cornerLogoSize: (json['cornerLogoSize'] as num?)?.toDouble(),
-    cornerLogoMarginTop: (json['cornerLogoMarginTop'] as num?)?.toDouble(),
     cornerLogoMarginRight: (json['cornerLogoMarginRight'] as num?)?.toDouble(),
     logoSpacing: (json['logoSpacing'] as num?)?.toDouble(),
     topGradientHeight: (json['topGradientHeight'] as num?)?.toDouble(),
@@ -281,7 +277,6 @@ class ImageSettings {
     double? topLeftLogoMarginTop,
     double? topLeftLogoMarginLeft,
     double? cornerLogoSize,
-    double? cornerLogoMarginTop,
     double? cornerLogoMarginRight,
     double? logoSpacing,
     double? topGradientHeight,
@@ -304,7 +299,6 @@ class ImageSettings {
     topLeftLogoMarginTop: topLeftLogoMarginTop ?? this.topLeftLogoMarginTop,
     topLeftLogoMarginLeft: topLeftLogoMarginLeft ?? this.topLeftLogoMarginLeft,
     cornerLogoSize: cornerLogoSize ?? this.cornerLogoSize,
-    cornerLogoMarginTop: cornerLogoMarginTop ?? this.cornerLogoMarginTop,
     cornerLogoMarginRight: cornerLogoMarginRight ?? this.cornerLogoMarginRight,
     logoSpacing: logoSpacing ?? this.logoSpacing,
     topGradientHeight: topGradientHeight ?? this.topGradientHeight,

@@ -101,7 +101,6 @@ class WatermarkRequest {
     required this.topLeftTop,
     required this.topLeftLeft,
     required this.cornerHeight,
-    required this.cornerMarginTop,
     required this.cornerMarginRight,
     this.rowOpacity = 1.0,
     this.centered = false,
@@ -157,7 +156,6 @@ class WatermarkRequest {
   final double topLeftTop;
   final double topLeftLeft;
   final double cornerHeight;
-  final double cornerMarginTop;
   final double cornerMarginRight;
 
   /// Opacity (0..1) applied to the bottom and top rows (not the corner logo).
@@ -239,9 +237,8 @@ class WatermarkRequest {
       : cornerHeight;
 
   /// Returns the effective corner logo top margin for this image (custom or global).
-  double effectiveCornerMarginTop() => imageSettings?.enabled == true && imageSettings?.cornerLogoMarginTop != null
-      ? imageSettings!.cornerLogoMarginTop!
-      : cornerMarginTop;
+  /// Uses the same top margin as top-left logos (topLeftTop).
+  double effectiveCornerMarginTop() => topLeftTop;
 
   /// Returns the effective corner logo right margin for this image (custom or global).
   double effectiveCornerMarginRight() => imageSettings?.enabled == true && imageSettings?.cornerLogoMarginRight != null
