@@ -6384,7 +6384,8 @@ class _ProjectTab extends StatelessWidget {
         borderRadius: BorderRadius.circular(6),
         child: Container(
           height: 32,
-          padding: const EdgeInsets.symmetric(horizontal: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 10), // slightly smaller for "+" tab
+          constraints: const BoxConstraints(minWidth: 48), // ensure space for text
           decoration: BoxDecoration(
             color: bgColor,
             borderRadius: BorderRadius.circular(6),
@@ -6398,7 +6399,11 @@ class _ProjectTab extends StatelessWidget {
               if (isNew) ...[
                 Icon(Icons.add, size: 16, color: textColor),
                 const SizedBox(width: 6),
-                Text('Novo projeto', style: TextStyle(fontSize: 12, color: textColor)),
+                Flexible(
+                  child: Text('Novo projeto',
+                      style: TextStyle(fontSize: 12, color: textColor),
+                      overflow: TextOverflow.ellipsis),
+                ),
               ] else ...[
                 Flexible(
                   child: Text(
