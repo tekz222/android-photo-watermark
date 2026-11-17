@@ -337,6 +337,11 @@ Uint8List renderWatermark(WatermarkRequest r, {DecodedCache? cache}) {
   final shortest = r.referenceShortestSide ??
       (photo.width < photo.height ? photo.width : photo.height).toDouble();
 
+  // Slightly reduce logo size on square (1:1) and horizontal images.
+  // Vertical images keep the full size. Factor: 0.92 = 8% smaller.
+  final aspectRatio = photo.width / photo.height;
+  final logoSizeFactor = aspectRatio >= 1.0 ? 0.92 : 1.0;
+
   // Draw top gradient if enabled.
   if (r.topGradient) {
     final gradHeight = (r.effectiveTopGradientHeight() * shortest).round().clamp(1, photo.height);
@@ -373,7 +378,7 @@ Uint8List renderWatermark(WatermarkRequest r, {DecodedCache? cache}) {
 
   // Top-left / top row (lowest layer). Always anchored to the left; only the
   // bottom row honors the "centered" option.
-  final topH = shortest * r.effectiveTopLeftHeight();
+  final topH = (shortest * r.effectiveTopLeftHeight() * logoSizeFactor).roundToDouble();
   final topRowTop = shortest * r.effectiveTopLeftTop();
   final topRowStartX = shortest * r.effectiveTopLeftLeft();
 
@@ -384,7 +389,7 @@ Uint8List renderWatermark(WatermarkRequest r, {DecodedCache? cache}) {
     final cornerLogoImg = decode(r.cornerLogo!);
     if (cornerLogoImg != null) {
       // Use same height as top logos (effectiveTopLeftHeight) for consistent sizing
-      final cornerH = (shortest * r.effectiveTopLeftHeight()).round().clamp(1, photo.height);
+      final cornerH = (shortest * r.effectiveTopLeftHeight() * logoSizeFactor).round().clamp(1, photo.height);
       final resizedCorner = _resize(cornerLogoImg, height: cornerH);
       final marginRight = (shortest * r.effectiveCornerMarginRight()).round();
       // Corner logo's left edge = photo.width - marginRight - cornerWidth
@@ -412,7 +417,7 @@ Uint8List renderWatermark(WatermarkRequest r, {DecodedCache? cache}) {
   if (r.topLeftBottomLogo != null && r.topLeftLogos.isNotEmpty) {
     final logo = decode(r.topLeftBottomLogo!);
     if (logo != null) {
-      final h = (shortest * r.effectiveTopLeftHeight()).round().clamp(1, photo.height);
+      final h = (shortest * r.effectiveTopLeftHeight() * logoSizeFactor).round().clamp(1, photo.height);
       final resized = _resize(logo, height: h);
       final margin = (shortest * r.topLeftBottomMargin).round();
       final x = topRowStartX.round();
@@ -422,7 +427,7 @@ Uint8List renderWatermark(WatermarkRequest r, {DecodedCache? cache}) {
   }
 
   // Bottom row.
-  final bottomH = shortest * r.effectiveBottomHeight();
+  final bottomH = (shortest * r.effectiveBottomHeight() * logoSizeFactor).roundToDouble();
   final rowWidth = _rowWidth(r.bottomLogos, decode, bottomH, bottomGap);
   // Always center: allow negative startX so row stays centered even if wider than photo
   // (logos will be clipped on both sides symmetrically, not just left).
@@ -454,7 +459,7 @@ Uint8List renderWatermark(WatermarkRequest r, {DecodedCache? cache}) {
   if (cornerLogo != null) {
     decodedCorner = decode(cornerLogo);
     if (decodedCorner != null) {
-      cornerH = (shortest * r.effectiveCornerHeight()).round().clamp(1, photo.height);
+      cornerH = (shortest * r.effectiveCornerHeight() * logoSizeFactor).round().clamp(1, photo.height);
       final resizedCorner = _resize(decodedCorner!, height: cornerH);
       cornerW = resizedCorner.width;
     }
@@ -477,7 +482,7 @@ Uint8List renderWatermark(WatermarkRequest r, {DecodedCache? cache}) {
   if (r.bottomLeftTopLogo != null && r.bottomLogos.isNotEmpty) {
     final logo = decode(r.bottomLeftTopLogo!);
     if (logo != null) {
-      final h = (shortest * r.effectiveBottomHeight()).round().clamp(1, photo.height);
+      final h = (shortest * r.effectiveBottomHeight() * logoSizeFactor).round().clamp(1, photo.height);
       final resized = _resize(logo, height: h);
       final margin = (shortest * r.bottomLeftTopMargin).round();
       final x = bottomStartX.round(); // CLAMPED position
@@ -491,7 +496,7 @@ Uint8List renderWatermark(WatermarkRequest r, {DecodedCache? cache}) {
   if (r.bottomRightTopLogo != null && r.bottomLogos.isNotEmpty) {
     final logo = decode(r.bottomRightTopLogo!);
     if (logo != null) {
-      final h = (shortest * r.effectiveBottomHeight()).round().clamp(1, photo.height);
+      final h = (shortest * r.effectiveBottomHeight() * logoSizeFactor).round().clamp(1, photo.height);
       final resized = _resize(logo, height: h);
       final margin = (shortest * r.bottomRightTopMargin).round();
       // Rightmost logo's actual X = clamped startX + actual rendered width - logo width
@@ -512,7 +517,7 @@ Uint8List renderWatermark(WatermarkRequest r, {DecodedCache? cache}) {
     final logo = decode(corner);
     if (logo != null) {
       // Use SAME height as top logos for consistent sizing
-      final h = (shortest * r.effectiveTopLeftHeight()).round().clamp(1, photo.height);
+      final h = (shortest * r.effectiveTopLeftHeight() * logoSizeFactor).round().clamp(1, photo.height);
       final resized = _resize(logo, height: h);
       final marginTop = shortest * r.effectiveCornerMarginTop();
       final marginRight = shortest * r.effectiveCornerMarginRight();
