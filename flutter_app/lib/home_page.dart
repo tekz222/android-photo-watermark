@@ -311,18 +311,17 @@ class _HomePageState extends State<HomePage> {
         debugPrint('Logo $i: ${logoWidths[i].toStringAsFixed(1)}px');
       }
 
-      // ===== MAXIMIZE EACH SET INDEPENDENTLY =====
-      // For alternating mode: fill EACH set's bottom row to MAXIMUM capacity
-      // (all logos that fit), then each set's top row to maximum.
-      // This is NOT A,B,A,B... - it's "fill Set A bottom completely, then Set B bottom completely"
-      // because the goal is to use ALL bottom space before any logo goes to top.
+      // ===== ALTERNATING A,B,A,B... UNTIL BOTH FULL =====
+      // Phase 1: Bottom rows - alternate A,B,A,B... until NEITHER can fit any remaining logo
+      // Phase 2: Top rows - alternate A,B,A,B... until NEITHER can fit any remaining logo
+      // Corner logo is NOT touched (uses topMargin for positioning, same size as others)
 
       // Helper: can this logo fit in this set's bottom row?
       bool fitsInBottom(List<LogoItem> bottomLogos, LogoItem logo) {
         final logoW = logoWidths[allLogos.indexOf(logo)];
         double used = bottomLogos.fold(0.0, (sum, l) => sum + logoWidths[allLogos.indexOf(l)]) + (bottomLogos.length > 0 ? gapPx * (bottomLogos.length - 1) : 0);
         final needed = bottomLogos.isEmpty ? logoW : logoW + gapPx;
-        return used + needed <= photoWidth;
+        return used + needed <= photoWidth; // 100% width, centered (clipping handled by rendering)
       }
 
       // Helper: can this logo fit in this set's top row?
@@ -334,33 +333,64 @@ class _HomePageState extends State<HomePage> {
         return used + needed <= topMaxWidth;
       }
 
-      // Helper: repeatedly add the FIRST remaining logo that fits, until none fit
-      void fillRowToMax(List<LogoItem> targetRow, bool Function(List<LogoItem>, LogoItem) fits, String debugLabel) {
-        while (true) {
-          final remaining = allLogos.where((l) => !placed.contains(l));
-          LogoItem? fittingLogo;
-          for (final logo in remaining) {
-            if (fits(targetRow, logo)) {
-              fittingLogo = logo;
-              break;
-            }
-          }
-          if (fittingLogo == null) break;
-          targetRow.add(fittingLogo);
-          placed.add(fittingLogo);
-          debugPrint('$debugLabel + logo ${allLogos.indexOf(fittingLogo)} (${logoWidths[allLogos.indexOf(fittingLogo)].toStringAsFixed(1)}px)');
+      // Helper: find first remaining logo that fits in target row
+      LogoItem? findFitting(Iterable<LogoItem> candidates, bool Function(List<LogoItem>, LogoItem) fits, List<LogoItem> target) {
+        for (final logo in candidates) {
+          if (fits(target, logo)) return logo;
         }
+        return null;
       }
 
-      // PHASE 1: Fill Set A bottom to MAX, then Set B bottom to MAX
-      fillRowToMax(setABottom, fitsInBottom, 'Phase 1: SetA bottom');
-      fillRowToMax(setBBottom, fitsInBottom, 'Phase 1: SetB bottom');
+      // PHASE 1: Bottom rows - A,B,A,B... until BOTH full
+      bool turnA = true;
+      while (true) {
+        final isATurn = turnA;
+        final target = isATurn ? setABottom : setBBottom;
+        final other = isATurn ? setBBottom : setABottom;
+        final fitsFn = fitsInBottom;
+
+        final remaining = allLogos.where((l) => !placed.contains(l));
+        final logo = findFitting(remaining, fitsFn, target);
+        if (logo != null) {
+          target.add(logo);
+          placed.add(logo);
+          debugPrint('Phase 1: Set${isATurn ? 'A' : 'B'} bottom + logo ${allLogos.indexOf(logo)}');
+        }
+
+        // Check if BOTH sets can no longer fit ANY remaining logo
+        final remainingAfter = allLogos.where((l) => !placed.contains(l));
+        final aCanFit = findFitting(remainingAfter, fitsInBottom, setABottom) != null;
+        final bCanFit = findFitting(remainingAfter, fitsInBottom, setBBottom) != null;
+        if (!aCanFit && !bCanFit) break;
+
+        turnA = !turnA;
+      }
 
       debugPrint('Phase 1 (bottom) done: SetA=${setABottom.length}, SetB=${setBBottom.length}');
 
-      // PHASE 2: Fill Set A top to MAX, then Set B top to MAX
-      fillRowToMax(setATop, fitsInTop, 'Phase 2: SetA top');
-      fillRowToMax(setBTop, fitsInTop, 'Phase 2: SetB top');
+      // PHASE 2: Top rows - A,B,A,B... until BOTH full
+      turnA = true;
+      while (true) {
+        final isATurn = turnA;
+        final target = isATurn ? setATop : setBTop;
+        final other = isATurn ? setBTop : setATop;
+        final fitsFn = fitsInTop;
+
+        final remaining = allLogos.where((l) => !placed.contains(l));
+        final logo = findFitting(remaining, fitsFn, target);
+        if (logo != null) {
+          target.add(logo);
+          placed.add(logo);
+          debugPrint('Phase 2: Set${isATurn ? 'A' : 'B'} top + logo ${allLogos.indexOf(logo)}');
+        }
+
+        final remainingAfter = allLogos.where((l) => !placed.contains(l));
+        final aCanFit = findFitting(remainingAfter, fitsInTop, setATop) != null;
+        final bCanFit = findFitting(remainingAfter, fitsInTop, setBTop) != null;
+        if (!aCanFit && !bCanFit) break;
+
+        turnA = !turnA;
+      }
 
       debugPrint('Phase 2 (top) done: SetA=${setATop.length}, SetB=${setBTop.length}');
 
