@@ -328,6 +328,16 @@ class _HomePageState extends State<HomePage> {
       // Track which logos are placed
       final placed = <LogoItem>{};
 
+      // Debug: log capacities
+      debugPrint('=== AUTO DISTRIBUTE DEBUG ===');
+      debugPrint('photoWidth: $photoWidth, edgeMarginPx: $edgeMarginPx');
+      debugPrint('bottom maxWidth: ${photoWidth - edgeMarginPx * 2}');
+      debugPrint('top maxWidth: ${photoWidth * 0.8 - edgeMarginPx * 2}');
+      debugPrint('gapPx: $gapPx');
+      for (int i = 0; i < allLogos.length; i++) {
+        debugPrint('Logo $i: ${logoWidths[i].toStringAsFixed(1)}px');
+      }
+
       // ===== PHASE 1: Pack bottom rows to maximum capacity =====
       // For each set, repeatedly add the smallest remaining logo that fits
       // Alternate between sets to balance counts
@@ -339,7 +349,7 @@ class _HomePageState extends State<HomePage> {
         bool progress = false;
 
         // Helper: find smallest unplaced logo that fits in given bottom row
-        LogoItem? findSmallestFit(List<LogoItem> currentBottom) {
+        LogoItem? findSmallestFit(List<LogoItem> currentBottom, String setName) {
           LogoItem? best;
           double bestWidth = double.infinity;
           for (final logo in allLogos) {
@@ -352,12 +362,18 @@ class _HomePageState extends State<HomePage> {
               }
             }
           }
+          if (best != null) {
+            final currentWidth = currentBottom.fold(0.0, (sum, l) => sum + logoWidths[allLogos.indexOf(l)]) + (currentBottom.length > 0 ? gapPx * (currentBottom.length - 1) : 0);
+            debugPrint('$setName bottom: adding logo ${allLogos.indexOf(best)} (${bestWidth.toStringAsFixed(1)}px), current row: ${currentWidth.toStringAsFixed(1)}px, new total: ${(currentWidth + bestWidth + (currentBottom.isEmpty ? 0 : gapPx)).toStringAsFixed(1)}px / ${(photoWidth - edgeMarginPx * 2).toStringAsFixed(1)}px');
+          } else {
+            debugPrint('$setName bottom: FULL - no remaining logo fits');
+          }
           return best;
         }
 
         // Try Set A bottom
         if (!aBottomFull) {
-          final logo = findSmallestFit(setABottom);
+          final logo = findSmallestFit(setABottom, 'SetA');
           if (logo != null) {
             setABottom.add(logo);
             placed.add(logo);
@@ -369,7 +385,7 @@ class _HomePageState extends State<HomePage> {
 
         // Try Set B bottom
         if (!bBottomFull) {
-          final logo = findSmallestFit(setBBottom);
+          final logo = findSmallestFit(setBBottom, 'SetB');
           if (logo != null) {
             setBBottom.add(logo);
             placed.add(logo);
@@ -391,7 +407,7 @@ class _HomePageState extends State<HomePage> {
       while (!aTopFull || !bTopFull) {
         bool progress = false;
 
-        LogoItem? findSmallestFitTop(List<LogoItem> currentTop) {
+        LogoItem? findSmallestFitTop(List<LogoItem> currentTop, String setName) {
           LogoItem? best;
           double bestWidth = double.infinity;
           for (final logo in allLogos) {
@@ -404,12 +420,18 @@ class _HomePageState extends State<HomePage> {
               }
             }
           }
+          if (best != null) {
+            final currentWidth = currentTop.fold(0.0, (sum, l) => sum + logoWidths[allLogos.indexOf(l)]) + (currentTop.length > 0 ? gapPx * (currentTop.length - 1) : 0);
+            debugPrint('$setName top: adding logo ${allLogos.indexOf(best)} (${bestWidth.toStringAsFixed(1)}px), current row: ${currentWidth.toStringAsFixed(1)}px, new total: ${(currentWidth + bestWidth + (currentTop.isEmpty ? 0 : gapPx)).toStringAsFixed(1)}px / ${(photoWidth * 0.8 - edgeMarginPx * 2).toStringAsFixed(1)}px');
+          } else {
+            debugPrint('$setName top: FULL - no remaining logo fits');
+          }
           return best;
         }
 
         // Try Set A top
         if (!aTopFull) {
-          final logo = findSmallestFitTop(setATop);
+          final logo = findSmallestFitTop(setATop, 'SetA');
           if (logo != null) {
             setATop.add(logo);
             placed.add(logo);
@@ -421,7 +443,7 @@ class _HomePageState extends State<HomePage> {
 
         // Try Set B top
         if (!bTopFull) {
-          final logo = findSmallestFitTop(setBTop);
+          final logo = findSmallestFitTop(setBTop, 'SetB');
           if (logo != null) {
             setBTop.add(logo);
             placed.add(logo);
@@ -437,6 +459,20 @@ class _HomePageState extends State<HomePage> {
 
       final totalPlaced = setABottom.length + setBBottom.length + setATop.length + setBTop.length;
       final overflow = totalPlaced < allLogos.length;
+
+      debugPrint('=== RESULT ===');
+      debugPrint('SetA bottom: ${setABottom.length} logos, indices: ${setABottom.map((l) => allLogos.indexOf(l)).toList()}');
+      debugPrint('SetB bottom: ${setBBottom.length} logos, indices: ${setBBottom.map((l) => allLogos.indexOf(l)).toList()}');
+      debugPrint('SetA top: ${setATop.length} logos, indices: ${setATop.map((l) => allLogos.indexOf(l)).toList()}');
+      debugPrint('SetB top: ${setBTop.length} logos, indices: ${setBTop.map((l) => allLogos.indexOf(l)).toList()}');
+      debugPrint('Total placed: $totalPlaced / ${allLogos.length}, overflow: $overflow');
+      if (overflow) {
+        final unplaced = allLogos.where((l) => !placed.contains(l)).toList();
+        debugPrint('Unplaced logos: ${unplaced.map((l) => allLogos.indexOf(l)).toList()}');
+        for (final l in unplaced) {
+          debugPrint('  Unplaced logo ${allLogos.indexOf(l)}: ${logoWidths[allLogos.indexOf(l)].toStringAsFixed(1)}px');
+        }
+      }
 
       setState(() {
         _logoSetA = _logoSetA!.copyWith(
