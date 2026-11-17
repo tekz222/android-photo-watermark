@@ -283,130 +283,217 @@ class _HomePageState extends State<HomePage> {
     } else if (_logoSetMode == LogoSetMode.autoMultiSet) {
       // AUTO MULTI-SET MODE: Max 2 sets (A and B).
       // ALGORITHM:
-      // 1. Fill Set A bottom MAXIMALLY - tight packing with actual logo widths, minimal edge gap
-      // 2. Fill Set B bottom MAXIMALLY from remaining logos - tight packing, minimal edge gap
-      // 3. Bottom counts DON'T need to be equal between sets - just fill each completely
-      // 4. Then fill TOP rows equally (same count per set, differ by 1 max) - must NOT touch corner logo
-      // 5. Corner logo reserved ~20% section on top-right - top logos stop at 80% mark
+      // 1. Determine which photos get which set (cycle through sets)
+      // 2. For each set, calculate constraining dimensions from its photos:
+      //    - minPhotoWidth: smallest photo width in the set (most constraining for row width)
+      //    - maxLogoSizeFactor: largest logoSizeFactor in the set (most constraining for logo size)
+      //    - logoSizeFactor = (refAspect / aspectRatio).clamp(0.75, 1.0) where refAspect = 9/16
+      // 3. Fill each set's bottom MAXIMALLY using its constraints
+      // 4. Fill TOP rows equally using each set's constraints
+      // 5. Corner logo reserved ~20% section on top-right - top logos stop before it with 1% gap
 
-      // Helper: count how many fit in bottom row (CENTERED render)
-      // Bottom row is centered: total row width must fit within [edgeMarginPx, photoWidth - edgeMarginPx]
-      // Max row width = photoWidth - 2 * edgeMarginPx
-      // No corner section constraint for bottom row (corner logo is at TOP-RIGHT, vertically separated)
-      int _fitCountBottom(int startIdx) {
-        double rowWidth = 0;
-        int count = 0;
-        final maxRowWidth = photoWidth - 2 * edgeMarginPx;
-        for (int i = startIdx; i < allLogos.length; i++) {
-          final logoWidth = logoWidths[i];
-          final neededWidth = rowWidth + (count == 0 ? 0 : gapPx) + logoWidth;
-          if (neededWidth <= maxRowWidth) {
-            rowWidth = neededWidth;
-            count++;
-          } else {
-            break;
+      const refAspect = 9 / 16; // 0.5625 - vertical reference
+
+      // Calculate logoSizeFactor for a photo (matches watermark_engine.dart)
+      double _logoSizeFactorForPhoto(int w, int h) {
+        final aspectRatio = w / h;
+        return (refAspect / aspectRatio).clamp(0.75, 1.0);
+      }
+
+      // Group photos by set index (cycle through sets)
+      // We'll determine number of sets (1 or 2) based on capacity
+      // First, try with 1 set using global minimum constraints
+      // If doesn't fit, use 2 sets with per-set constraints
+
+      // Helper: calculate constraints for a list of photo indices
+      ({double minPhotoWidth, double maxFactor, double shortestSide}) _calcConstraints(List<int> photoIndices) {
+        double minW = double.infinity;
+        double maxF = 0.0;
+        double minS = double.infinity;
+        for (final idx in photoIndices) {
+          if (idx >= _photoPaths.length) continue;
+          final dims = _photoDimensionsCache[_photoPaths[idx]];
+          if (dims != null) {
+            final w = dims.$1.toDouble();
+            final h = dims.$2.toDouble();
+            final s = dims.$3.toDouble();
+            if (w < minW) minW = w;
+            if (s < minS) minS = s;
+            final f = _logoSizeFactorForPhoto(w.round(), h.round());
+            if (f > maxF) maxF = f;
           }
         }
-        return count;
+        if (minW == double.infinity) minW = shortestSide;
+        if (minS == double.infinity) minS = shortestSide;
+        if (maxF == 0.0) maxF = 1.0;
+        return (minPhotoWidth: minW, maxFactor: maxF, shortestSide: minS);
+      }
+
+      // Helper: create fit counters for a specific set's constraints
+      ({int Function(int) fitBottom, int Function(int, List<double>) fitTop}) _makeFitters(
+        double setPhotoWidth,
+        double setShortestSide,
+        double setFactor,
+        List<double> baseLogoWidths, // widths at factor=1.0
+      ) {
+        final edgeMarginPx = setShortestSide * 0.01;
+        final gapPx = _logoSpacing / 100.0 * setShortestSide;
+        final leftMarginPx = _leftMargin / 100.0 * setShortestSide;
+        final maxRowWidth = setPhotoWidth - 2 * edgeMarginPx;
+
+        // Scale logo widths by this set's factor
+        final scaledLogoWidths = baseLogoWidths.map((w) => w * setFactor).toList();
+
+        int fitBottom(int startIdx) {
+          double rowWidth = 0;
+          int count = 0;
+          for (int i = startIdx; i < scaledLogoWidths.length; i++) {
+            final logoWidth = scaledLogoWidths[i];
+            final neededWidth = rowWidth + (count == 0 ? 0 : gapPx) + logoWidth;
+            if (neededWidth <= maxRowWidth) {
+              rowWidth = neededWidth;
+              count++;
+            } else {
+              break;
+            }
+          }
+          return count;
+        }
+
+        int fitTop(int startIdx, List<double> _) {
+          // Calculate corner logo left edge using scaled widths
+          double cornerLogoLeftEdge = setPhotoWidth;
+          if (scaledLogoWidths.isNotEmpty) {
+            final cornerAspectRatio = scaledLogoWidths[0] / (setShortestSide * _logoSize / 100.0 * setFactor);
+            final cornerLogoWidth = cornerAspectRatio * setShortestSide * _logoSize / 100.0 * setFactor;
+            final marginRightPx = _cornerMarginRight / 100.0 * setShortestSide;
+            cornerLogoLeftEdge = setPhotoWidth - marginRightPx - cornerLogoWidth;
+          }
+          final gapToCorner = setShortestSide * 0.01;
+          final topSectionRightEdge = cornerLogoLeftEdge - gapToCorner;
+
+          double currentRightEdge = leftMarginPx;
+          int count = 0;
+          for (int i = startIdx; i < scaledLogoWidths.length; i++) {
+            final logoWidth = scaledLogoWidths[i];
+            final neededRightEdge = currentRightEdge + (count == 0 ? 0 : gapPx) + logoWidth;
+            if (neededRightEdge <= topSectionRightEdge) {
+              currentRightEdge = neededRightEdge;
+              count++;
+            } else {
+              break;
+            }
+          }
+          return count;
+        }
+
+        return (fitBottom: fitBottom, fitTop: fitTop);
+      }
+
+      // Pre-compute base logo widths (at factor=1.0)
+      final baseLogoWidths = <double>[];
+      for (int i = 0; i < allLogos.length; i++) {
+        final ar = logoAspectRatios[i];
+        baseLogoWidths.add(ar * shortestSide * _logoSize / 100.0);
       }
 
       final totalLogos = allLogos.length;
 
-      // STEP 1: Try 1 set first
-      int bottomPerSet1 = _fitCountBottom(0);
-      int topPerSet1 = _fitCountTop(bottomPerSet1, logoWidths);
-      int placedIn1Set = bottomPerSet1 + topPerSet1;
+      // Try 1 set first with global constraints
+      final globalConstraints = _calcConstraints(List.generate(_photoPaths.length, (i) => i));
+      final globalFitters = _makeFitters(
+        globalConstraints.minPhotoWidth,
+        globalConstraints.shortestSide,
+        globalConstraints.maxFactor,
+        baseLogoWidths,
+      );
 
-      if (placedIn1Set >= totalLogos) {
-        // Everything fits in 1 set!
+      int bottom1 = globalFitters.fitBottom(0);
+      int top1 = globalFitters.fitTop(bottom1, baseLogoWidths);
+      if (bottom1 + top1 >= totalLogos) {
+        // Everything fits in 1 set
         final sets = [LogoSet(
-          bottomLogos: allLogos.take(bottomPerSet1).toList(),
-          topLeftLogos: allLogos.skip(bottomPerSet1).take(topPerSet1).toList(),
+          bottomLogos: allLogos.take(bottom1).toList(),
+          topLeftLogos: allLogos.skip(bottom1).take(top1).toList(),
         )];
-
         setState(() {
           _p.logoSets = sets;
           _logoSetA = sets[0];
           _logoSetB = LogoSet(bottomLogos: [], topLeftLogos: []);
         });
-
         if (mounted) {
-          _snack(
-            '1 set automático: $bottomPerSet1 base + $topPerSet1 topo.',
-            backgroundColor: const Color(0xFF2E7D32),
-          );
+          _snack('1 set automático: $bottom1 base + $top1 topo.', backgroundColor: const Color(0xFF2E7D32));
         }
         _schedulePreview();
         return true;
       }
 
-      // STEP 2: Need 2 sets.
-      // ALGORITHM: Maximize bottom usage first, then distribute remaining to tops equally.
-      // 1. Fill both bottoms MAXIMALLY first (sequential from logo list)
-      // 2. Distribute remaining equally to tops
+      // Need 2 sets. Group photos by set index (alternating)
+      final set0Indices = <int>[];
+      final set1Indices = <int>[];
+      for (int i = 0; i < _photoPaths.length; i++) {
+        if (i % 2 == 0) set0Indices.add(i); else set1Indices.add(i);
+      }
 
-      // Fill Set A bottom maximally
-      int bottomA = _fitCountBottom(0);
-      // Fill Set B bottom maximally from remaining
-      int bottomB = _fitCountBottom(bottomA);
-      int logosInBottoms = bottomA + bottomB;
+      final constraints0 = _calcConstraints(set0Indices);
+      final constraints1 = _calcConstraints(set1Indices);
+
+      final fitters0 = _makeFitters(
+        constraints0.minPhotoWidth, constraints0.shortestSide, constraints0.maxFactor, baseLogoWidths);
+      final fitters1 = _makeFitters(
+        constraints1.minPhotoWidth, constraints1.shortestSide, constraints1.maxFactor, baseLogoWidths);
+
+      // Fill Set 0 bottom maximally
+      int bottom0 = fitters0.fitBottom(0);
+      // Fill Set 1 bottom maximally from remaining
+      int bottom1_ = fitters1.fitBottom(bottom0);
+      int logosInBottoms = bottom0 + bottom1_;
       int remaining = totalLogos - logosInBottoms;
 
-      // Fill TOP rows EQUALLY (same count per set, or differ by 1 if odd remaining)
-      // Max top that fits in top row (must not touch corner logo)
-      int maxTopFit = _fitCountTop(logosInBottoms, logoWidths);
+      // Fill TOP rows equally
+      int maxTop0 = fitters0.fitTop(logosInBottoms, baseLogoWidths);
+      int maxTop1 = fitters1.fitTop(logosInBottoms, baseLogoWidths);
+      int maxTopFit = maxTop0 < maxTop1 ? maxTop0 : maxTop1; // both sets must fit same top count
+
       int maxEqualTop = (remaining / 2).floor();
       int topPerSet = maxEqualTop.clamp(0, maxTopFit);
 
-      // After equal tops, if there's 1 remaining logo (odd total), give it to Set A top
       int remainingAfterTops = remaining - (topPerSet * 2);
       if (remainingAfterTops > 0 && topPerSet < maxTopFit) {
-        topPerSet++; // Give the extra logo to Set A top (differ by 1 max)
+        topPerSet++;
       }
 
-      // Build the two sets - logos are taken sequentially from the list
+      // Build the two sets
       int logoIdx = 0;
-      final setABottom = <LogoItem>[];
-      final setBBottom = <LogoItem>[];
-      final setATop = <LogoItem>[];
-      final setBTop = <LogoItem>[];
+      final set0Bottom = <LogoItem>[];
+      final set1Bottom = <LogoItem>[];
+      final set0Top = <LogoItem>[];
+      final set1Top = <LogoItem>[];
 
-      // Fill Set A bottom
-      for (int i = 0; i < bottomA && logoIdx < allLogos.length; i++) {
-        setABottom.add(allLogos[logoIdx++]);
-      }
-      // Fill Set B bottom
-      for (int i = 0; i < bottomB && logoIdx < allLogos.length; i++) {
-        setBBottom.add(allLogos[logoIdx++]);
-      }
-      // Fill Set A top
-      for (int i = 0; i < topPerSet && logoIdx < allLogos.length; i++) {
-        setATop.add(allLogos[logoIdx++]);
-      }
-      // Fill Set B top (may be one less if odd total)
-      int topB = (remaining - topPerSet).clamp(0, topPerSet);
-      for (int i = 0; i < topB && logoIdx < allLogos.length; i++) {
-        setBTop.add(allLogos[logoIdx++]);
-      }
+      for (int i = 0; i < bottom0 && logoIdx < allLogos.length; i++) set0Bottom.add(allLogos[logoIdx++]);
+      for (int i = 0; i < bottom1_ && logoIdx < allLogos.length; i++) set1Bottom.add(allLogos[logoIdx++]);
+      for (int i = 0; i < topPerSet && logoIdx < allLogos.length; i++) set0Top.add(allLogos[logoIdx++]);
+      int top1_ = (remaining - topPerSet).clamp(0, topPerSet);
+      for (int i = 0; i < top1_ && logoIdx < allLogos.length; i++) set1Top.add(allLogos[logoIdx++]);
 
-      final setA = LogoSet(bottomLogos: setABottom, topLeftLogos: setATop);
-      final setB = LogoSet(bottomLogos: setBBottom, topLeftLogos: setBTop);
-      final sets = [setA, setB];
+      final set0 = LogoSet(bottomLogos: set0Bottom, topLeftLogos: set0Top);
+      final set1 = LogoSet(bottomLogos: set1Bottom, topLeftLogos: set1Top);
+      final sets = [set0, set1];
 
-      int totalA = bottomA + topPerSet;
-      int totalB = bottomB + topB;
-      int totalPlaced = totalA + totalB;
+      int total0 = bottom0 + topPerSet;
+      int total1 = bottom1_ + top1_;
+      int totalPlaced = total0 + total1;
 
       setState(() {
         _p.logoSets = sets;
-        _logoSetA = setA;
-        _logoSetB = setB;
+        _logoSetA = set0;
+        _logoSetB = set1;
       });
 
       if (mounted) {
         _snack(
-          '2 sets automáticos: Set A: $bottomA base + $topPerSet topo = $totalA. '
-          'Set B: $bottomB base + $topB topo = $totalB. '
+          '2 sets automáticos: Set A: $bottom0 base + $topPerSet topo = $total0. '
+          'Set B: $bottom1_ base + $top1_ topo = $total1. '
           'Total: $totalPlaced de $totalLogos logos.',
           backgroundColor: const Color(0xFF2E7D32),
         );
