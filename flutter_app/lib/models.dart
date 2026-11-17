@@ -45,7 +45,7 @@ enum Placement { bottom, topLeft, topRight }
 enum TextImagePos { top, bottom, left, right, both, inside }
 
 /// How logo sets are assigned to photos.
-enum LogoSetMode { single, splitHalf, alternating, autoMultiSet }
+enum LogoSetMode { single, alternating }
 
 /// A complete logo set (bottom row, top-left row). Corner logo is shared globally.
 class LogoSet {

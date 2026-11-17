@@ -143,10 +143,8 @@ class _HomePageState extends State<HomePage> {
 
   /// Auto-distribute logos between bottom and top rows (for auto mode).
   /// Single mode: fills bottom row first, then top row.
-  /// Dual-set mode (splitHalf/alternating): Both sets have SAME bottom count and SAME top count.
+  /// Alternating mode: Both sets have SAME bottom count and SAME top count.
   ///   Fill bottom rows first (balanced), then top rows (balanced).
-  /// AutoMultiSet mode: Creates N sets as needed to fit ALL logos.
-  ///   Each set has equal bottom count and equal top count.
   /// Returns true if distribution succeeded, false if all rows are full.
   Future<bool> _autoDistributeLogos(List<LogoItem> allLogos) async {
     if (allLogos.isEmpty || _photoPaths.isEmpty) return true;
@@ -280,229 +278,8 @@ class _HomePageState extends State<HomePage> {
         );
         return false;
       }
-    } else if (_logoSetMode == LogoSetMode.autoMultiSet) {
-      // AUTO MULTI-SET MODE: Max 2 sets (A and B).
-      // ALGORITHM:
-      // 1. Determine which photos get which set (cycle through sets)
-      // 2. For each set, calculate constraining dimensions from its photos:
-      //    - minPhotoWidth: smallest photo width in the set (most constraining for row width)
-      //    - maxLogoSizeFactor: largest logoSizeFactor in the set (most constraining for logo size)
-      //    - logoSizeFactor = (refAspect / aspectRatio).clamp(0.75, 1.0) where refAspect = 9/16
-      // 3. Fill each set's bottom MAXIMALLY using its constraints
-      // 4. Fill TOP rows equally using each set's constraints
-      // 5. Corner logo reserved ~20% section on top-right - top logos stop before it with 1% gap
-
-      const refAspect = 9 / 16; // 0.5625 - vertical reference
-
-      // Calculate logoSizeFactor for a photo (matches watermark_engine.dart)
-      double _logoSizeFactorForPhoto(int w, int h) {
-        final aspectRatio = w / h;
-        return (refAspect / aspectRatio).clamp(0.75, 1.0);
-      }
-
-      // Group photos by set index (cycle through sets)
-      // We'll determine number of sets (1 or 2) based on capacity
-      // First, try with 1 set using global minimum constraints
-      // If doesn't fit, use 2 sets with per-set constraints
-
-      // Helper: calculate constraints for a list of photo indices
-      ({double minPhotoWidth, double maxFactor, double shortestSide}) _calcConstraints(List<int> photoIndices) {
-        double minW = double.infinity;
-        double maxF = 0.0;
-        double minS = double.infinity;
-        for (final idx in photoIndices) {
-          if (idx >= _photoPaths.length) continue;
-          final dims = _photoDimensionsCache[_photoPaths[idx]];
-          if (dims != null) {
-            final w = dims.$1.toDouble();
-            final h = dims.$2.toDouble();
-            final s = dims.$3.toDouble();
-            if (w < minW) minW = w;
-            if (s < minS) minS = s;
-            final f = _logoSizeFactorForPhoto(w.round(), h.round());
-            if (f > maxF) maxF = f;
-          }
-        }
-        if (minW == double.infinity) minW = shortestSide;
-        if (minS == double.infinity) minS = shortestSide;
-        if (maxF == 0.0) maxF = 1.0;
-        return (minPhotoWidth: minW, maxFactor: maxF, shortestSide: minS);
-      }
-
-      // Helper: create fit counters for a specific set's constraints
-      ({int Function(int) fitBottom, int Function(int, List<double>) fitTop}) _makeFitters(
-        double setPhotoWidth,
-        double setShortestSide,
-        double setFactor,
-        List<double> baseLogoWidths, // widths at factor=1.0
-      ) {
-        final edgeMarginPx = setShortestSide * 0.01;
-        final gapPx = _logoSpacing / 100.0 * setShortestSide;
-        final leftMarginPx = _leftMargin / 100.0 * setShortestSide;
-        final maxRowWidth = setPhotoWidth - 2 * edgeMarginPx;
-
-        // Scale logo widths by this set's factor
-        final scaledLogoWidths = baseLogoWidths.map((w) => w * setFactor).toList();
-
-        int fitBottom(int startIdx) {
-          double rowWidth = 0;
-          int count = 0;
-          for (int i = startIdx; i < scaledLogoWidths.length; i++) {
-            final logoWidth = scaledLogoWidths[i];
-            final neededWidth = rowWidth + (count == 0 ? 0 : gapPx) + logoWidth;
-            if (neededWidth <= maxRowWidth) {
-              rowWidth = neededWidth;
-              count++;
-            } else {
-              break;
-            }
-          }
-          return count;
-        }
-
-        int fitTop(int startIdx, List<double> _) {
-          // Calculate corner logo left edge using scaled widths
-          double cornerLogoLeftEdge = setPhotoWidth;
-          if (scaledLogoWidths.isNotEmpty) {
-            final cornerAspectRatio = scaledLogoWidths[0] / (setShortestSide * _logoSize / 100.0 * setFactor);
-            final cornerLogoWidth = cornerAspectRatio * setShortestSide * _logoSize / 100.0 * setFactor;
-            final marginRightPx = _cornerMarginRight / 100.0 * setShortestSide;
-            cornerLogoLeftEdge = setPhotoWidth - marginRightPx - cornerLogoWidth;
-          }
-          final gapToCorner = setShortestSide * 0.01;
-          final topSectionRightEdge = cornerLogoLeftEdge - gapToCorner;
-
-          double currentRightEdge = leftMarginPx;
-          int count = 0;
-          for (int i = startIdx; i < scaledLogoWidths.length; i++) {
-            final logoWidth = scaledLogoWidths[i];
-            final neededRightEdge = currentRightEdge + (count == 0 ? 0 : gapPx) + logoWidth;
-            if (neededRightEdge <= topSectionRightEdge) {
-              currentRightEdge = neededRightEdge;
-              count++;
-            } else {
-              break;
-            }
-          }
-          return count;
-        }
-
-        return (fitBottom: fitBottom, fitTop: fitTop);
-      }
-
-      // Pre-compute base logo widths (at factor=1.0)
-      final baseLogoWidths = <double>[];
-      for (int i = 0; i < allLogos.length; i++) {
-        final ar = logoAspectRatios[i];
-        baseLogoWidths.add(ar * shortestSide * _logoSize / 100.0);
-      }
-
-      final totalLogos = allLogos.length;
-
-      // Try 1 set first with global constraints
-      final globalConstraints = _calcConstraints(List.generate(_photoPaths.length, (i) => i));
-      final globalFitters = _makeFitters(
-        globalConstraints.minPhotoWidth,
-        globalConstraints.shortestSide,
-        globalConstraints.maxFactor,
-        baseLogoWidths,
-      );
-
-      int bottom1 = globalFitters.fitBottom(0);
-      int top1 = globalFitters.fitTop(bottom1, baseLogoWidths);
-      if (bottom1 + top1 >= totalLogos) {
-        // Everything fits in 1 set
-        final sets = [LogoSet(
-          bottomLogos: allLogos.take(bottom1).toList(),
-          topLeftLogos: allLogos.skip(bottom1).take(top1).toList(),
-        )];
-        setState(() {
-          _p.logoSets = sets;
-          _logoSetA = sets[0];
-          _logoSetB = LogoSet(bottomLogos: [], topLeftLogos: []);
-        });
-        if (mounted) {
-          _snack('1 set automático: $bottom1 base + $top1 topo.', backgroundColor: const Color(0xFF2E7D32));
-        }
-        _schedulePreview();
-        return true;
-      }
-
-      // Need 2 sets. Group photos by set index (alternating)
-      final set0Indices = <int>[];
-      final set1Indices = <int>[];
-      for (int i = 0; i < _photoPaths.length; i++) {
-        if (i % 2 == 0) set0Indices.add(i); else set1Indices.add(i);
-      }
-
-      final constraints0 = _calcConstraints(set0Indices);
-      final constraints1 = _calcConstraints(set1Indices);
-
-      final fitters0 = _makeFitters(
-        constraints0.minPhotoWidth, constraints0.shortestSide, constraints0.maxFactor, baseLogoWidths);
-      final fitters1 = _makeFitters(
-        constraints1.minPhotoWidth, constraints1.shortestSide, constraints1.maxFactor, baseLogoWidths);
-
-      // Fill Set 0 bottom maximally
-      int bottom0 = fitters0.fitBottom(0);
-      // Fill Set 1 bottom maximally from remaining
-      int bottom1_ = fitters1.fitBottom(bottom0);
-      int logosInBottoms = bottom0 + bottom1_;
-      int remaining = totalLogos - logosInBottoms;
-
-      // Fill TOP rows equally
-      int maxTop0 = fitters0.fitTop(logosInBottoms, baseLogoWidths);
-      int maxTop1 = fitters1.fitTop(logosInBottoms, baseLogoWidths);
-      int maxTopFit = maxTop0 < maxTop1 ? maxTop0 : maxTop1; // both sets must fit same top count
-
-      int maxEqualTop = (remaining / 2).floor();
-      int topPerSet = maxEqualTop.clamp(0, maxTopFit);
-
-      int remainingAfterTops = remaining - (topPerSet * 2);
-      if (remainingAfterTops > 0 && topPerSet < maxTopFit) {
-        topPerSet++;
-      }
-
-      // Build the two sets
-      int logoIdx = 0;
-      final set0Bottom = <LogoItem>[];
-      final set1Bottom = <LogoItem>[];
-      final set0Top = <LogoItem>[];
-      final set1Top = <LogoItem>[];
-
-      for (int i = 0; i < bottom0 && logoIdx < allLogos.length; i++) set0Bottom.add(allLogos[logoIdx++]);
-      for (int i = 0; i < bottom1_ && logoIdx < allLogos.length; i++) set1Bottom.add(allLogos[logoIdx++]);
-      for (int i = 0; i < topPerSet && logoIdx < allLogos.length; i++) set0Top.add(allLogos[logoIdx++]);
-      int top1_ = (remaining - topPerSet).clamp(0, topPerSet);
-      for (int i = 0; i < top1_ && logoIdx < allLogos.length; i++) set1Top.add(allLogos[logoIdx++]);
-
-      final set0 = LogoSet(bottomLogos: set0Bottom, topLeftLogos: set0Top);
-      final set1 = LogoSet(bottomLogos: set1Bottom, topLeftLogos: set1Top);
-      final sets = [set0, set1];
-
-      int total0 = bottom0 + topPerSet;
-      int total1 = bottom1_ + top1_;
-      int totalPlaced = total0 + total1;
-
-      setState(() {
-        _p.logoSets = sets;
-        _logoSetA = set0;
-        _logoSetB = set1;
-      });
-
-      if (mounted) {
-        _snack(
-          '2 sets automáticos: Set A: $bottom0 base + $topPerSet topo = $total0. '
-          'Set B: $bottom1_ base + $top1_ topo = $total1. '
-          'Total: $totalPlaced de $totalLogos logos.',
-          backgroundColor: const Color(0xFF2E7D32),
-        );
-      }
-
-      _schedulePreview();
-      return true;
     } else {
-      // DUAL-SET MODE: splitHalf or alternating
+      // DUAL-SET MODE: alternating
       // RULE: Both sets must have SAME count in bottom row, and SAME count in top row.
       // Fill bottom rows first (balanced), then top rows (balanced).
       // Ensure Set A and B exist
@@ -718,37 +495,6 @@ class _HomePageState extends State<HomePage> {
   bool get _canProcess => !_processing && _hasAnyContent && _unsavedPaths.isNotEmpty;
   bool get _allSaved => _photoPaths.isNotEmpty && _hasAnyContent && _unsavedPaths.isEmpty;
 
-  // Auto-multi-set computed getters (for display)
-  int get _logoSetCount {
-    if (_logoSetMode != LogoSetMode.autoMultiSet) return _logoSetMode == LogoSetMode.single ? 1 : 2;
-    // Count non-empty sets from project.logoSets
-    return _p.logoSets.where((s) => s.bottomLogos.isNotEmpty || s.topLeftLogos.isNotEmpty).length.clamp(1, 20);
-  }
-
-  int get _bottomPerSetCount {
-    if (_logoSetMode == LogoSetMode.single) return _bottomLogos.length;
-    if (_logoSetMode == LogoSetMode.autoMultiSet) {
-      // Use first non-empty set from project.logoSets
-      for (final s in _p.logoSets) {
-        if (s.bottomLogos.isNotEmpty) return s.bottomLogos.length;
-      }
-      return _logoSetA?.bottomLogos.length ?? 0;
-    }
-    return _logoSetA?.bottomLogos.length ?? 0;
-  }
-
-  int get _topPerSetCount {
-    if (_logoSetMode == LogoSetMode.single) return _topLeftLogos.length;
-    if (_logoSetMode == LogoSetMode.autoMultiSet) {
-      // Use first non-empty set from project.logoSets
-      for (final s in _p.logoSets) {
-        if (s.topLeftLogos.isNotEmpty) return s.topLeftLogos.length;
-      }
-      return _logoSetA?.topLeftLogos.length ?? 0;
-    }
-    return _logoSetA?.topLeftLogos.length ?? 0;
-  }
-
   // Per-image settings getter/setter
   ImageSettings _imageSettingsFor(String photoPath) =>
       _p.imageSettings[photoPath] ?? ImageSettings();
@@ -820,21 +566,8 @@ class _HomePageState extends State<HomePage> {
       case LogoSetMode.single:
         // Use legacy single set (bottomLogos, topLeftLogos, cornerLogo)
         return null;
-      case LogoSetMode.splitHalf:
-        final half = (_photoPaths.length / 2).ceil();
-        return index < half ? _logoSetA : _logoSetB;
       case LogoSetMode.alternating:
         return index.isEven ? _logoSetA : _logoSetB;
-      case LogoSetMode.autoMultiSet:
-        // For autoMultiSet, cycle through all sets stored in project.logoSets
-        final sets = _p.logoSets.where((s) => s.bottomLogos.isNotEmpty || s.topLeftLogos.isNotEmpty).toList();
-        if (sets.isEmpty) {
-          // Fallback to A/B if logoSets not populated yet
-          final fallback = <LogoSet?>[_logoSetA, _logoSetB].where((s) => s != null && (s!.bottomLogos.isNotEmpty || s!.topLeftLogos.isNotEmpty)).toList();
-          if (fallback.isEmpty) return null;
-          return fallback[index % fallback.length];
-        }
-        return sets[index % sets.length];
     }
   }
 
@@ -1029,7 +762,6 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  static String _baseName(String path) => path.split('/').last.split('\\').last;
 
   /// Exports the entire project (photos, logos, texts, all settings) to a single .jcv file.
   Future<void> _exportProject() async {
@@ -1352,18 +1084,6 @@ class _HomePageState extends State<HomePage> {
       setState(() => _importing = false);
       _snack('Erro ao importar: $e', logOnly: exportMode == ExportMode.full);
     }
-  }
-
-  /// Installs the bundled default main (top-right) logo.
-  Future<void> _installDefaultCorner() async {
-    final data = await rootBundle.load('assets/default_corner_logo.png');
-    final bytes = data.buffer.asUint8List();
-    final path = await _copyBytesToApp(bytes, 'logos');
-    final fp = Project.imageSig(bytes);
-    if (!mounted) return;
-    setState(() => _cornerLogo = LogoItem(Project.nextLogoId(), path,
-        'asset:default_corner', bytes, fp,
-        const <String>{}, const <String>{}));
   }
 
   /// Removes orphaned copied files from the app's private directories.
@@ -1707,30 +1427,6 @@ class _HomePageState extends State<HomePage> {
     return logoHeightPct.clamp(1.0, 80.0);
   }
 
-  /// Auto-arrange the logo size for a row to fit edge-to-edge.
-  Future<void> _autoArrange({
-    required List<LogoItem> items,
-    required double leftMargin,
-    required double rightMargin,
-    required double gap,
-    required bool centered,
-    required ValueChanged<double> onSizeChanged,
-  }) async {
-    final size = _calculateAutoArrangeSize(
-      items: items,
-      leftMargin: leftMargin,
-      rightMargin: rightMargin,
-      gap: gap,
-      centered: centered,
-    );
-    if (size != null) {
-      onSizeChanged(size);
-      _snack('Tamanho ajustado automaticamente: ${size.toStringAsFixed(1)}%');
-    } else {
-      _snack('Não foi possível calcular (adicione fotos e logos primeiro)');
-    }
-  }
-
   /// Auto-arrange logo size for the current mode's logo distribution.
   Future<void> _autoArrangeLogoSizeForCurrentMode() async {
     if (_photoPaths.isEmpty || _p.masterLogos.isEmpty) return;
@@ -1741,14 +1437,8 @@ class _HomePageState extends State<HomePage> {
     if (_logoSetMode == LogoSetMode.single) {
       // Use first set's logos (which is the distributed single set)
       logosForSizeCalc = [..._p.bottomLogos, ..._p.topLeftLogos];
-    } else if (_logoSetMode == LogoSetMode.autoMultiSet) {
-      // Use first autoMultiSet set
-      if (_p.logoSets.isNotEmpty) {
-        final firstSet = _p.logoSets.first;
-        logosForSizeCalc = [...firstSet.bottomLogos, ...firstSet.topLeftLogos];
-      }
     } else {
-      // Dual-set modes: use Set A
+      // Alternating mode: use Set A
       if (_logoSetA != null) {
         logosForSizeCalc = [..._logoSetA!.bottomLogos, ..._logoSetA!.topLeftLogos];
       }
@@ -1767,8 +1457,8 @@ class _HomePageState extends State<HomePage> {
 
     if (size != null && mounted) {
       setState(() => _logoSize = size);
-      // In autoMultiSet mode, recalculate sets with the new size
-      if (_logoSetMode == LogoSetMode.autoMultiSet) {
+      // In alternating mode, recalculate sets with the new size
+      if (_logoSetMode == LogoSetMode.alternating) {
         Future.microtask(() => _autoDistributeLogos(_p.masterLogos));
       }
       _snack('Tamanho ajustado automaticamente para o modo: ${size.toStringAsFixed(1)}%');
@@ -3676,19 +3366,9 @@ class _HomePageState extends State<HomePage> {
                 icon: Icon(Icons.layers_clear, size: 16),
               ),
               ButtonSegment(
-                value: LogoSetMode.splitHalf,
-                label: Text('Metade / Metade'),
-                icon: Icon(Icons.call_split, size: 16),
-              ),
-              ButtonSegment(
                 value: LogoSetMode.alternating,
                 label: Text('Alternado (par/ímpar)'),
                 icon: Icon(Icons.swap_horiz, size: 16),
-              ),
-              ButtonSegment(
-                value: LogoSetMode.autoMultiSet,
-                label: Text('Automático (vários sets)'),
-                icon: Icon(Icons.auto_awesome, size: 16),
               ),
             ],
             selected: {_logoSetMode},
@@ -3759,9 +3439,7 @@ class _HomePageState extends State<HomePage> {
           Text(
             _logoSetMode == LogoSetMode.single
                 ? 'Use as seções "Logos da base" e "Logos do canto superior esquerdo" abaixo.'
-                : _logoSetMode == LogoSetMode.splitHalf
-                    ? 'Primeira metade das fotos → Conjunto A. Segunda metade → Conjunto B.'
-                    : 'Fotos ímpares (1, 3, 5...) → Conjunto A. Fotos pares (2, 4, 6...) → Conjunto B.',
+                : 'Fotos ímpares (1, 3, 5...) → Conjunto A. Fotos pares (2, 4, 6...) → Conjunto B.',
             style: small?.copyWith(color: scheme.outline),
           ),
         ],
@@ -3771,52 +3449,12 @@ class _HomePageState extends State<HomePage> {
 
   /// Section for auto-arrange mode: paste all logos, auto-distribute.
   /// Single mode: one pool → bottom then top.
-  /// Dual-set mode (splitHalf/alternating): one pool → distributes evenly between Set A and Set B.
-  /// AutoMultiSet mode: creates N sets to fit ALL logos, each set has equal bottom/top count.
+  /// Alternating mode: one pool distributes evenly between Set A and Set B (par/ímpar).
   Widget _autoArrangeSection() {
     final scheme = Theme.of(context).colorScheme;
     final small = Theme.of(context).textTheme.bodySmall;
 
     final isSingle = _logoSetMode == LogoSetMode.single;
-    final isAutoMultiSet = _logoSetMode == LogoSetMode.autoMultiSet;
-    final isDualSet = _logoSetMode == LogoSetMode.splitHalf || _logoSetMode == LogoSetMode.alternating;
-
-    // Auto-migrate logos to masterLogos if in autoMultiSet mode and masterLogos is empty
-    // but other sources have logos (e.g., old projects, or switching from other modes)
-    if (isAutoMultiSet && _p.masterLogos.isEmpty) {
-      final collected = <LogoItem>[];
-      collected.addAll(_p.bottomLogos);
-      collected.addAll(_p.topLeftLogos);
-      if (_logoSetA != null) {
-        collected.addAll(_logoSetA!.bottomLogos);
-        collected.addAll(_logoSetA!.topLeftLogos);
-      }
-      if (_logoSetB != null) {
-        collected.addAll(_logoSetB!.bottomLogos);
-        collected.addAll(_logoSetB!.topLeftLogos);
-      }
-      for (final set in _p.logoSets) {
-        collected.addAll(set.bottomLogos);
-        collected.addAll(set.topLeftLogos);
-      }
-      // Deduplicate by sourceKey
-      final seen = <String>{};
-      final unique = <LogoItem>[];
-      for (final logo in collected) {
-        if (seen.add(logo.sourceKey)) {
-          unique.add(logo);
-        }
-      }
-      if (unique.isNotEmpty) {
-        // Use addPostFrameCallback to avoid setState during build
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) {
-            setState(() => _p.masterLogos.addAll(unique));
-            Future.microtask(() => _autoDistributeLogos(_p.masterLogos));
-          }
-        });
-      }
-    }
 
     // Collect all logos from masterLogos (single source of truth)
     final allLogos = <LogoItem>[];
@@ -3824,18 +3462,16 @@ class _HomePageState extends State<HomePage> {
 
     // For display: group by set and row
     List<LogoItem> setABottom, setATop, setBBottom, setBTop;
-    List<LogoSet> multiSets = [];
 
-    if (isAutoMultiSet) {
-      // Use all sets from project.logoSets
-      multiSets = _p.logoSets.where((s) => s.bottomLogos.isNotEmpty || s.topLeftLogos.isNotEmpty).toList();
-      setABottom = multiSets.isNotEmpty ? multiSets[0].bottomLogos : [];
-      setATop = multiSets.isNotEmpty ? multiSets[0].topLeftLogos : [];
-      setBBottom = multiSets.length > 1 ? multiSets[1].bottomLogos : [];
-      setBTop = multiSets.length > 1 ? multiSets[1].topLeftLogos : [];
+    if (isSingle) {
+      setABottom = _p.bottomLogos;
+      setATop = _p.topLeftLogos;
+      setBBottom = <LogoItem>[];
+      setBTop = <LogoItem>[];
     } else {
-      setABottom = isSingle ? _p.bottomLogos : _logoSetA?.bottomLogos ?? [];
-      setATop = isSingle ? _p.topLeftLogos : _logoSetA?.topLeftLogos ?? [];
+      // Alternating mode: use Set A and Set B
+      setABottom = _logoSetA?.bottomLogos ?? [];
+      setATop = _logoSetA?.topLeftLogos ?? [];
       setBBottom = _logoSetB?.bottomLogos ?? [];
       setBTop = _logoSetB?.topLeftLogos ?? [];
     }
@@ -3858,19 +3494,9 @@ class _HomePageState extends State<HomePage> {
                 icon: Icon(Icons.layers_clear, size: 16),
               ),
               ButtonSegment(
-                value: LogoSetMode.splitHalf,
-                label: Text('Metade / Metade'),
-                icon: Icon(Icons.call_split, size: 16),
-              ),
-              ButtonSegment(
                 value: LogoSetMode.alternating,
                 label: Text('Alternado (par/ímpar)'),
                 icon: Icon(Icons.swap_horiz, size: 16),
-              ),
-              ButtonSegment(
-                value: LogoSetMode.autoMultiSet,
-                label: Text('Automático (vários sets)'),
-                icon: Icon(Icons.auto_awesome, size: 16),
               ),
             ],
             selected: {_logoSetMode},
@@ -3898,40 +3524,6 @@ class _HomePageState extends State<HomePage> {
                 }
               }
 
-              // When switching TO autoMultiSet, migrate logos from all sources to masterLogos
-              if (newMode == LogoSetMode.autoMultiSet && _p.masterLogos.isEmpty) {
-                final collected = <LogoItem>[];
-                // From single mode legacy
-                collected.addAll(_p.bottomLogos);
-                collected.addAll(_p.topLeftLogos);
-                // From Set A
-                if (_logoSetA != null) {
-                  collected.addAll(_logoSetA!.bottomLogos);
-                  collected.addAll(_logoSetA!.topLeftLogos);
-                }
-                // From Set B
-                if (_logoSetB != null) {
-                  collected.addAll(_logoSetB!.bottomLogos);
-                  collected.addAll(_logoSetB!.topLeftLogos);
-                }
-                // From existing autoMultiSet sets
-                for (final set in _p.logoSets) {
-                  collected.addAll(set.bottomLogos);
-                  collected.addAll(set.topLeftLogos);
-                }
-                // Deduplicate by sourceKey
-                final seen = <String>{};
-                final unique = <LogoItem>[];
-                for (final logo in collected) {
-                  if (seen.add(logo.sourceKey)) {
-                    unique.add(logo);
-                  }
-                }
-                if (unique.isNotEmpty) {
-                  setState(() => _p.masterLogos.addAll(unique));
-                }
-              }
-
               setState(() => _logoSetMode = newMode);
               // Re-distribute all logos with new mode using masterLogos
               if (_p.masterLogos.isNotEmpty) {
@@ -3954,7 +3546,7 @@ class _HomePageState extends State<HomePage> {
               OutlinedButton.icon(
                 onPressed: !_controlsEnabled ? null : () => _pickLogosAutoMode(),
                 icon: const Icon(Icons.add_photo_alternate_outlined, size: 18),
-                label: Text(isSingle ? 'Adicionar logos ao conjunto' : (isAutoMultiSet ? 'Adicionar logos (auto sets)' : 'Adicionar logos (Set A + B)')),
+                label: Text(isSingle ? 'Adicionar logos ao conjunto' : 'Adicionar logos (Set A + B)'),
               ),
               const SizedBox(width: 8),
               if (allLogos.isNotEmpty)
@@ -3972,9 +3564,7 @@ class _HomePageState extends State<HomePage> {
                 ? 'Adicione fotos ou logos para começar.'
                 : isSingle
                     ? 'Todas as logos vão para a BASE primeiro. Se não couberem (respeitando margens e espaçamento), o excesso vai para o TOPO automaticamente.'
-                    : (isAutoMultiSet
-                        ? 'Cria quantos sets forem necessários para caber TODAS as logos. Preenche BASE de cada set, depois TOP. Ajuste o tamanho para reduzir número de sets.'
-                        : 'Logos são distribuídas igualmente entre Set A e Set B. Preenche BASE de ambos primeiro, depois TOP de ambos. Ajuste o tamanho para caber mais.'),
+                    : 'Logos são distribuídas igualmente entre Set A e Set B. Preenche BASE de ambos primeiro, depois TOP de ambos. Ajuste o tamanho para caber mais.',
             style: small,
           ),
 
@@ -4071,173 +3661,8 @@ class _HomePageState extends State<HomePage> {
                   _topLeftLogos.map((e) => e.bytes).toList(), index),
               ),
             ],
-          ] else if (isAutoMultiSet) ...[
-            // AutoMultiSet mode: show all sets from project.logoSets
-            if (allLogos.isNotEmpty)
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                decoration: BoxDecoration(
-                  color: scheme.primaryContainer,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: scheme.primary.withOpacity(0.3), width: 1.5),
-                  boxShadow: [
-                    BoxShadow(
-                      color: scheme.primary.withOpacity(0.1),
-                      blurRadius: 4,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
-                ),
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(minWidth: 0), // Allow shrinking
-                  child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                      child: Text(
-                        'Sets: ${_logoSetCount}  |  Total: ${allLogos.length}  |  Set A: ${_bottomPerSetCount} base + ${_topPerSetCount} top = ${_bottomPerSetCount + _topPerSetCount}  |  Set B: ${setBBottom.length} base + ${setBTop.length} top = ${setBBottom.length + setBTop.length}',
-                        style: small?.copyWith(fontSize: 13, fontWeight: FontWeight.w700, color: scheme.onPrimaryContainer, letterSpacing: 0.2),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            const SizedBox(height: 8),
-            for (int i = 0; i < multiSets.length; i++) ...[
-              const SizedBox(height: 8),
-              Text('SET ${i + 1}', style: small?.copyWith(fontWeight: FontWeight.w600, color: scheme.primary)),
-              const SizedBox(height: 4),
-              if (multiSets[i].bottomLogos.isNotEmpty) ...[
-                Text('BASE ${i + 1}', style: small?.copyWith(fontWeight: FontWeight.w500)),
-                _DraggableLogoList(
-                  items: multiSets[i].bottomLogos,
-                  placement: Placement.bottom,
-                  controlsEnabled: _controlsEnabled,
-                  processing: _processing,
-                  onReorder: (oldIndex, newIndex) {
-                    setState(() {
-                      if (newIndex > oldIndex) newIndex -= 1;
-                      final item = multiSets[i].bottomLogos.removeAt(oldIndex);
-                      multiSets[i].bottomLogos.insert(newIndex, item);
-                    });
-                    final rebuilt = <LogoItem>[
-                      ...multiSets.expand((s) => s.bottomLogos),
-                      ...multiSets.expand((s) => s.topLeftLogos),
-                    ];
-                    Future.microtask(() => _autoDistributeLogos(rebuilt));
-                  },
-                  onRemove: (index) {
-                    setState(() => multiSets[i].bottomLogos.removeAt(index));
-                    final rebuilt = <LogoItem>[
-                      ...multiSets.expand((s) => s.bottomLogos),
-                      ...multiSets.expand((s) => s.topLeftLogos),
-                    ];
-                    Future.microtask(() => _autoDistributeLogos(rebuilt));
-                  },
-                  onMoveToOther: (item, fromPlacement) {},
-                  onAcceptFromOther: (item) {},
-                  onOpenFullscreen: (index) => _openImagesFullscreen(
-                    multiSets[i].bottomLogos.map((e) => e.bytes).toList(), index),
-                ),
-              ] else ...[
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: scheme.surfaceContainerHighest.withOpacity( 0.3),
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(color: scheme.outlineVariant),
-                  ),
-                  child: Text('BASE ${i + 1} vazia', style: small?.copyWith(color: scheme.outline)),
-                ),
-              ],
-              if (multiSets[i].topLeftLogos.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                Text('TOPO ${i + 1}', style: small?.copyWith(fontWeight: FontWeight.w500)),
-                _DraggableLogoList(
-                  items: multiSets[i].topLeftLogos,
-                  placement: Placement.topLeft,
-                  controlsEnabled: _controlsEnabled,
-                  processing: _processing,
-                  onReorder: (oldIndex, newIndex) {
-                    setState(() {
-                      if (newIndex > oldIndex) newIndex -= 1;
-                      final item = multiSets[i].topLeftLogos.removeAt(oldIndex);
-                      multiSets[i].topLeftLogos.insert(newIndex, item);
-                    });
-                    final rebuilt = <LogoItem>[
-                      ...multiSets.expand((s) => s.bottomLogos),
-                      ...multiSets.expand((s) => s.topLeftLogos),
-                    ];
-                    Future.microtask(() => _autoDistributeLogos(rebuilt));
-                  },
-                  onRemove: (index) {
-                    setState(() => multiSets[i].topLeftLogos.removeAt(index));
-                    final rebuilt = <LogoItem>[
-                      ...multiSets.expand((s) => s.bottomLogos),
-                      ...multiSets.expand((s) => s.topLeftLogos),
-                    ];
-                    Future.microtask(() => _autoDistributeLogos(rebuilt));
-                  },
-                  onMoveToOther: (item, fromPlacement) {},
-                  onAcceptFromOther: (item) {},
-                  onOpenFullscreen: (index) => _openImagesFullscreen(
-                    multiSets[i].topLeftLogos.map((e) => e.bytes).toList(), index),
-                ),
-              ],
-            ],
-            // Fallback: show masterLogos if no sets created yet but logos exist
-            if (multiSets.isEmpty && _p.masterLogos.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: scheme.primaryContainer.withOpacity( 0.3),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: scheme.primary.withOpacity( 0.5)),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Icon(Icons.info_outline, size: 16, color: scheme.primary),
-                        const SizedBox(width: 8),
-                        Text(
-                          'Logos carregadas (aguardando distribuição automática)',
-                          style: small?.copyWith(fontWeight: FontWeight.w600, color: scheme.primary),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Text('Total: ${_p.masterLogos.length} logo(s). A distribuição em sets será feita automaticamente.',
-                        style: small?.copyWith(color: scheme.onSurfaceVariant)),
-                    const SizedBox(height: 8),
-                    _DraggableLogoList(
-                      items: _p.masterLogos,
-                      placement: Placement.bottom,
-                      controlsEnabled: _controlsEnabled,
-                      processing: _processing,
-                      onReorder: (oldIndex, newIndex) {
-                        setState(() {
-                          if (newIndex > oldIndex) newIndex -= 1;
-                          final item = _p.masterLogos.removeAt(oldIndex);
-                          _p.masterLogos.insert(newIndex, item);
-                        });
-                      },
-                      onRemove: (index) {
-                        setState(() => _p.masterLogos.removeAt(index));
-                      },
-                      onMoveToOther: (item, fromPlacement) {},
-                      onAcceptFromOther: (item) {},
-                      onOpenFullscreen: (index) => _openImagesFullscreen(
-                        _p.masterLogos.map((e) => e.bytes).toList(), index),
-                    ),
-                  ],
-                ),
-              ),
-            ],
           ] else ...[
-            // Dual-set mode (splitHalf/alternating): show Set A and Set B separately
+            // Alternating mode: show Set A and Set B separately
             // Set A
             const SizedBox(height: 8),
             Text('CONJUNTO A', style: small?.copyWith(fontWeight: FontWeight.w600, color: scheme.primary)),
@@ -4521,7 +3946,7 @@ class _HomePageState extends State<HomePage> {
         _logoSetB = _logoSetB!.copyWith(bottomLogos: [], topLeftLogos: []);
       }
 
-      // Clear autoMultiSet sets
+      // No additional sets to clear
       _p.logoSets.clear();
 
       // Clear reference shortest side
@@ -6057,20 +5482,14 @@ class _HomePageState extends State<HomePage> {
             style: const TextStyle(color: Colors.white, fontSize: 11.5)),
       );
 
-  /// Returns the set index (0-based) for the given photo index in autoMultiSet mode,
-  /// or null for single/dual modes where we use A/B labels.
+  /// Returns the set index (0-based) for the given photo index.
+  /// Returns null for single mode, 0/1 for alternating mode (A/B).
   int? _logoSetIndexForIndex(int index) {
     switch (_logoSetMode) {
       case LogoSetMode.single:
         return null;
-      case LogoSetMode.splitHalf:
       case LogoSetMode.alternating:
-        // These only have 2 sets (A and B)
-        return null;
-      case LogoSetMode.autoMultiSet:
-        final sets = _p.logoSets.where((s) => s.bottomLogos.isNotEmpty || s.topLeftLogos.isNotEmpty).toList();
-        if (sets.isEmpty) return null;
-        return index % sets.length;
+        return index % 2; // 0 for Set A (even), 1 for Set B (odd)
     }
   }
 
