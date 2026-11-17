@@ -644,7 +644,12 @@ class _HomePageState extends State<HomePage> {
       }
     }
     _initialized = true;
-    _kickPreview();
+    // If project has photos but no previews, render first immediately
+    if (_previews.isEmpty && _photoPaths.isNotEmpty) {
+      _renderFirstPhotoImmediately();
+    } else {
+      _kickPreview();
+    }
   }
 
   @override
@@ -1158,7 +1163,13 @@ class _HomePageState extends State<HomePage> {
     if (_p.masterLogos.isNotEmpty) {
       await _autoDistributeLogos(_p.masterLogos);
     }
-    _kickPreview();
+    // If previews are empty (first photos added), render the first one IMMEDIATELY
+    // so user sees something right away instead of waiting for debounce + worker warmup.
+    if (_previews.isEmpty && _photoPaths.isNotEmpty) {
+      _renderFirstPhotoImmediately();
+    } else {
+      _kickPreview();
+    }
     // If this project was already saved, the new photos go straight into the
     // same album (only the unsaved ones get processed).
     if (_currentAlbum != null && !_processing) _saveAll();
@@ -1226,7 +1237,12 @@ class _HomePageState extends State<HomePage> {
     if (_p.masterLogos.isNotEmpty) {
       await _autoDistributeLogos(_p.masterLogos);
     }
-    _kickPreview();
+    // If previews are empty (first photos added), render the first one IMMEDIATELY
+    if (_previews.isEmpty && _photoPaths.isNotEmpty) {
+      _renderFirstPhotoImmediately();
+    } else {
+      _kickPreview();
+    }
     if (_currentAlbum != null && !_processing) _saveAll();
   }
 
@@ -1562,6 +1578,79 @@ class _HomePageState extends State<HomePage> {
   void _kickPreview() {
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 120), _recomputePreviews);
+  }
+
+  /// Renders the very first photo IMMEDIATELY (no debounce) so user sees
+  /// something right away when adding photos to an empty project.
+  Future<void> _renderFirstPhotoImmediately() async {
+    if (_photoPaths.isEmpty || !_hasAnyContent) return;
+    // Cancel any pending debounced render
+    _debounce?.cancel();
+    // Invalidate any in-flight renders
+    _previewToken++;
+    // Render just the first photo (index 0) with high priority
+    final path = _photoPaths.first;
+    if (_previewPhoto.containsKey(path) && _previews.containsKey(path)) return; // already have it
+    try {
+      setState(() => _renderingPreview = true);
+      // Downscale logos if needed (fast path - small count)
+      final allLogos = [
+        ..._bottomLogos,
+        ..._topLeftLogos,
+        if (_cornerLogo != null) _cornerLogo!,
+      ];
+      for (final e in allLogos) {
+        _previewLogo[e.id] ??= await compute(downscaleImage, (e.bytes, 512, true))
+            .timeout(const Duration(seconds: 10), onTimeout: () => throw TimeoutException('Logo downscale timeout'));
+      }
+      await _ensureTextPngs();
+      // Downscale the photo
+      Uint8List small;
+      final cached = _previewPhoto[path];
+      if (cached != null) {
+        small = cached;
+      } else {
+        final full = await File(path).readAsBytes();
+        small = await compute(downscaleImage, (full, 1280, false))
+            .timeout(const Duration(seconds: 10), onTimeout: () => throw TimeoutException('Photo downscale timeout'));
+        if (!_photoPaths.contains(path)) return;
+        _previewPhoto[path] = small;
+      }
+      // small is definitely non-null here
+      final smallBytes = small;
+      // Render with worker (with timeout + restart fallback)
+      Uint8List? out;
+      try {
+        out = await _worker.render(_previewRequest(path, smallBytes))
+            .timeout(const Duration(seconds: 10));
+      } on TimeoutException {
+        try {
+          await _worker.restart();
+          await _worker.ready().timeout(const Duration(seconds: 5));
+          out = await _worker.render(_previewRequest(path, smallBytes))
+              .timeout(const Duration(seconds: 10));
+        } catch (_) {
+          if (mounted) setState(() => _renderingPreview = false);
+          return;
+        }
+      }
+      if (out == null || !mounted) {
+        if (mounted) setState(() => _renderingPreview = false);
+        return;
+      }
+      final aspect = await _aspectOf(out);
+      if (!mounted) return;
+      final outBytes = out!; // non-null after check above
+      setState(() {
+        _previews[path] = Preview(outBytes, aspect);
+        _renderedVersion[path] = _previewVersion;
+        _renderingPreview = false;
+      });
+      // Now kick the full background render for the rest
+      _kickPreview();
+    } catch (_) {
+      if (mounted) setState(() => _renderingPreview = false);
+    }
   }
 
   /// Photos in render priority: the selected one first, then its neighbours.
@@ -2820,7 +2909,12 @@ class _HomePageState extends State<HomePage> {
     if (_p.masterLogos.isNotEmpty && _photoPaths.isNotEmpty) {
       await _autoDistributeLogos(_p.masterLogos);
     }
-    _kickPreview();
+    // If previews are empty (project has photos but none rendered yet), render first immediately
+    if (_previews.isEmpty && _photoPaths.isNotEmpty) {
+      _renderFirstPhotoImmediately();
+    } else {
+      _kickPreview();
+    }
     if (mounted) setState(() {}); // Trigger rebuild with new project
   }
 
