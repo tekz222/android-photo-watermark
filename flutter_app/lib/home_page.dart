@@ -447,29 +447,30 @@ class _HomePageState extends State<HomePage> {
         final bottom = setName == 'SetA' ? setABottom : setBBottom;
         final top = setName == 'SetA' ? setATop : setBTop;
 
-        bool moved = true;
-        while (moved) {
-          moved = false;
+        // Keep moving logos from top to bottom as long as any fit
+        while (top.isNotEmpty) {
           // Calculate remaining space in bottom row
           double usedBottom = bottom.fold(0.0, (sum, l) => sum + logoWidths[allLogos.indexOf(l)]) + (bottom.length > 0 ? gapPx * (bottom.length - 1) : 0);
           double remainingBottom = photoWidth - usedBottom;
 
-          // Check each top logo (smallest first) to see if it fits in bottom
-          final topLogosSorted = List<LogoItem>.from(top);
-          topLogosSorted.sort((a, b) => logoWidths[allLogos.indexOf(a)].compareTo(logoWidths[allLogos.indexOf(b)]));
-
-          for (final logo in topLogosSorted) {
+          // Find the BEST logo to move (largest that fits, to maximize usage)
+          LogoItem? bestLogo;
+          double bestLogoW = -1;
+          for (final logo in top) {
             final logoW = logoWidths[allLogos.indexOf(logo)];
             final needed = bottom.isEmpty ? logoW : logoW + gapPx;
-            if (needed <= remainingBottom) {
-              // Move from top to bottom
-              top.remove(logo);
-              bottom.add(logo);
-              moved = true;
-              debugPrint('$setName: MOVED logo ${allLogos.indexOf(logo)} (${logoW.toStringAsFixed(1)}px) from TOP to BOTTOM. Bottom rem was ${remainingBottom.toStringAsFixed(1)}px, needed $needed');
-              break; // Recalculate after move
+            if (needed <= remainingBottom && logoW > bestLogoW) {
+              bestLogo = logo;
+              bestLogoW = logoW;
             }
           }
+
+          if (bestLogo == null) break; // No more top logos fit in bottom
+
+          // Move the best fitting logo
+          top.remove(bestLogo);
+          bottom.add(bestLogo);
+          debugPrint('$setName: MOVED logo ${allLogos.indexOf(bestLogo)} (${bestLogoW.toStringAsFixed(1)}px) from TOP to BOTTOM. Bottom rem was ${remainingBottom.toStringAsFixed(1)}px, needed ${(bottom.isEmpty ? bestLogoW : bestLogoW + gapPx).toStringAsFixed(1)}px');
         }
       }
 
