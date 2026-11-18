@@ -6291,9 +6291,12 @@ class _DraggableLogoTile extends StatelessWidget {
               index: index,
               child: const MouseRegion(
                 cursor: SystemMouseCursors.grab,
-                child: Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 6),
-                  child: Icon(Icons.drag_handle, size: 20),
+                child: Tooltip(
+                  message: 'Arraste para reordenar',
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 8),
+                    child: Icon(Icons.drag_indicator, size: 22, color: Colors.grey),
+                  ),
                 ),
               ),
             ),
