@@ -3572,6 +3572,15 @@ class _HomePageState extends State<HomePage> {
           ),
           const SizedBox(height: 12),
 
+          // Global size slider (applies to all logos in both sets)
+          _slider('Tamanho das logos (todas)', _logoSize, 5, 25,
+              (v) {
+                setState(() => _logoSize = v);
+                _schedulePreview();
+              },
+              enabled: !_currentImageHasCustomSettings),
+          const SizedBox(height: 12),
+
           // Set A
           Text('Conjunto A (base/topo-esquerdo):', style: small?.copyWith(fontWeight: FontWeight.w600)),
           const SizedBox(height: 4),
