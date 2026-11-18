@@ -3604,6 +3604,7 @@ class _HomePageState extends State<HomePage> {
                   ..addAll(set.topLeftLogos);
               }
             });
+            _schedulePreview();
           }),
 
           // Set B - only shown in dual-set modes
@@ -3611,7 +3612,10 @@ class _HomePageState extends State<HomePage> {
             const SizedBox(height: 12),
             Text('Conjunto B (base/topo-esquerdo):', style: small?.copyWith(fontWeight: FontWeight.w600)),
             const SizedBox(height: 4),
-            _logoSetEditor('B', _logoSetB, (set) => setState(() => _logoSetB = set)),
+            _logoSetEditor('B', _logoSetB, (set) {
+            setState(() => _logoSetB = set);
+            _schedulePreview();
+          }),
             const SizedBox(height: 8),
           ],
 
