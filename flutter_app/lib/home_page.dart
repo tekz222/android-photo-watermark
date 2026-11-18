@@ -1392,8 +1392,10 @@ class _HomePageState extends State<HomePage> {
             continue;
           }
           final path = await _copyBytesToApp(bytes, 'logos');
-          target.add(LogoItem(Project.nextLogoId(), path, x.name, bytes, sig,
-              const <String>{}, const <String>{}));
+          final item = LogoItem(Project.nextLogoId(), path, x.name, bytes, sig,
+              const <String>{}, const <String>{});
+          target.add(item);
+          _p.masterLogos.add(item); // Also add to masterLogos (source of truth)
           usedNames.add(name);
           usedSigs.add(sig);
           added++;
@@ -1871,10 +1873,14 @@ class _HomePageState extends State<HomePage> {
         if (_cornerLogo != null) _cornerLogo!,
       ];
       for (final e in allLogos) {
-        _previewLogo[e.id] ??= await compute(downscaleImage, (e.bytes, 512, true))
-            .timeout(const Duration(seconds: 20), onTimeout: () {
-          throw TimeoutException('Logo downscale timeout');
-        });
+        try {
+          _previewLogo[e.id] ??= await compute(downscaleImage, (e.bytes, 512, true))
+              .timeout(const Duration(seconds: 20), onTimeout: () {
+            throw TimeoutException('Logo downscale timeout');
+          });
+        } catch (_) {
+          // Skip logo if downscale fails (corrupt image, etc.) - don't crash preview
+        }
         if (token != _previewToken) return;
       }
       await _ensureTextPngs();
