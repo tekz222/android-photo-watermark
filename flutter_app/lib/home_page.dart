@@ -4373,12 +4373,15 @@ class _HomePageState extends State<HomePage> {
         else
           SizedBox(
             height: 60,
-            child: ReorderableListView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
+            child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
-              buildDefaultDragHandles: false,
-              itemCount: items.length + (enabled ? 1 : 0),
+              physics: const ClampingScrollPhysics(),
+              child: ReorderableListView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                scrollDirection: Axis.horizontal,
+                buildDefaultDragHandles: false,
+                itemCount: items.length + (enabled ? 1 : 0),
             onReorder: enabled ? (oldIndex, newIndex) {
               if (oldIndex >= items.length || newIndex >= items.length) return;
               if (newIndex > oldIndex) newIndex -= 1;
@@ -4431,6 +4434,7 @@ class _HomePageState extends State<HomePage> {
               );
             },
           ),
+        ),
       ],
     );
   }
