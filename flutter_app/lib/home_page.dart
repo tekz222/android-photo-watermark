@@ -1943,6 +1943,7 @@ class _HomePageState extends State<HomePage> {
           }
           // Render with timeout + retry (worker isolate can hang/crash)
           Uint8List? out;
+          bool renderFailed = false;
           try {
             out = await _worker.render(_previewRequest(path, small))
                 .timeout(const Duration(seconds: 10));
@@ -1954,8 +1955,14 @@ class _HomePageState extends State<HomePage> {
               out = await _worker.render(_previewRequest(path, small))
                   .timeout(const Duration(seconds: 10));
             } catch (_) {
-              return;
+              renderFailed = true;
             }
+          }
+          if (renderFailed || out == null) {
+            // This photo failed, but continue with others
+            _previewFailed.add(path);
+            if (token != _previewToken) return;
+            continue;
           }
           if (token != _previewToken) return;
           if (out == null) continue;
