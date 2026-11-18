@@ -3821,11 +3821,14 @@ class _HomePageState extends State<HomePage> {
                   Future.microtask(() => _autoDistributeLogos([..._bottomLogos, ..._topLeftLogos]));
                 },
                 onRemove: (index) {
+                  final removed = _bottomLogos[index];
                   final newBottom = [..._bottomLogos];
                   newBottom.removeAt(index);
-                  setState(() => _bottomLogos
-                    ..clear()
-                    ..addAll(newBottom));
+                  setState(() {
+                    _bottomLogos.clear();
+                    _bottomLogos.addAll(newBottom);
+                    _p.masterLogos.remove(removed); // Also remove from masterLogos
+                  });
                   Future.microtask(() => _autoDistributeLogos([..._bottomLogos, ..._topLeftLogos]));
                 },
                 onMoveToOther: (item, fromPlacement) {},
@@ -3878,11 +3881,14 @@ class _HomePageState extends State<HomePage> {
                   Future.microtask(() => _autoDistributeLogos([..._bottomLogos, ..._topLeftLogos]));
                 },
                 onRemove: (index) {
+                  final removed = _topLeftLogos[index];
                   final newTop = [..._topLeftLogos];
                   newTop.removeAt(index);
-                  setState(() => _topLeftLogos
-                    ..clear()
-                    ..addAll(newTop));
+                  setState(() {
+                    _topLeftLogos.clear();
+                    _topLeftLogos.addAll(newTop);
+                    _p.masterLogos.remove(removed); // Also remove from masterLogos
+                  });
                   Future.microtask(() => _autoDistributeLogos([..._bottomLogos, ..._topLeftLogos]));
                 },
                 onMoveToOther: (item, fromPlacement) {},
@@ -3913,7 +3919,11 @@ class _HomePageState extends State<HomePage> {
                   Future.microtask(() => _autoDistributeLogos(allLogos));
                 },
                 onRemove: (index) {
-                  setState(() => setABottom.removeAt(index));
+                  final removed = setABottom[index];
+                  setState(() {
+                    setABottom.removeAt(index);
+                    _p.masterLogos.remove(removed);
+                  });
                   Future.microtask(() => _autoDistributeLogos(allLogos));
                 },
                 onMoveToOther: (item, fromPlacement) {},
@@ -3949,7 +3959,11 @@ class _HomePageState extends State<HomePage> {
                   Future.microtask(() => _autoDistributeLogos(allLogos));
                 },
                 onRemove: (index) {
-                  setState(() => setATop.removeAt(index));
+                  final removed = setATop[index];
+                  setState(() {
+                    setATop.removeAt(index);
+                    _p.masterLogos.remove(removed);
+                  });
                   Future.microtask(() => _autoDistributeLogos(allLogos));
                 },
                 onMoveToOther: (item, fromPlacement) {},
@@ -3989,7 +4003,11 @@ class _HomePageState extends State<HomePage> {
                   Future.microtask(() => _autoDistributeLogos(allLogos));
                 },
                 onRemove: (index) {
-                  setState(() => setBBottom.removeAt(index));
+                  final removed = setBBottom[index];
+                  setState(() {
+                    setBBottom.removeAt(index);
+                    _p.masterLogos.remove(removed);
+                  });
                   Future.microtask(() => _autoDistributeLogos(allLogos));
                 },
                 onMoveToOther: (item, fromPlacement) {},
@@ -4025,7 +4043,11 @@ class _HomePageState extends State<HomePage> {
                   Future.microtask(() => _autoDistributeLogos(allLogos));
                 },
                 onRemove: (index) {
-                  setState(() => setBTop.removeAt(index));
+                  final removed = setBTop[index];
+                  setState(() {
+                    setBTop.removeAt(index);
+                    _p.masterLogos.remove(removed);
+                  });
                   Future.microtask(() => _autoDistributeLogos(allLogos));
                 },
                 onMoveToOther: (item, fromPlacement) {},
