@@ -1795,6 +1795,17 @@ class _HomePageState extends State<HomePage> {
         return;
       }
     }
+
+    // Safety timeout for the entire render pass (prevents stuck "Gerando pré-visualização…")
+    try {
+      await _doRecomputePreviews().timeout(const Duration(seconds: 120));
+    } on TimeoutException {
+      debugPrint('_recomputePreviews timed out after 120s');
+      if (mounted) setState(() => _renderingPreview = false);
+    }
+  }
+
+  Future<void> _doRecomputePreviews() async {
     final token = ++_previewToken;
     _worker.cancelPending(); // drop renders queued by an abandoned loop
     if (_photoPaths.isEmpty || !_hasAnyContent) {
@@ -1901,7 +1912,9 @@ class _HomePageState extends State<HomePage> {
         }
       }
     } finally {
-      if (mounted && token == _previewToken) {
+      // Always reset rendering flag when this render pass ends, regardless of token.
+      // A new render pass will set it to true again if needed.
+      if (mounted) {
         setState(() => _renderingPreview = false);
       }
     }
