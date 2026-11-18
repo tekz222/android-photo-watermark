@@ -3579,6 +3579,12 @@ class _HomePageState extends State<HomePage> {
                 _schedulePreview();
               },
               enabled: !_currentImageHasCustomSettings),
+          _slider('Espaço entre as logos (todas)', _logoSpacing, 0, 10,
+              (v) {
+                setState(() => _logoSpacing = v);
+                _schedulePreview();
+              },
+              enabled: !_currentImageHasCustomSettings),
           const SizedBox(height: 12),
 
           // Set A
