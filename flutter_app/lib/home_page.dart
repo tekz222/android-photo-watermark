@@ -3152,7 +3152,7 @@ class _HomePageState extends State<HomePage> {
                 Row(
                   children: [
                     Expanded(
-                      child: _slider('Tamanho (todas)', _logoSize, 5, 25,
+                      child: _slider('Tamanho (todas)', _logoSize, 5, 30,
                           (v) {
                             setState(() => _logoSize = v);
                             if (_autoArrangeMode) {
@@ -3216,7 +3216,7 @@ class _HomePageState extends State<HomePage> {
               Row(
                 children: [
                   Expanded(
-                    child: _slider('Tamanho (todas)', _logoSize, 5, 25,
+                    child: _slider('Tamanho (todas)', _logoSize, 5, 30,
                         (v) {
                           setState(() => _logoSize = v);
                           if (_autoArrangeMode) {
@@ -4802,18 +4802,18 @@ class _HomePageState extends State<HomePage> {
             Text('Tamanho das logos', style: small?.copyWith(fontWeight: FontWeight.w600)),
             const SizedBox(height: 4),
             if (effectiveSettings.useGlobalLogoSize) ...[
-              _slider('Tamanho (todas: base/topo/canto)', effectiveSettings.bottomLogoSize ?? _logoSize, 5, 25,
+              _slider('Tamanho (todas: base/topo/canto)', effectiveSettings.bottomLogoSize ?? _logoSize, 5, 30,
                   (v) => _setImageSettings(path, effectiveSettings.copyWith(
                     bottomLogoSize: v,
                     topLeftLogoSize: v,
                     cornerLogoSize: v,
                   ))),
             ] else ...[
-              _slider('Tamanho (base)', effectiveSettings.bottomLogoSize ?? _logoSize, 5, 25,
+              _slider('Tamanho (base)', effectiveSettings.bottomLogoSize ?? _logoSize, 5, 30,
                   (v) => _setImageSettings(path, effectiveSettings.copyWith(bottomLogoSize: v))),
-              _slider('Tamanho (topo)', effectiveSettings.topLeftLogoSize ?? _logoSize, 5, 25,
+              _slider('Tamanho (topo)', effectiveSettings.topLeftLogoSize ?? _logoSize, 5, 30,
                   (v) => _setImageSettings(path, effectiveSettings.copyWith(topLeftLogoSize: v))),
-              _slider('Tamanho (canto)', effectiveSettings.cornerLogoSize ?? _logoSize, 5, 25,
+              _slider('Tamanho (canto)', effectiveSettings.cornerLogoSize ?? _logoSize, 5, 30,
                   (v) => _setImageSettings(path, effectiveSettings.copyWith(cornerLogoSize: v))),
             ],
             const SizedBox(height: 12),
