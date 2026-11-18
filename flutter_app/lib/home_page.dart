@@ -4352,6 +4352,7 @@ class _HomePageState extends State<HomePage> {
     required ValueChanged<List<LogoItem>> onChanged,
   }) {
     final scheme = Theme.of(context).colorScheme;
+    final small = Theme.of(context).textTheme.bodySmall;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -4370,58 +4371,81 @@ class _HomePageState extends State<HomePage> {
             label: const Text('Adicionar logos'),
           )
         else
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: [
-              for (int i = 0; i < items.length; i++)
-                _LogoSetThumb(
-                  item: items[i],
-                  number: i + 1,
-                  enabled: enabled,
-                  onRemove: () {
-                    final newList = List<LogoItem>.from(items)..removeAt(i);
-                    onChanged(newList);
-                  },
-                ),
-              if (enabled)
-                GestureDetector(
-                  onTap: () async {
-                    final picked = await _picker.pickMultiImage();
-                    if (picked.isEmpty) return;
-                    final newLogos = <LogoItem>[...items];
-                    for (final x in picked) {
-                      newLogos.add(await _makeLogoItem(x.path));
-                    }
-                    onChanged(newLogos);
-                  },
-                  child: Container(
-                    width: 50,
-                    height: 50,
-                    decoration: BoxDecoration(
-                      border: Border.all(color: scheme.outlineVariant, style: BorderStyle.solid),
-                      borderRadius: BorderRadius.circular(4),
+          ReorderableListView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            scrollDirection: Axis.horizontal,
+            buildDefaultDragHandles: false,
+            itemCount: items.length + (enabled ? 1 : 0),
+            onReorder: enabled ? (oldIndex, newIndex) {
+              if (oldIndex >= items.length || newIndex >= items.length) return;
+              if (newIndex > oldIndex) newIndex -= 1;
+              final newList = List<LogoItem>.from(items);
+              final item = newList.removeAt(oldIndex);
+              newList.insert(newIndex, item);
+              onChanged(newList);
+            } : null,
+            itemBuilder: (context, i) {
+              if (i >= items.length) {
+                // Add button at the end
+                return KeyedSubtree(
+                  key: ValueKey('add_${items.length}'),
+                  child: GestureDetector(
+                    onTap: enabled ? () async {
+                      final picked = await _picker.pickMultiImage();
+                      if (picked.isEmpty) return;
+                      final newLogos = <LogoItem>[...items];
+                      for (final x in picked) {
+                        newLogos.add(await _makeLogoItem(x.path));
+                      }
+                      onChanged(newLogos);
+                    } : null,
+                    child: Container(
+                      width: 50,
+                      height: 50,
+                      margin: const EdgeInsets.only(right: 6),
+                      decoration: BoxDecoration(
+                        border: Border.all(color: scheme.outlineVariant, style: BorderStyle.solid),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Icon(Icons.add, size: 20, color: scheme.outline),
                     ),
-                    child: Icon(Icons.add, size: 20, color: scheme.outline),
                   ),
-                ),
-            ],
+                );
+              }
+              final item = items[i];
+              return _LogoSetThumb(
+                key: ValueKey(item.id),
+                item: item,
+                number: i + 1,
+                enabled: enabled,
+                onRemove: () {
+                  final newList = List<LogoItem>.from(items)..removeAt(i);
+                  onChanged(newList);
+                },
+                onReorder: enabled ? () {} : null,
+              );
+            },
           ),
       ],
     );
   }
 
-  /// Thumbnail for logo set editor.
+  /// Thumbnail for logo set editor (horizontal reorderable).
   Widget _LogoSetThumb({
+    Key? key,
     required LogoItem item,
     required int number,
     required bool enabled,
     required VoidCallback onRemove,
+    VoidCallback? onReorder,
   }) {
     final scheme = Theme.of(context).colorScheme;
     return Container(
+      key: key,
       width: 50,
       height: 50,
+      margin: const EdgeInsets.only(right: 6),
       decoration: BoxDecoration(
         border: Border.all(color: scheme.outlineVariant),
         borderRadius: BorderRadius.circular(4),
@@ -4445,7 +4469,7 @@ class _HomePageState extends State<HomePage> {
               child: Text('$number', style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold)),
             ),
           ),
-          if (enabled && onRemove != null)
+          if (enabled)
             Positioned(
               top: 2,
               right: 2,
@@ -4455,6 +4479,28 @@ class _HomePageState extends State<HomePage> {
                   decoration: const BoxDecoration(color: Colors.black54, shape: BoxShape.circle),
                   padding: const EdgeInsets.all(2),
                   child: const Icon(Icons.close, size: 12, color: Colors.white),
+                ),
+              ),
+            ),
+          if (enabled && onReorder != null)
+            Positioned(
+              bottom: 2,
+              left: 2,
+              right: 2,
+              child: ReorderableDragStartListener(
+                index: number - 1,
+                child: MouseRegion(
+                  cursor: SystemMouseCursors.grab,
+                  child: Center(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.black54,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Icon(Icons.drag_indicator, size: 14, color: Colors.white),
+                    ),
+                  ),
                 ),
               ),
             ),
