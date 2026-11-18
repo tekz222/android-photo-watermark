@@ -114,12 +114,15 @@ class _HomePageState extends State<HomePage> {
   Project get _p => _projectManager.activeProject;
   List<String> get _photoPaths => _p.photoPaths;
 
-  /// Filtered photo paths based on search query (filename match, case-insensitive)
+  /// Filtered photo paths based on search query (filename match, case-insensitive).
+  /// Always returns photos sorted by creation date (oldest first).
   List<String> get _filteredPhotoPaths {
     if (!_initialized) return _photoPaths;
-    if (_previewSearch.isEmpty) return _photoPaths;
-    final query = _previewSearch.toLowerCase();
-    return _photoPaths.where((p) => p.split('/').last.split('\\').last.toLowerCase().contains(query)).toList();
+    final filtered = _previewSearch.isEmpty
+        ? _photoPaths
+        : _photoPaths.where((p) => p.split('/').last.split('\\').last.toLowerCase().contains(_previewSearch.toLowerCase())).toList();
+    // Sort by creation date (oldest first)
+    return _sortPathsByDate(filtered);
   }
 
   // Returns the bottom logos for the CURRENT mode.
@@ -979,11 +982,17 @@ class _HomePageState extends State<HomePage> {
 
       // Extract photos (only for full export)
       if (exportMode == ExportMode.full) {
+        final photoFiles = <ArchiveFile>[];
         for (final file in archive.files) {
           if (file.name.startsWith('photos/') && file.isFile) {
-            final path = await _copyBytesToApp(Uint8List.fromList(file.content as List<int>), 'photos');
-            _photoPaths.add(path);
+            photoFiles.add(file);
           }
+        }
+        // Sort by filename to preserve original order (archive order)
+        photoFiles.sort((a, b) => a.name.compareTo(b.name));
+        for (final file in photoFiles) {
+          final path = await _copyBytesToApp(Uint8List.fromList(file.content as List<int>), 'photos');
+          _photoPaths.add(path);
         }
       }
 
@@ -1135,10 +1144,12 @@ class _HomePageState extends State<HomePage> {
     if (_processing) return; // every button except Cancel is off during a save
     final picked = await _picker.pickMultiImage();
     if (picked.isEmpty) return;
+    // Sort picked files by original creation date (oldest first) BEFORE copying
+    final sortedPicked = await _sortXFilesByDate(picked);
     setState(() {
       _importing = true;
       _importDone = 0;
-      _importTotal = picked.length;
+      _importTotal = sortedPicked.length;
     });
     // Copy in parallel so importing many photos is fast; bump a counter as each
     // finishes so the UI can show "Carregando fotos… X de Y".
@@ -1146,7 +1157,7 @@ class _HomePageState extends State<HomePage> {
     final paths = <String>[];
     try {
       // Use forEach to handle individual failures without aborting all
-      await Future.wait(picked.map((x) async {
+      await Future.wait(sortedPicked.map((x) async {
         try {
           final bytes = await x.readAsBytes();
           final path = await _copyBytesToApp(bytes, 'photos');
@@ -1161,8 +1172,8 @@ class _HomePageState extends State<HomePage> {
       // ALWAYS reset importing flag, even on error
       if (mounted) {
         setState(() {
-          // Sort by file creation date (oldest first)
-          _photoPaths.addAll(_sortPathsByDate(paths));
+          // Sort by file creation date (oldest first) - already sorted by original date
+          _photoPaths.addAll(paths);
           _importing = false;
         });
       }
@@ -1267,6 +1278,22 @@ class _HomePageState extends State<HomePage> {
       return timeA.compareTo(timeB);
     });
     return files.map((f) => f.path).toList();
+  }
+
+  /// Sort XFile list by original file creation date (oldest first).
+  Future<List<XFile>> _sortXFilesByDate(List<XFile> files) async {
+    final filesWithDates = <(XFile, DateTime)>[];
+    for (final f in files) {
+      try {
+        final stat = await File(f.path).stat();
+        filesWithDates.add((f, stat.changed));
+      } catch (e) {
+        // If we can't stat, put at the end
+        filesWithDates.add((f, DateTime.fromMillisecondsSinceEpoch(0)));
+      }
+    }
+    filesWithDates.sort((a, b) => a.$2.compareTo(b.$2));
+    return filesWithDates.map((e) => e.$1).toList();
   }
 
   /// Normalized logo name for de-duplication: base filename, no extension,
