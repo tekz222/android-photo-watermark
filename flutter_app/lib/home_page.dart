@@ -3605,7 +3605,7 @@ class _HomePageState extends State<HomePage> {
           const SizedBox(height: 12),
 
           // Global size slider (applies to all logos in both sets)
-          _slider('Tamanho das logos (todas)', _logoSize, 5, 25,
+          _slider('Tamanho das logos (todas)', _logoSize, 5, 30,
               (v) {
                 setState(() => _logoSize = v);
                 _schedulePreview();
@@ -4076,7 +4076,7 @@ class _HomePageState extends State<HomePage> {
             ],
           ),
           const SizedBox(height: 8),
-          _slider('Tamanho das logos (todas)', _logoSize, 5, 25,
+          _slider('Tamanho das logos (todas)', _logoSize, 5, 30,
               (v) {
                 setState(() => _logoSize = v);
                 Future.microtask(() => _autoDistributeLogos(allLogos));
