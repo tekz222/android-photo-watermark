@@ -344,20 +344,50 @@ class _HomePageState extends State<HomePage> {
       // PHASE 1: Bottom rows - A,B,A,B... until BOTH full
       bool turnA = true;
       while (true) {
-        final isATurn = turnA;
-        final target = isATurn ? setABottom : setBBottom;
-        final other = isATurn ? setBBottom : setABottom;
-        final fitsFn = fitsInBottom;
+        bool placedThisRound = false;
 
-        final remaining = allLogos.where((l) => !placed.contains(l));
-        final logo = findFitting(remaining, fitsFn, target);
-        if (logo != null) {
-          target.add(logo);
-          placed.add(logo);
-          debugPrint('Phase 1: Set${isATurn ? 'A' : 'B'} bottom + logo ${allLogos.indexOf(logo)}');
+        // Try Set A bottom
+        if (turnA) {
+          final remaining = allLogos.where((l) => !placed.contains(l));
+          final logo = findFitting(remaining, fitsInBottom, setABottom);
+          if (logo != null) {
+            setABottom.add(logo);
+            placed.add(logo);
+            placedThisRound = true;
+            debugPrint('Phase 1: SetA bottom + logo ${allLogos.indexOf(logo)}');
+          }
+        } else {
+          // Try Set B bottom
+          final remaining = allLogos.where((l) => !placed.contains(l));
+          final logo = findFitting(remaining, fitsInBottom, setBBottom);
+          if (logo != null) {
+            setBBottom.add(logo);
+            placed.add(logo);
+            placedThisRound = true;
+            debugPrint('Phase 1: SetB bottom + logo ${allLogos.indexOf(logo)}');
+          }
         }
 
-        // Check if BOTH sets can no longer fit ANY remaining logo
+        // If current turn couldn't place, try the OTHER set (don't skip available space!)
+        if (!placedThisRound) {
+          final remaining = allLogos.where((l) => !placed.contains(l));
+          final logoA = findFitting(remaining, fitsInBottom, setABottom);
+          final logoB = findFitting(remaining, fitsInBottom, setBBottom);
+
+          if (logoA != null) {
+            setABottom.add(logoA);
+            placed.add(logoA);
+            placedThisRound = true;
+            debugPrint('Phase 1: SetA bottom (fallback) + logo ${allLogos.indexOf(logoA)}');
+          } else if (logoB != null) {
+            setBBottom.add(logoB);
+            placed.add(logoB);
+            placedThisRound = true;
+            debugPrint('Phase 1: SetB bottom (fallback) + logo ${allLogos.indexOf(logoB)}');
+          }
+        }
+
+        // Break if NEITHER set can fit ANY remaining logo
         final remainingAfter = allLogos.where((l) => !placed.contains(l));
         final aCanFit = findFitting(remainingAfter, fitsInBottom, setABottom) != null;
         final bCanFit = findFitting(remainingAfter, fitsInBottom, setBBottom) != null;
@@ -371,17 +401,45 @@ class _HomePageState extends State<HomePage> {
       // PHASE 2: Top rows - A,B,A,B... until BOTH full
       turnA = true;
       while (true) {
-        final isATurn = turnA;
-        final target = isATurn ? setATop : setBTop;
-        final other = isATurn ? setBTop : setATop;
-        final fitsFn = fitsInTop;
+        bool placedThisRound = false;
 
-        final remaining = allLogos.where((l) => !placed.contains(l));
-        final logo = findFitting(remaining, fitsFn, target);
-        if (logo != null) {
-          target.add(logo);
-          placed.add(logo);
-          debugPrint('Phase 2: Set${isATurn ? 'A' : 'B'} top + logo ${allLogos.indexOf(logo)}');
+        if (turnA) {
+          final remaining = allLogos.where((l) => !placed.contains(l));
+          final logo = findFitting(remaining, fitsInTop, setATop);
+          if (logo != null) {
+            setATop.add(logo);
+            placed.add(logo);
+            placedThisRound = true;
+            debugPrint('Phase 2: SetA top + logo ${allLogos.indexOf(logo)}');
+          }
+        } else {
+          final remaining = allLogos.where((l) => !placed.contains(l));
+          final logo = findFitting(remaining, fitsInTop, setBTop);
+          if (logo != null) {
+            setBTop.add(logo);
+            placed.add(logo);
+            placedThisRound = true;
+            debugPrint('Phase 2: SetB top + logo ${allLogos.indexOf(logo)}');
+          }
+        }
+
+        // Fallback: try other set if current couldn't place
+        if (!placedThisRound) {
+          final remaining = allLogos.where((l) => !placed.contains(l));
+          final logoA = findFitting(remaining, fitsInTop, setATop);
+          final logoB = findFitting(remaining, fitsInTop, setBTop);
+
+          if (logoA != null) {
+            setATop.add(logoA);
+            placed.add(logoA);
+            placedThisRound = true;
+            debugPrint('Phase 2: SetA top (fallback) + logo ${allLogos.indexOf(logoA)}');
+          } else if (logoB != null) {
+            setBTop.add(logoB);
+            placed.add(logoB);
+            placedThisRound = true;
+            debugPrint('Phase 2: SetB top (fallback) + logo ${allLogos.indexOf(logoB)}');
+          }
         }
 
         final remainingAfter = allLogos.where((l) => !placed.contains(l));
