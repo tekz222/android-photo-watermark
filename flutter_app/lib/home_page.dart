@@ -264,7 +264,7 @@ class _HomePageState extends State<HomePage> {
       int bottomCount = _fitCount(0, photoWidth);
       if (bottomCount == 0 && allLogos.isNotEmpty) bottomCount = 1;
       // Top row: stop before corner logo (uses _fitCountTop)
-      int topCount = _fitCountTop(bottomCount, logoWidths);
+      int topCount = _fitCountTop(bottomCount, logoWidths, photoWidth, shortestSide);
 
       final bottomLogos = allLogos.take(bottomCount).toList();
       final topLogos = allLogos.skip(bottomCount).take(topCount).toList();
@@ -599,22 +599,8 @@ class _HomePageState extends State<HomePage> {
   /// Uses actual corner logo position (same height as top logos) + 1% gap.
   /// [startIdx] is the index in the combined logo list to start from.
   /// [logoWidths] are pre-computed widths of all logos at current _logoSize.
-  int _fitCountTop(int startIdx, List<double> logoWidths) {
-    if (_photoPaths.isEmpty) return 0;
-
-    // Calculate minimum shortest side across all photos
-    double minShortestSide = double.infinity;
-    for (final path in _photoPaths) {
-      final dims = _photoDimensionsCache[path];
-      if (dims != null && dims.$3.toDouble() < minShortestSide) {
-        minShortestSide = dims.$3.toDouble();
-      }
-    }
-    if (minShortestSide == double.infinity) return 0;
-    final shortestSide = minShortestSide;
-
-    // Calculate dimensions using min photo to guarantee fit on ALL photos
-    final photoWidth = _photoDimensionsCache[_photoPaths.first]?.$1.toDouble() ?? shortestSide;
+  /// Uses the same preview photo dimensions as the bottom row for consistency.
+  int _fitCountTop(int startIdx, List<double> logoWidths, double previewWidth, double shortestSide) {
     final leftMarginPx = _leftMargin / 100.0 * shortestSide;
     final gapPx = _logoSpacing / 100.0 * shortestSide;
 
@@ -623,13 +609,13 @@ class _HomePageState extends State<HomePage> {
 
     // Calculate corner logo's left edge (if corner logo exists).
     // Corner logo uses SAME height as top logos (_logoSize).
-    double cornerLogoLeftEdge = photoWidth; // default: no corner logo
+    double cornerLogoLeftEdge = previewWidth; // default: no corner logo
     if (logoWidths.isNotEmpty) {
       // Use first logo's aspect ratio as estimate for corner logo
       final cornerAspectRatio = logoWidths.isNotEmpty ? (logoWidths[0] / (shortestSide * _logoSize / 100.0)) : 1.0;
       final cornerLogoWidth = cornerAspectRatio * shortestSide * _logoSize / 100.0;
       final marginRightPx = _cornerMarginRight / 100.0 * shortestSide;
-      cornerLogoLeftEdge = photoWidth - marginRightPx - cornerLogoWidth;
+      cornerLogoLeftEdge = previewWidth - marginRightPx - cornerLogoWidth;
     }
 
     final gapToCorner = shortestSide * 0.01; // 1% gap
