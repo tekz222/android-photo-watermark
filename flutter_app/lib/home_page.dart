@@ -259,11 +259,11 @@ class _HomePageState extends State<HomePage> {
     }
 
     if (_logoSetMode == LogoSetMode.single) {
-      // SINGLE MODE: fill bottom first (using corner if needed), then top
-      // Use main section + corner section for bottom row to maximize filling
-      int bottomCount = _fitCountWithCorner(0, mainSectionWidth, cornerSectionWidth);
+      // SINGLE MODE: fill bottom row FIRST (full width, centered, symmetric clipping),
+      // then top row. Bottom row uses full photoWidth since rendering clips symmetrically.
+      int bottomCount = _fitCount(0, photoWidth);
       if (bottomCount == 0 && allLogos.isNotEmpty) bottomCount = 1;
-      // Use _fitCountTop which accounts for actual corner logo position
+      // Top row: stop before corner logo (uses _fitCountTop)
       int topCount = _fitCountTop(bottomCount, logoWidths);
 
       final bottomLogos = allLogos.take(bottomCount).toList();
