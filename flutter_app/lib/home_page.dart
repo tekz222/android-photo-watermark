@@ -92,7 +92,7 @@ class _HomePageState extends State<HomePage> {
   late final AppLifecycleListener _lifecycle;
 
   // Logo arrangement mode: manual (user controls each row) or auto (distribute all logos)
-  bool _autoArrangeMode = true;
+  bool _autoArrangeMode = false;
 
   // Margin visualization overlay (shows 1% edge margins on bottom row)
   bool _showMarginOverlay = false;
