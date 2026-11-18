@@ -397,7 +397,9 @@ Uint8List renderWatermark(WatermarkRequest r, {DecodedCache? cache}) {
 
   // Top row stops before corner logo with a small gap (1% of shortest side)
   final gapToCorner = (shortest * 0.01).round();
-  final topRowMaxX = (r.cornerLogo != null) ? (cornerLogoLeftEdge - gapToCorner) : cornerSectionLeft;
+  final topRowMaxX = (r.cornerLogo != null)
+      ? (cornerLogoLeftEdge - gapToCorner)
+      : photo.width.toDouble(); // No corner logo: use full width
 
   _drawRow(
     photo,

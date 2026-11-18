@@ -299,7 +299,12 @@ class _HomePageState extends State<HomePage> {
 
       // Row capacities (available width for logos + gaps)
       final bottomCapacity = photoWidth; // full width, centered
-      final topCapacity = photoWidth * 0.8 - edgeMarginPx * 2; // stop before corner
+      // Top row: if there's a global corner logo, stop before it (80% width).
+      // If no corner logo, use full width minus left margin.
+      final hasCornerLogo = _cornerLogo != null;
+      final topCapacity = hasCornerLogo
+          ? photoWidth * 0.8 - edgeMarginPx * 2
+          : photoWidth - _leftMargin / 100.0 * shortestSide - edgeMarginPx;
 
       // Track used width per row (logos + gaps)
       double usedABottom = 0, usedBBottom = 0, usedATop = 0, usedBTop = 0;
