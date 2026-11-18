@@ -916,6 +916,56 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  /// Loads a LogoSet from JSON, resolving logo bytes from the archive.
+  Future<LogoSet?> _loadLogoSetFromJson(
+    Map<String, dynamic> json,
+    Uint8List? Function(String subdir, String originalName) findLogoBytes,
+  ) async {
+    final bottomLogos = <LogoItem>[];
+    for (final m in (json['bottomLogos'] as List? ?? [])) {
+      if (m is! Map) continue;
+      final originalName = m['name'] as String? ?? '';
+      final bytes = findLogoBytes('bottom', originalName);
+      if (bytes == null) continue;
+      final path = await _copyBytesToApp(bytes, 'logos');
+      bottomLogos.add(LogoItem(Project.nextLogoId(), path, originalName, bytes, Project.imageSig(bytes), const <String>{}, const <String>{}));
+    }
+
+    final topLeftLogos = <LogoItem>[];
+    for (final m in (json['topLeftLogos'] as List? ?? [])) {
+      if (m is! Map) continue;
+      final originalName = m['name'] as String? ?? '';
+      final bytes = findLogoBytes('top', originalName);
+      if (bytes == null) continue;
+      final path = await _copyBytesToApp(bytes, 'logos');
+      topLeftLogos.add(LogoItem(Project.nextLogoId(), path, originalName, bytes, Project.imageSig(bytes), const <String>{}, const <String>{}));
+    }
+
+    Future<LogoItem?> loadExtraLogo(String subdir, String? key) async {
+      final extraJson = json[key];
+      if (extraJson is Map) {
+        final originalName = extraJson['name'] as String? ?? '';
+        final bytes = findLogoBytes(subdir, originalName);
+        if (bytes != null) {
+          final path = await _copyBytesToApp(bytes, 'logos');
+          return LogoItem(Project.nextLogoId(), path, originalName, bytes, Project.imageSig(bytes), const <String>{}, const <String>{});
+        }
+      }
+      return null;
+    }
+
+    return LogoSet(
+      bottomLogos: bottomLogos,
+      topLeftLogos: topLeftLogos,
+      bottomLeftTopLogo: await loadExtraLogo('bottom', 'bottomLeftTopLogo'),
+      bottomRightTopLogo: await loadExtraLogo('bottom', 'bottomRightTopLogo'),
+      topLeftBottomLogo: await loadExtraLogo('top', 'topLeftBottomLogo'),
+      bottomLeftTopMargin: (json['bottomLeftTopMargin'] as num?)?.toDouble() ?? 2.0,
+      bottomRightTopMargin: (json['bottomRightTopMargin'] as num?)?.toDouble() ?? 2.0,
+      topLeftBottomMargin: (json['topLeftBottomMargin'] as num?)?.toDouble() ?? 2.0,
+    );
+  }
+
   /// Imports a .jcv project file, restoring everything.
   Future<void> _importProject() async {
     ExportMode? exportMode;
@@ -1050,6 +1100,18 @@ class _HomePageState extends State<HomePage> {
           final path = await _copyBytesToApp(bytes, 'logos');
           _cornerLogo = LogoItem(Project.nextLogoId(), path, originalName, bytes, Project.imageSig(bytes), const <String>{}, const <String>{});
         }
+      }
+
+      // Load logoSetA (alternating mode)
+      final logoSetAJson = settings['logoSetA'];
+      if (logoSetAJson is Map) {
+        _logoSetA = await _loadLogoSetFromJson(Map<String, dynamic>.from(logoSetAJson), findLogoBytes);
+      }
+
+      // Load logoSetB (alternating mode)
+      final logoSetBJson = settings['logoSetB'];
+      if (logoSetBJson is Map) {
+        _logoSetB = await _loadLogoSetFromJson(Map<String, dynamic>.from(logoSetBJson), findLogoBytes);
       }
 
       // Extract text images
