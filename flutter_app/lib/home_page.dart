@@ -4371,12 +4371,14 @@ class _HomePageState extends State<HomePage> {
             label: const Text('Adicionar logos'),
           )
         else
-          ReorderableListView.builder(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            scrollDirection: Axis.horizontal,
-            buildDefaultDragHandles: false,
-            itemCount: items.length + (enabled ? 1 : 0),
+          SizedBox(
+            height: 60,
+            child: ReorderableListView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              scrollDirection: Axis.horizontal,
+              buildDefaultDragHandles: false,
+              itemCount: items.length + (enabled ? 1 : 0),
             onReorder: enabled ? (oldIndex, newIndex) {
               if (oldIndex >= items.length || newIndex >= items.length) return;
               if (newIndex > oldIndex) newIndex -= 1;
@@ -4414,16 +4416,18 @@ class _HomePageState extends State<HomePage> {
                 );
               }
               final item = items[i];
-              return _LogoSetThumb(
+              return ReorderableDragStartListener(
                 key: ValueKey(item.id),
-                item: item,
-                number: i + 1,
-                enabled: enabled,
-                onRemove: () {
-                  final newList = List<LogoItem>.from(items)..removeAt(i);
-                  onChanged(newList);
-                },
-                onReorder: enabled ? () {} : null,
+                index: i,
+                child: _LogoSetThumb(
+                  item: item,
+                  number: i + 1,
+                  enabled: enabled,
+                  onRemove: () {
+                    final newList = List<LogoItem>.from(items)..removeAt(i);
+                    onChanged(newList);
+                  },
+                ),
               );
             },
           ),
@@ -4431,18 +4435,15 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  /// Thumbnail for logo set editor (horizontal reorderable).
+  /// Thumbnail for logo set editor (wrapped by ReorderableDragStartListener in row editor).
   Widget _LogoSetThumb({
-    Key? key,
     required LogoItem item,
     required int number,
     required bool enabled,
     required VoidCallback onRemove,
-    VoidCallback? onReorder,
   }) {
     final scheme = Theme.of(context).colorScheme;
     return Container(
-      key: key,
       width: 50,
       height: 50,
       margin: const EdgeInsets.only(right: 6),
@@ -4482,24 +4483,21 @@ class _HomePageState extends State<HomePage> {
                 ),
               ),
             ),
-          if (enabled && onReorder != null)
+          if (enabled)
             Positioned(
               bottom: 2,
               left: 2,
               right: 2,
-              child: ReorderableDragStartListener(
-                index: number - 1,
-                child: MouseRegion(
-                  cursor: SystemMouseCursors.grab,
-                  child: Center(
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: Colors.black54,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: const Icon(Icons.drag_indicator, size: 14, color: Colors.white),
+              child: MouseRegion(
+                cursor: SystemMouseCursors.grab,
+                child: Center(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Colors.black54,
+                      borderRadius: BorderRadius.circular(8),
                     ),
+                    child: const Icon(Icons.drag_indicator, size: 14, color: Colors.white),
                   ),
                 ),
               ),
