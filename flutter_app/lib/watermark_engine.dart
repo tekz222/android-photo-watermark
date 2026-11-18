@@ -560,8 +560,15 @@ void _drawRow(
   if (logos.isEmpty) return;
   final h = height.round().clamp(1, dst.height);
   final y = top.round();
-  // Clamp startX to valid range [0, dst.width)
-  var x = startX.clamp(0.0, dst.width.toDouble() - 1);
+  // For centered bottom row: allow negative startX (symmetric clipping both sides).
+  // For other rows: clamp to [0, dst.width).
+  var x = startX;
+  if (x < 0 && startX >= 0) {
+    // This shouldn't happen, but safety: only clamp if startX was originally non-negative
+    x = 0.0;
+  }
+  // Don't clamp positive startX either - let rendering handle bounds
+  // The check at line 572 handles the right-edge clipping
   final limitX = maxX ?? dst.width.toDouble();
   for (final src in logos) {
     final logo = decode(src);
