@@ -2667,21 +2667,23 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
-  /// Where photos are saved: uses the user-selected save directory if available,
-  /// otherwise falls back to Pictures\JCV Watermarker\<album>.
+  /// Where photos are saved: always Pictures\JCV Watermarker\<album> (or Imagens on Portuguese Windows).
   Future<Directory> _albumDir(String album) async {
+    final userProfile = Platform.environment['USERPROFILE'];
     Directory base;
-    if (_saveDir != null) {
-      base = Directory(_saveDir!);
-    } else {
-      final userProfile = Platform.environment['USERPROFILE'];
-      if (userProfile != null &&
-          Directory('$userProfile${Platform.pathSeparator}Pictures')
-              .existsSync()) {
-        base = Directory('$userProfile${Platform.pathSeparator}Pictures');
+    if (userProfile != null) {
+      // Try "Pictures" (English) then "Imagens" (Portuguese)
+      final picturesEn = Directory('$userProfile${Platform.pathSeparator}Pictures');
+      final picturesPt = Directory('$userProfile${Platform.pathSeparator}Imagens');
+      if (picturesEn.existsSync()) {
+        base = picturesEn;
+      } else if (picturesPt.existsSync()) {
+        base = picturesPt;
       } else {
         base = await getApplicationDocumentsDirectory();
       }
+    } else {
+      base = await getApplicationDocumentsDirectory();
     }
     final dir = Directory(
         '${base.path}${Platform.pathSeparator}JCV Watermarker'
