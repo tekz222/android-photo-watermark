@@ -286,10 +286,9 @@ class _HomePageState extends State<HomePage> {
         return false;
       }
     } else {
-      // ALTERNATING MODE: Maximize each set's bottom row independently,
-      // then each set's top row. Alternate which set gets the next logo
-      // to keep counts balanced.
-      // Ensure Set A and B exist
+      // ALTERNATING MODE: Best-Fit Decreasing bin packing across 4 rows.
+      // Sort logos by width (largest first), place each in the row where it
+      // leaves the least remaining space. Maximizes total logos placed.
       if (_logoSetA == null) _logoSetA = LogoSet(bottomLogos: [], topLeftLogos: []);
       if (_logoSetB == null) _logoSetB = LogoSet(bottomLogos: [], topLeftLogos: []);
 
@@ -298,176 +297,105 @@ class _HomePageState extends State<HomePage> {
       final setATop = <LogoItem>[];
       final setBTop = <LogoItem>[];
 
-      // Track which logos are placed
-      final placed = <LogoItem>{};
+      // Row capacities (available width for logos + gaps)
+      final bottomCapacity = photoWidth; // full width, centered
+      final topCapacity = photoWidth * 0.8 - edgeMarginPx * 2; // stop before corner
 
-      // Debug: log capacities
-      debugPrint('=== AUTO DISTRIBUTE DEBUG ===');
-      debugPrint('photoWidth: $photoWidth, edgeMarginPx: $edgeMarginPx');
-      debugPrint('bottom maxWidth: $photoWidth (centered, full width)');
-      debugPrint('top maxWidth: ${photoWidth * 0.8 - edgeMarginPx * 2}');
-      debugPrint('gapPx: $gapPx');
-      for (int i = 0; i < allLogos.length; i++) {
-        debugPrint('Logo $i: ${logoWidths[i].toStringAsFixed(1)}px');
+      // Track used width per row (logos + gaps)
+      double usedABottom = 0, usedBBottom = 0, usedATop = 0, usedBTop = 0;
+
+      // Pair each logo with its width and original index, sort by width DESC (largest first)
+      final logosWithWidth = allLogos.asMap().entries.map((e) => (logo: e.value, width: logoWidths[e.key], idx: e.key)).toList()
+        ..sort((a, b) => b.width.compareTo(a.width)); // largest first
+
+      debugPrint('=== AUTO DISTRIBUTE (Best-Fit Decreasing) ===');
+      debugPrint('Capacities: bottom=$bottomCapacity, top=$topCapacity, gap=$gapPx');
+      for (final lw in logosWithWidth) {
+        debugPrint('Logo ${lw.idx}: ${lw.width.toStringAsFixed(1)}px');
       }
 
-      // ===== ALTERNATING A,B,A,B... UNTIL BOTH FULL =====
-      // Phase 1: Bottom rows - alternate A,B,A,B... until NEITHER can fit any remaining logo
-      // Phase 2: Top rows - alternate A,B,A,B... until NEITHER can fit any remaining logo
-      // Corner logo is NOT touched (uses topMargin for positioning, same size as others)
+      for (final lw in logosWithWidth) {
+        final logo = lw.logo;
+        final w = lw.width;
 
-      // Helper: can this logo fit in this set's bottom row?
-      bool fitsInBottom(List<LogoItem> bottomLogos, LogoItem logo) {
-        final logoW = logoWidths[allLogos.indexOf(logo)];
-        double used = bottomLogos.fold(0.0, (sum, l) => sum + logoWidths[allLogos.indexOf(l)]) + (bottomLogos.length > 0 ? gapPx * (bottomLogos.length - 1) : 0);
-        final needed = bottomLogos.isEmpty ? logoW : logoW + gapPx;
-        return used + needed <= photoWidth; // 100% width, centered (clipping handled by rendering)
-      }
-
-      // Helper: can this logo fit in this set's top row?
-      bool fitsInTop(List<LogoItem> topLogos, LogoItem logo) {
-        final logoW = logoWidths[allLogos.indexOf(logo)];
-        double used = topLogos.fold(0.0, (sum, l) => sum + logoWidths[allLogos.indexOf(l)]) + (topLogos.length > 0 ? gapPx * (topLogos.length - 1) : 0);
-        final needed = topLogos.isEmpty ? logoW : logoW + gapPx;
-        final topMaxWidth = photoWidth * 0.8 - edgeMarginPx * 2;
-        return used + needed <= topMaxWidth;
-      }
-
-      // Helper: find first remaining logo that fits in target row
-      LogoItem? findFitting(Iterable<LogoItem> candidates, bool Function(List<LogoItem>, LogoItem) fits, List<LogoItem> target) {
-        for (final logo in candidates) {
-          if (fits(target, logo)) return logo;
-        }
-        return null;
-      }
-
-      // PHASE 1: Bottom rows - A,B,A,B... until BOTH full
-      bool turnA = true;
-      while (true) {
-        bool placedThisRound = false;
+        // Calculate remaining space if placed in each row
+        // needed = (row empty ? w : w + gapPx)
+        double? bestRemaining;
+        int bestRow = -1; // 0=ABottom, 1=BBottom, 2=ATop, 3=BTop
 
         // Try Set A bottom
-        if (turnA) {
-          final remaining = allLogos.where((l) => !placed.contains(l));
-          final logo = findFitting(remaining, fitsInBottom, setABottom);
-          if (logo != null) {
+        final needA = usedABottom == 0 ? w : w + gapPx;
+        if (usedABottom + needA <= bottomCapacity) {
+          bestRemaining = bottomCapacity - (usedABottom + needA);
+          bestRow = 0;
+        }
+
+        // Try Set B bottom
+        final needB = usedBBottom == 0 ? w : w + gapPx;
+        if (usedBBottom + needB <= bottomCapacity) {
+          final rem = bottomCapacity - (usedBBottom + needB);
+          if (bestRow == -1 || rem < bestRemaining!) {
+            bestRemaining = rem;
+            bestRow = 1;
+          }
+        }
+
+        // Try Set A top
+        final needAT = usedATop == 0 ? w : w + gapPx;
+        if (usedATop + needAT <= topCapacity) {
+          final rem = topCapacity - (usedATop + needAT);
+          if (bestRow == -1 || rem < bestRemaining!) {
+            bestRemaining = rem;
+            bestRow = 2;
+          }
+        }
+
+        // Try Set B top
+        final needBT = usedBTop == 0 ? w : w + gapPx;
+        if (usedBTop + needBT <= topCapacity) {
+          final rem = topCapacity - (usedBTop + needBT);
+          if (bestRow == -1 || rem < bestRemaining!) {
+            bestRemaining = rem;
+            bestRow = 3;
+          }
+        }
+
+        // Place in best row
+        switch (bestRow) {
+          case 0:
             setABottom.add(logo);
-            placed.add(logo);
-            placedThisRound = true;
-            debugPrint('Phase 1: SetA bottom + logo ${allLogos.indexOf(logo)}');
-          }
-        } else {
-          // Try Set B bottom
-          final remaining = allLogos.where((l) => !placed.contains(l));
-          final logo = findFitting(remaining, fitsInBottom, setBBottom);
-          if (logo != null) {
+            usedABottom += needA;
+            debugPrint('Place logo ${lw.idx} in SetA bottom (used: ${usedABottom.toStringAsFixed(1)})');
+            break;
+          case 1:
             setBBottom.add(logo);
-            placed.add(logo);
-            placedThisRound = true;
-            debugPrint('Phase 1: SetB bottom + logo ${allLogos.indexOf(logo)}');
-          }
-        }
-
-        // If current turn couldn't place, try the OTHER set (don't skip available space!)
-        if (!placedThisRound) {
-          final remaining = allLogos.where((l) => !placed.contains(l));
-          final logoA = findFitting(remaining, fitsInBottom, setABottom);
-          final logoB = findFitting(remaining, fitsInBottom, setBBottom);
-
-          if (logoA != null) {
-            setABottom.add(logoA);
-            placed.add(logoA);
-            placedThisRound = true;
-            debugPrint('Phase 1: SetA bottom (fallback) + logo ${allLogos.indexOf(logoA)}');
-          } else if (logoB != null) {
-            setBBottom.add(logoB);
-            placed.add(logoB);
-            placedThisRound = true;
-            debugPrint('Phase 1: SetB bottom (fallback) + logo ${allLogos.indexOf(logoB)}');
-          }
-        }
-
-        // Break if NEITHER set can fit ANY remaining logo
-        final remainingAfter = allLogos.where((l) => !placed.contains(l));
-        final aCanFit = findFitting(remainingAfter, fitsInBottom, setABottom) != null;
-        final bCanFit = findFitting(remainingAfter, fitsInBottom, setBBottom) != null;
-        if (!aCanFit && !bCanFit) break;
-
-        turnA = !turnA;
-      }
-
-      debugPrint('Phase 1 (bottom) done: SetA=${setABottom.length}, SetB=${setBBottom.length}');
-
-      // PHASE 2: Top rows - A,B,A,B... until BOTH full
-      turnA = true;
-      while (true) {
-        bool placedThisRound = false;
-
-        if (turnA) {
-          final remaining = allLogos.where((l) => !placed.contains(l));
-          final logo = findFitting(remaining, fitsInTop, setATop);
-          if (logo != null) {
+            usedBBottom += needB;
+            debugPrint('Place logo ${lw.idx} in SetB bottom (used: ${usedBBottom.toStringAsFixed(1)})');
+            break;
+          case 2:
             setATop.add(logo);
-            placed.add(logo);
-            placedThisRound = true;
-            debugPrint('Phase 2: SetA top + logo ${allLogos.indexOf(logo)}');
-          }
-        } else {
-          final remaining = allLogos.where((l) => !placed.contains(l));
-          final logo = findFitting(remaining, fitsInTop, setBTop);
-          if (logo != null) {
+            usedATop += needAT;
+            debugPrint('Place logo ${lw.idx} in SetA top (used: ${usedATop.toStringAsFixed(1)})');
+            break;
+          case 3:
             setBTop.add(logo);
-            placed.add(logo);
-            placedThisRound = true;
-            debugPrint('Phase 2: SetB top + logo ${allLogos.indexOf(logo)}');
-          }
+            usedBTop += needBT;
+            debugPrint('Place logo ${lw.idx} in SetB top (used: ${usedBTop.toStringAsFixed(1)})');
+            break;
+          default:
+            debugPrint('Logo ${lw.idx} (${w.toStringAsFixed(1)}px) DOES NOT FIT anywhere');
         }
-
-        // Fallback: try other set if current couldn't place
-        if (!placedThisRound) {
-          final remaining = allLogos.where((l) => !placed.contains(l));
-          final logoA = findFitting(remaining, fitsInTop, setATop);
-          final logoB = findFitting(remaining, fitsInTop, setBTop);
-
-          if (logoA != null) {
-            setATop.add(logoA);
-            placed.add(logoA);
-            placedThisRound = true;
-            debugPrint('Phase 2: SetA top (fallback) + logo ${allLogos.indexOf(logoA)}');
-          } else if (logoB != null) {
-            setBTop.add(logoB);
-            placed.add(logoB);
-            placedThisRound = true;
-            debugPrint('Phase 2: SetB top (fallback) + logo ${allLogos.indexOf(logoB)}');
-          }
-        }
-
-        final remainingAfter = allLogos.where((l) => !placed.contains(l));
-        final aCanFit = findFitting(remainingAfter, fitsInTop, setATop) != null;
-        final bCanFit = findFitting(remainingAfter, fitsInTop, setBTop) != null;
-        if (!aCanFit && !bCanFit) break;
-
-        turnA = !turnA;
       }
-
-      debugPrint('Phase 2 (top) done: SetA=${setATop.length}, SetB=${setBTop.length}');
 
       final totalPlaced = setABottom.length + setBBottom.length + setATop.length + setBTop.length;
       final overflow = totalPlaced < allLogos.length;
 
       debugPrint('=== RESULT ===');
-      debugPrint('SetA bottom: ${setABottom.length} logos, indices: ${setABottom.map((l) => allLogos.indexOf(l)).toList()}');
-      debugPrint('SetB bottom: ${setBBottom.length} logos, indices: ${setBBottom.map((l) => allLogos.indexOf(l)).toList()}');
-      debugPrint('SetA top: ${setATop.length} logos, indices: ${setATop.map((l) => allLogos.indexOf(l)).toList()}');
-      debugPrint('SetB top: ${setBTop.length} logos, indices: ${setBTop.map((l) => allLogos.indexOf(l)).toList()}');
-      debugPrint('Total placed: $totalPlaced / ${allLogos.length}, overflow: $overflow');
-      if (overflow) {
-        final unplaced = allLogos.where((l) => !placed.contains(l)).toList();
-        debugPrint('Unplaced logos: ${unplaced.map((l) => allLogos.indexOf(l)).toList()}');
-        for (final l in unplaced) {
-          debugPrint('  Unplaced logo ${allLogos.indexOf(l)}: ${logoWidths[allLogos.indexOf(l)].toStringAsFixed(1)}px');
-        }
-      }
+      debugPrint('SetA bottom: ${setABottom.length} (${usedABottom.toStringAsFixed(1)}/$bottomCapacity)');
+      debugPrint('SetB bottom: ${setBBottom.length} (${usedBBottom.toStringAsFixed(1)}/$bottomCapacity)');
+      debugPrint('SetA top: ${setATop.length} (${usedATop.toStringAsFixed(1)}/$topCapacity)');
+      debugPrint('SetB top: ${setBTop.length} (${usedBTop.toStringAsFixed(1)}/$topCapacity)');
+      debugPrint('Total placed: $totalPlaced / ${allLogos.length}');
 
       setState(() {
         _logoSetA = _logoSetA!.copyWith(
