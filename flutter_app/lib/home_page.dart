@@ -1871,7 +1871,8 @@ class _HomePageState extends State<HomePage> {
   /// added/removed, another photo selected): up-to-date photos are skipped.
   void _kickPreview() {
     _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 120), _recomputePreviews);
+    // Reduced from 120ms to 50ms since selected photo renders immediately
+    _debounce = Timer(const Duration(milliseconds: 50), _recomputePreviews);
   }
 
   /// Renders the very first photo IMMEDIATELY (no debounce) so user sees
@@ -5827,8 +5828,12 @@ class _HomePageState extends State<HomePage> {
       final originalIndex = _photoPaths.indexOf(filteredPaths[filteredIndex]);
       if (originalIndex >= 0) {
         setState(() => _previewIndex = originalIndex);
+        // Render the newly selected photo IMMEDIATELY for instant switch
+        final selectedPath = _photoPaths[originalIndex];
+        _renderPhotoImmediately(selectedPath);
       }
     }
+    // Also kick background for neighbours (no debounce needed since we just rendered the selected)
     _kickPreview();
     // Keep the selected thumbnail in view.
     if (_thumbCtl.hasClients) {
