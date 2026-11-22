@@ -825,15 +825,13 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _initializeProjects() async {
     // Start worker and wait for it to be ready before proceeding.
-    // First launch may take longer for isolate compilation.
     await _worker.start();
-    await _worker.ready().timeout(const Duration(seconds: 30), onTimeout: () {
+    await _worker.ready().timeout(const Duration(seconds: 10), onTimeout: () {
       throw Exception('Worker failed to start in time');
     });
 
-    // Warm-up render to trigger JIT compilation in the background.
-    // Do NOT await - let it run while we initialize the rest.
-    unawaited(_workerWarmUp());
+    // Warm-up render to trigger JIT compilation. Await it so first user render is fast.
+    await _workerWarmUp();
 
     await _projectManager.initialize();
     // If a specific project ID was passed, switch to that project
@@ -1934,14 +1932,14 @@ class _HomePageState extends State<HomePage> {
       return;
     }
 
-    // Ensure worker is ready before starting (shorter timeout since we just cleared queue)
+    // Ensure worker is ready before starting (short timeout - queue is clear)
     try {
-      await _worker.ready().timeout(const Duration(seconds: 5));
+      await _worker.ready().timeout(const Duration(seconds: 3));
     } catch (_) {
       // Worker failed or timed out, try to restart once
       try {
         await _worker.restart();
-        await _worker.ready().timeout(const Duration(seconds: 5));
+        await _worker.ready().timeout(const Duration(seconds: 3));
       } catch (_) {
         if (mounted) setState(() => _renderingPreview = false);
         return;
@@ -1956,9 +1954,12 @@ class _HomePageState extends State<HomePage> {
         ..._topLeftLogos,
         if (_cornerLogo != null) _cornerLogo!,
       ];
-      for (final e in allLogos) {
-        _previewLogo[e.id] ??= await compute(downscaleImage, (e.bytes, 128, true))
-            .timeout(const Duration(seconds: 10), onTimeout: () => throw TimeoutException('Logo downscale timeout'));
+      // Downscale all logos in PARALLEL
+      if (allLogos.isNotEmpty) {
+        await Future.wait(allLogos.map((e) => compute(downscaleImage, (e.bytes, 128, true))
+            .timeout(const Duration(seconds: 10), onTimeout: () => throw TimeoutException('Logo downscale timeout'))
+            .then((small) => _previewLogo[e.id] ??= small)
+            .catchError((_) => null)));
       }
       await _ensureTextPngs();
       // Downscale the photo (cached)
@@ -2083,18 +2084,14 @@ class _HomePageState extends State<HomePage> {
       });
       return;
     }
-    // Ensure worker is ready before starting renders (with timeout + retry)
-    // First run may take longer for isolate startup
+    // Ensure worker is ready before starting renders (short timeout)
     try {
-      await _worker.ready().timeout(const Duration(seconds: 30));
-      // Small warm-up delay for first render
-      await Future.delayed(const Duration(milliseconds: 100));
+      await _worker.ready().timeout(const Duration(seconds: 3));
     } catch (_) {
       // Worker failed or timed out, try to restart once
       try {
         await _worker.restart();
-        await _worker.ready().timeout(const Duration(seconds: 15));
-        await Future.delayed(const Duration(milliseconds: 100));
+        await _worker.ready().timeout(const Duration(seconds: 3));
       } catch (_) {
         if (mounted) setState(() => _renderingPreview = false);
         return;
@@ -2105,22 +2102,25 @@ class _HomePageState extends State<HomePage> {
     try {
       setState(() => _renderingPreview = true);
       // Small copies of the logos, once (cached), so renders are cheap.
+      // Downscale all logos in PARALLEL (not sequential)
       final allLogos = [
         ..._bottomLogos,
         ..._topLeftLogos,
         if (_cornerLogo != null) _cornerLogo!,
       ];
-      for (final e in allLogos) {
-        try {
-          _previewLogo[e.id] ??= await compute(downscaleImage, (e.bytes, 128, true))
-              .timeout(const Duration(seconds: 20), onTimeout: () {
-            throw TimeoutException('Logo downscale timeout');
-          });
-        } catch (_) {
-          // Skip logo if downscale fails (corrupt image, etc.) - don't crash preview
-        }
-        if (token != _previewToken) return;
+      if (allLogos.isNotEmpty) {
+        await Future.wait(allLogos.map((e) async {
+          try {
+            _previewLogo[e.id] ??= await compute(downscaleImage, (e.bytes, 128, true))
+                .timeout(const Duration(seconds: 10), onTimeout: () {
+              throw TimeoutException('Logo downscale timeout');
+            });
+          } catch (_) {
+            // Skip logo if downscale fails (corrupt image, etc.) - don't crash preview
+          }
+        }));
       }
+      if (token != _previewToken) return;
       await _ensureTextPngs();
       if (token != _previewToken) return;
 
