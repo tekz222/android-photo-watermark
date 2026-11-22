@@ -1845,7 +1845,8 @@ class _HomePageState extends State<HomePage> {
   // ---- Preview ----
 
   /// The look changed (logos, texts or sliders): every photo needs a new
-  /// render. The photo on screen is rendered first, the rest in the background.
+  /// render. The currently selected photo renders IMMEDIATELY for instant feedback,
+  /// the rest render in the background.
   void _schedulePreview() {
     _saveProject();
     _previewVersion++;
@@ -1857,7 +1858,13 @@ class _HomePageState extends State<HomePage> {
         _currentAlbum = null;
       });
     }
-    _kickPreview();
+    // Render the currently selected photo immediately for instant feedback
+    if (_photoPaths.isNotEmpty) {
+      final selectedPath = _photoPaths[_previewIndex.clamp(0, _photoPaths.length - 1)];
+      _renderPhotoImmediately(selectedPath);
+    } else {
+      _kickPreview();
+    }
   }
 
   /// Restarts the render loop WITHOUT invalidating existing renders (photo
@@ -1910,17 +1917,21 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  Future<void> _renderFirstPhotoImmediately() async {
-    if (_photoPaths.isEmpty) return;
+  /// Renders a specific photo immediately (no debounce), used for instant feedback
+  /// when user makes changes. Renders [path] with high priority.
+  Future<void> _renderPhotoImmediately(String path) async {
+    if (_photoPaths.isEmpty || !_photoPaths.contains(path)) return;
     // Cancel any pending debounced render
     _debounce?.cancel();
     // Invalidate any in-flight renders
     _previewToken++;
-    // Render just the first photo (index 0) with high priority
-    final path = _photoPaths.first;
-    if (_previewPhoto.containsKey(path) && _previews.containsKey(path)) return; // already have it
+    // If already have this preview at current version, skip
+    if (_renderedVersion[path] == _previewVersion && _previews.containsKey(path)) {
+      _kickPreview(); // still kick background for others
+      return;
+    }
 
-    // Ensure worker is ready before starting (first launch may take longer for isolate JIT)
+    // Ensure worker is ready before starting
     try {
       await _worker.ready().timeout(const Duration(seconds: 30));
       // Small warm-up delay for first render
@@ -1939,7 +1950,7 @@ class _HomePageState extends State<HomePage> {
 
     try {
       setState(() => _renderingPreview = true);
-      // Downscale logos if needed (fast path - small count)
+      // Downscale logos if needed (fast path - small count, cached)
       final allLogos = [
         ..._bottomLogos,
         ..._topLeftLogos,
@@ -1950,7 +1961,7 @@ class _HomePageState extends State<HomePage> {
             .timeout(const Duration(seconds: 10), onTimeout: () => throw TimeoutException('Logo downscale timeout'));
       }
       await _ensureTextPngs();
-      // Downscale the photo
+      // Downscale the photo (cached)
       Uint8List small;
       final cached = _previewPhoto[path];
       if (cached != null) {
@@ -1962,18 +1973,16 @@ class _HomePageState extends State<HomePage> {
         if (!_photoPaths.contains(path)) return;
         _previewPhoto[path] = small;
       }
-      // small is definitely non-null here
-      final smallBytes = small;
       // Render with worker (with timeout + restart fallback)
       Uint8List? out;
       try {
-        out = await _worker.render(_previewRequest(path, smallBytes))
+        out = await _worker.render(_previewRequest(path, small))
             .timeout(const Duration(seconds: 15));
       } on TimeoutException {
         try {
           await _worker.restart();
           await _worker.ready().timeout(const Duration(seconds: 5));
-          out = await _worker.render(_previewRequest(path, smallBytes))
+          out = await _worker.render(_previewRequest(path, small))
               .timeout(const Duration(seconds: 15));
         } catch (_) {
           if (mounted) setState(() => _renderingPreview = false);
@@ -1986,7 +1995,7 @@ class _HomePageState extends State<HomePage> {
       }
       final aspect = await _aspectOf(out);
       if (!mounted) return;
-      final outBytes = out!; // non-null after check above
+      final outBytes = out!;
       setState(() {
         _previews[path] = Preview(outBytes, aspect);
         _renderedVersion[path] = _previewVersion;
@@ -1997,6 +2006,15 @@ class _HomePageState extends State<HomePage> {
     } catch (_) {
       if (mounted) setState(() => _renderingPreview = false);
     }
+  }
+
+  /// Renders the very first photo IMMEDIATELY (no debounce) so user sees
+  /// something right away when adding photos to an empty project.
+  Future<void> _renderFirstPhotoImmediately() async {
+    if (_photoPaths.isEmpty) return;
+    final path = _photoPaths.first;
+    if (_previewPhoto.containsKey(path) && _previews.containsKey(path)) return; // already have it
+    await _renderPhotoImmediately(path);
   }
 
   /// Photos in render priority: the selected one first, then its neighbours.
