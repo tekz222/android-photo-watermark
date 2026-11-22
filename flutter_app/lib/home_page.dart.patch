@@ -1,0 +1,16 @@
+--- a/lib/home_page.dart
++++ b/lib/home_page.dart
+@@ -6414,6 +6414,14 @@ class _ProjectTab extends StatelessWidget {
+           ),
+         ),
+       );
++      if (isNew) {
++        return Tooltip(
++          message: 'Novo projeto',
++          child: tabContent,
++        );
++      }
++      return tabContent;
+     }
+   }
+ }

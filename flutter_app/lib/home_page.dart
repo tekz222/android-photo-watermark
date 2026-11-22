@@ -288,8 +288,8 @@ class _HomePageState extends State<HomePage> {
         );
         return false;
       }
-    } else {
-      // ALTERNATING MODE: Best-Fit Decreasing bin packing across 4 rows.
+    } else if (_logoSetMode == LogoSetMode.alternating) {
+      // ALTERNATING MODE (2 sets): Best-Fit Decreasing bin packing across 4 rows.
       // Sort logos by width (largest first), place each in the row where it
       // leaves the least remaining space. Maximizes total logos placed.
       if (_logoSetA == null) _logoSetA = LogoSet(bottomLogos: [], topLeftLogos: []);
@@ -420,6 +420,181 @@ class _HomePageState extends State<HomePage> {
       if (overflow && mounted) {
         _snack(
           'Ambos os conjuntos estão cheios! ${allLogos.length - totalPlaced} logo(s) não couberam. '
+          'Reduza o tamanho das logos.',
+          backgroundColor: const Color(0xFFB71C1C),
+        );
+        return false;
+      }
+    } else if (_logoSetMode == LogoSetMode.alternating3) {
+      // ALTERNATING3 MODE (3 sets): Best-Fit Decreasing bin packing across 6 rows.
+      if (_logoSetA == null) _logoSetA = LogoSet(bottomLogos: [], topLeftLogos: []);
+      if (_logoSetB == null) _logoSetB = LogoSet(bottomLogos: [], topLeftLogos: []);
+      if (_logoSetC == null) _logoSetC = LogoSet(bottomLogos: [], topLeftLogos: []);
+
+      final setABottom = <LogoItem>[];
+      final setBBottom = <LogoItem>[];
+      final setCBottom = <LogoItem>[];
+      final setATop = <LogoItem>[];
+      final setBTop = <LogoItem>[];
+      final setCTop = <LogoItem>[];
+
+      // Row capacities (available width for logos + gaps)
+      final bottomCapacity = photoWidth; // full width, centered
+      // Top row: if there's a global corner logo, stop before it (80% width).
+      // If no corner logo, use full width minus left margin.
+      final hasCornerLogo = _cornerLogo != null;
+      final topCapacity = hasCornerLogo
+          ? photoWidth * 0.8 - edgeMarginPx * 2
+          : photoWidth - _leftMargin / 100.0 * shortestSide - edgeMarginPx;
+
+      // Track used width per row (logos + gaps)
+      double usedABottom = 0, usedBBottom = 0, usedCBottom = 0;
+      double usedATop = 0, usedBTop = 0, usedCTop = 0;
+
+      // Pair each logo with its width and original index, sort by width DESC (largest first)
+      final logosWithWidth = allLogos.asMap().entries.map((e) => (logo: e.value, width: logoWidths[e.key], idx: e.key)).toList()
+        ..sort((a, b) => b.width.compareTo(a.width)); // largest first
+
+      debugPrint('=== AUTO DISTRIBUTE 3-SET (Best-Fit Decreasing) ===');
+      debugPrint('Capacities: bottom=$bottomCapacity, top=$topCapacity, gap=$gapPx');
+      for (final lw in logosWithWidth) {
+        debugPrint('Logo ${lw.idx}: ${lw.width.toStringAsFixed(1)}px');
+      }
+
+      for (final lw in logosWithWidth) {
+        final logo = lw.logo;
+        final w = lw.width;
+
+        // Calculate remaining space if placed in each row
+        double? bestRemaining;
+        int bestRow = -1; // 0=ABottom, 1=BBottom, 2=CBottom, 3=ATop, 4=BTop, 5=CTop
+
+        // Try Set A bottom
+        final needA = usedABottom == 0 ? w : w + gapPx;
+        if (usedABottom + needA <= bottomCapacity) {
+          bestRemaining = bottomCapacity - (usedABottom + needA);
+          bestRow = 0;
+        }
+
+        // Try Set B bottom
+        final needB = usedBBottom == 0 ? w : w + gapPx;
+        if (usedBBottom + needB <= bottomCapacity) {
+          final rem = bottomCapacity - (usedBBottom + needB);
+          if (bestRow == -1 || rem < bestRemaining!) {
+            bestRemaining = rem;
+            bestRow = 1;
+          }
+        }
+
+        // Try Set C bottom
+        final needC = usedCBottom == 0 ? w : w + gapPx;
+        if (usedCBottom + needC <= bottomCapacity) {
+          final rem = bottomCapacity - (usedCBottom + needC);
+          if (bestRow == -1 || rem < bestRemaining!) {
+            bestRemaining = rem;
+            bestRow = 2;
+          }
+        }
+
+        // Try Set A top
+        final needAT = usedATop == 0 ? w : w + gapPx;
+        if (usedATop + needAT <= topCapacity) {
+          final rem = topCapacity - (usedATop + needAT);
+          if (bestRow == -1 || rem < bestRemaining!) {
+            bestRemaining = rem;
+            bestRow = 3;
+          }
+        }
+
+        // Try Set B top
+        final needBT = usedBTop == 0 ? w : w + gapPx;
+        if (usedBTop + needBT <= topCapacity) {
+          final rem = topCapacity - (usedBTop + needBT);
+          if (bestRow == -1 || rem < bestRemaining!) {
+            bestRemaining = rem;
+            bestRow = 4;
+          }
+        }
+
+        // Try Set C top
+        final needCT = usedCTop == 0 ? w : w + gapPx;
+        if (usedCTop + needCT <= topCapacity) {
+          final rem = topCapacity - (usedCTop + needCT);
+          if (bestRow == -1 || rem < bestRemaining!) {
+            bestRemaining = rem;
+            bestRow = 5;
+          }
+        }
+
+        // Place in best row
+        switch (bestRow) {
+          case 0:
+            setABottom.add(logo);
+            usedABottom += needA;
+            debugPrint('Place logo ${lw.idx} in SetA bottom (used: ${usedABottom.toStringAsFixed(1)})');
+            break;
+          case 1:
+            setBBottom.add(logo);
+            usedBBottom += needB;
+            debugPrint('Place logo ${lw.idx} in SetB bottom (used: ${usedBBottom.toStringAsFixed(1)})');
+            break;
+          case 2:
+            setCBottom.add(logo);
+            usedCBottom += needC;
+            debugPrint('Place logo ${lw.idx} in SetC bottom (used: ${usedCBottom.toStringAsFixed(1)})');
+            break;
+          case 3:
+            setATop.add(logo);
+            usedATop += needAT;
+            debugPrint('Place logo ${lw.idx} in SetA top (used: ${usedATop.toStringAsFixed(1)})');
+            break;
+          case 4:
+            setBTop.add(logo);
+            usedBTop += needBT;
+            debugPrint('Place logo ${lw.idx} in SetB top (used: ${usedBTop.toStringAsFixed(1)})');
+            break;
+          case 5:
+            setCTop.add(logo);
+            usedCTop += needCT;
+            debugPrint('Place logo ${lw.idx} in SetC top (used: ${usedCTop.toStringAsFixed(1)})');
+            break;
+          default:
+            debugPrint('Logo ${lw.idx} (${w.toStringAsFixed(1)}px) DOES NOT FIT anywhere');
+        }
+      }
+
+      final totalPlaced = setABottom.length + setBBottom.length + setCBottom.length +
+                          setATop.length + setBTop.length + setCTop.length;
+      final overflow = totalPlaced < allLogos.length;
+
+      debugPrint('=== RESULT ===');
+      debugPrint('SetA bottom: ${setABottom.length} (${usedABottom.toStringAsFixed(1)}/$bottomCapacity)');
+      debugPrint('SetB bottom: ${setBBottom.length} (${usedBBottom.toStringAsFixed(1)}/$bottomCapacity)');
+      debugPrint('SetC bottom: ${setCBottom.length} (${usedCBottom.toStringAsFixed(1)}/$bottomCapacity)');
+      debugPrint('SetA top: ${setATop.length} (${usedATop.toStringAsFixed(1)}/$topCapacity)');
+      debugPrint('SetB top: ${setBTop.length} (${usedBTop.toStringAsFixed(1)}/$topCapacity)');
+      debugPrint('SetC top: ${setCTop.length} (${usedCTop.toStringAsFixed(1)}/$topCapacity)');
+      debugPrint('Total placed: $totalPlaced / ${allLogos.length}');
+
+      setState(() {
+        _logoSetA = _logoSetA!.copyWith(
+          bottomLogos: setABottom,
+          topLeftLogos: setATop,
+        );
+        _logoSetB = _logoSetB!.copyWith(
+          bottomLogos: setBBottom,
+          topLeftLogos: setBTop,
+        );
+        _logoSetC = _logoSetC!.copyWith(
+          bottomLogos: setCBottom,
+          topLeftLogos: setCTop,
+        );
+        _p.logoSets = [];
+      });
+
+      if (overflow && mounted) {
+        _snack(
+          'Os três conjuntos estão cheios! ${allLogos.length - totalPlaced} logo(s) não couberam. '
           'Reduza o tamanho das logos.',
           backgroundColor: const Color(0xFFB71C1C),
         );
@@ -577,6 +752,8 @@ class _HomePageState extends State<HomePage> {
   set _logoSetA(LogoSet? v) { if (_initialized) _p.logoSetA = v; }
   LogoSet? get _logoSetB => _initialized ? _p.logoSetB : null;
   set _logoSetB(LogoSet? v) { if (_initialized) _p.logoSetB = v; }
+  LogoSet? get _logoSetC => _initialized ? _p.logoSetC : null;
+  set _logoSetC(LogoSet? v) { if (_initialized) _p.logoSetC = v; }
 
   /// Returns the appropriate logo set for the given photo index based on [logoSetMode].
   LogoSet? _logoSetForIndex(int index) {
@@ -586,6 +763,11 @@ class _HomePageState extends State<HomePage> {
         return null;
       case LogoSetMode.alternating:
         return index.isEven ? _logoSetA : _logoSetB;
+      case LogoSetMode.alternating3:
+        final mod = index % 3;
+        if (mod == 0) return _logoSetA;
+        if (mod == 1) return _logoSetB;
+        return _logoSetC;
     }
   }
 
@@ -1553,8 +1735,13 @@ class _HomePageState extends State<HomePage> {
     if (_logoSetMode == LogoSetMode.single) {
       // Use first set's logos (which is the distributed single set)
       logosForSizeCalc = [..._p.bottomLogos, ..._p.topLeftLogos];
-    } else {
+    } else if (_logoSetMode == LogoSetMode.alternating) {
       // Alternating mode: use Set A
+      if (_logoSetA != null) {
+        logosForSizeCalc = [..._logoSetA!.bottomLogos, ..._logoSetA!.topLeftLogos];
+      }
+    } else if (_logoSetMode == LogoSetMode.alternating3) {
+      // Alternating3 mode: use Set A
       if (_logoSetA != null) {
         logosForSizeCalc = [..._logoSetA!.bottomLogos, ..._logoSetA!.topLeftLogos];
       }
@@ -1573,8 +1760,8 @@ class _HomePageState extends State<HomePage> {
 
     if (size != null && mounted) {
       setState(() => _logoSize = size);
-      // In alternating mode, recalculate sets with the new size
-      if (_logoSetMode == LogoSetMode.alternating) {
+      // In alternating modes, recalculate sets with the new size
+      if (_logoSetMode == LogoSetMode.alternating || _logoSetMode == LogoSetMode.alternating3) {
         Future.microtask(() => _autoDistributeLogos(_p.masterLogos));
       }
       _snack('Tamanho ajustado automaticamente para o modo: ${size.toStringAsFixed(1)}%');
@@ -3160,60 +3347,70 @@ class _HomePageState extends State<HomePage> {
               children: [
                 Text('Como as logos são distribuídas entre a base e o topo:', style: small),
                 const SizedBox(height: 8),
-                SegmentedButton<bool>(
-                  segments: [
-                    ButtonSegment(
-                      value: false,
-                      label: const Text('Manual'),
-                      icon: const Icon(Icons.tune, size: 16),
+                Row(
+                  children: [
+                    // Manual button
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () {
+                          if (_autoArrangeMode) {
+                            setState(() {
+                              _autoArrangeMode = false;
+                              _autoReferenceShortestSide = null;
+                            });
+                            // Switching from auto to manual: logos are already in correct positions
+                            if (_logoSetMode != LogoSetMode.single) {
+                              if (_logoSetA == null) _logoSetA = LogoSet(bottomLogos: [], topLeftLogos: []);
+                              if (_logoSetB == null) _logoSetB = LogoSet(bottomLogos: [], topLeftLogos: []);
+                            }
+                            _schedulePreview();
+                          }
+                        },
+                        icon: Icon(
+                          Icons.tune,
+                          size: 16,
+                          color: !_autoArrangeMode ? Theme.of(context).colorScheme.primary : null,
+                        ),
+                        label: Text('Manual'),
+                        style: OutlinedButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          side: !_autoArrangeMode
+                              ? BorderSide(color: Theme.of(context).colorScheme.primary, width: 2)
+                              : null,
+                          backgroundColor: !_autoArrangeMode
+                              ? Theme.of(context).colorScheme.primaryContainer
+                              : null,
+                        ),
+                      ),
                     ),
-                    ButtonSegment(
-                      value: true,
-                      label: const Text('Automático'),
-                      icon: const Icon(Icons.auto_fix_high, size: 16),
+                    const SizedBox(width: 8),
+                    // Automático button (greyed out / disabled)
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: null, // Disabled - greyed out
+                        icon: Icon(
+                          Icons.auto_fix_high,
+                          size: 16,
+                          color: Theme.of(context).colorScheme.outline,
+                        ),
+                        label: Text('Automático'),
+                        style: OutlinedButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          foregroundColor: Theme.of(context).colorScheme.outline,
+                          side: BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
+                          backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.3),
+                        ),
+                      ),
                     ),
                   ],
-                  selected: {_autoArrangeMode},
-                  onSelectionChanged: (s) {
-                    final wasManual = !_autoArrangeMode;
-                    final nowAuto = s.first;
-                    setState(() {
-                      _autoArrangeMode = nowAuto;
-                      // Clear reference shortest side when leaving auto mode
-                      if (!nowAuto) _autoReferenceShortestSide = null;
-                    });
-                    if (wasManual && nowAuto) {
-                      // Switching from manual to auto: collect all logos and redistribute
-                      final allLogos = <LogoItem>[
-                        ...(_logoSetMode == LogoSetMode.single ? _p.bottomLogos : _logoSetA?.bottomLogos ?? []),
-                        ...(_logoSetMode == LogoSetMode.single ? _p.topLeftLogos : _logoSetA?.topLeftLogos ?? []),
-                        ...(_logoSetB?.bottomLogos ?? []),
-                        ...(_logoSetB?.topLeftLogos ?? []),
-                      ];
-                      if (allLogos.isNotEmpty) {
-                        Future.microtask(() => _autoDistributeLogos(allLogos));
-                      }
-                    } else if (!nowAuto && !wasManual) {
-                      // Switching from auto to manual: logos are already in correct positions
-                      // Just need to ensure Set A and B exist in dual-set mode
-                      if (_logoSetMode != LogoSetMode.single) {
-                        if (_logoSetA == null) _logoSetA = LogoSet(bottomLogos: [], topLeftLogos: []);
-                        if (_logoSetB == null) _logoSetB = LogoSet(bottomLogos: [], topLeftLogos: []);
-                      }
-                    }
-                    _schedulePreview();
-                  },
-                  showSelectedIcon: false,
-                  style: SegmentedButton.styleFrom(
-                    visualDensity: VisualDensity.compact,
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  ),
                 ),
                 const SizedBox(height: 8),
                 Text(
                   _autoArrangeMode
                       ? 'Cole todas as logos do conjunto — o app preenche a base primeiro e, se não couber, coloca o restante no topo.'
-                      : 'Você controla cada fileira separadamente (base e topo-esquerdo).',
+                      : 'Você controla cada fileira separadamente (base e topo-esquerdo). O modo "Automático" está desabilitado.',
                   style: small?.copyWith(color: scheme.outline),
                 ),
               ],
@@ -3616,7 +3813,7 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  /// Section for configuring dual logo sets (Set A / Set B) and assignment mode.
+  /// Section for configuring logo sets (A / B / C) and assignment mode.
   /// In manual mode: shows per-set editors.
   /// In auto mode: shows single upload pool that auto-distributes to both sets.
   Widget _logoSetsSection() {
@@ -3628,9 +3825,11 @@ class _HomePageState extends State<HomePage> {
       return const SizedBox.shrink();
     }
 
+    final isThreeSets = _logoSetMode == LogoSetMode.alternating3;
+
     return _Section(
       number: 3,
-      title: 'Conjuntos de logos (A / B)',
+      title: isThreeSets ? 'Conjuntos de logos (A / B / C)' : 'Conjuntos de logos (A / B)',
       icon: const Icon(Icons.layers_outlined, size: 18),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -3649,6 +3848,11 @@ class _HomePageState extends State<HomePage> {
                 value: LogoSetMode.alternating,
                 label: Text('Alternado (par/ímpar)'),
                 icon: Icon(Icons.swap_horiz, size: 16),
+              ),
+              ButtonSegment(
+                value: LogoSetMode.alternating3,
+                label: Text('Alternado (3 conjuntos)'),
+                icon: Icon(Icons.view_column, size: 16),
               ),
             ],
             selected: {_logoSetMode},
@@ -3735,10 +3939,24 @@ class _HomePageState extends State<HomePage> {
             const SizedBox(height: 8),
           ],
 
+          // Set C - only shown in 3-set mode
+          if (isThreeSets) ...[
+            const SizedBox(height: 12),
+            Text('Conjunto C (base/topo-esquerdo):', style: small?.copyWith(fontWeight: FontWeight.w600)),
+            const SizedBox(height: 4),
+            _logoSetEditor('C', _logoSetC, (set) {
+            setState(() => _logoSetC = set);
+            _schedulePreview();
+          }),
+            const SizedBox(height: 8),
+          ],
+
           Text(
             _logoSetMode == LogoSetMode.single
                 ? 'Use as seções "Logos da base" e "Logos do canto superior esquerdo" abaixo.'
-                : 'Fotos ímpares (1, 3, 5...) → Conjunto A. Fotos pares (2, 4, 6...) → Conjunto B.',
+                : isThreeSets
+                    ? 'Fotos 1, 4, 7... → Conjunto A. Fotos 2, 5, 8... → Conjunto B. Fotos 3, 6, 9... → Conjunto C.'
+                    : 'Fotos ímpares (1, 3, 5...) → Conjunto A. Fotos pares (2, 4, 6...) → Conjunto B.',
             style: small?.copyWith(color: scheme.outline),
           ),
         ],
@@ -3749,30 +3967,44 @@ class _HomePageState extends State<HomePage> {
   /// Section for auto-arrange mode: paste all logos, auto-distribute.
   /// Single mode: one pool → bottom then top.
   /// Alternating mode: one pool distributes evenly between Set A and Set B (par/ímpar).
+  /// Alternating3 mode: one pool distributes evenly between Set A, B, and C.
   Widget _autoArrangeSection() {
     final scheme = Theme.of(context).colorScheme;
     final small = Theme.of(context).textTheme.bodySmall;
 
     final isSingle = _logoSetMode == LogoSetMode.single;
+    final isThreeSets = _logoSetMode == LogoSetMode.alternating3;
 
     // Collect all logos from masterLogos (single source of truth)
     final allLogos = <LogoItem>[];
     allLogos.addAll(_p.masterLogos);
 
     // For display: group by set and row
-    List<LogoItem> setABottom, setATop, setBBottom, setBTop;
+    List<LogoItem> setABottom, setATop, setBBottom, setBTop, setCBottom, setCTop;
 
     if (isSingle) {
       setABottom = _p.bottomLogos;
       setATop = _p.topLeftLogos;
       setBBottom = <LogoItem>[];
       setBTop = <LogoItem>[];
+      setCBottom = <LogoItem>[];
+      setCTop = <LogoItem>[];
+    } else if (isThreeSets) {
+      // Alternating3 mode: use Set A, Set B, and Set C
+      setABottom = _logoSetA?.bottomLogos ?? [];
+      setATop = _logoSetA?.topLeftLogos ?? [];
+      setBBottom = _logoSetB?.bottomLogos ?? [];
+      setBTop = _logoSetB?.topLeftLogos ?? [];
+      setCBottom = _logoSetC?.bottomLogos ?? [];
+      setCTop = _logoSetC?.topLeftLogos ?? [];
     } else {
       // Alternating mode: use Set A and Set B
       setABottom = _logoSetA?.bottomLogos ?? [];
       setATop = _logoSetA?.topLeftLogos ?? [];
       setBBottom = _logoSetB?.bottomLogos ?? [];
       setBTop = _logoSetB?.topLeftLogos ?? [];
+      setCBottom = <LogoItem>[];
+      setCTop = <LogoItem>[];
     }
 
     return _Section(
@@ -3782,7 +4014,7 @@ class _HomePageState extends State<HomePage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Mode selector (Single / Split Half / Alternating)
+          // Mode selector (Single / Alternating / Alternating3)
           Text('Modo de atribuição:', style: small),
           const SizedBox(height: 8),
           SegmentedButton<LogoSetMode>(
@@ -3796,6 +4028,11 @@ class _HomePageState extends State<HomePage> {
                 value: LogoSetMode.alternating,
                 label: Text('Alternado (par/ímpar)'),
                 icon: Icon(Icons.swap_horiz, size: 16),
+              ),
+              ButtonSegment(
+                value: LogoSetMode.alternating3,
+                label: Text('Alternado (3 conjuntos)'),
+                icon: Icon(Icons.view_column, size: 16),
               ),
             ],
             selected: {_logoSetMode},
@@ -3845,7 +4082,7 @@ class _HomePageState extends State<HomePage> {
               OutlinedButton.icon(
                 onPressed: !_controlsEnabled ? null : () => _pickLogosAutoMode(),
                 icon: const Icon(Icons.add_photo_alternate_outlined, size: 18),
-                label: Text(isSingle ? 'Adicionar logos ao conjunto' : 'Adicionar logos (Set A + B)'),
+                label: Text(isSingle ? 'Adicionar logos ao conjunto' : (isThreeSets ? 'Adicionar logos (Set A + B + C)' : 'Adicionar logos (Set A + B)')),
               ),
               const SizedBox(width: 8),
               if (allLogos.isNotEmpty)
@@ -3863,7 +4100,9 @@ class _HomePageState extends State<HomePage> {
                 ? 'Adicione fotos ou logos para começar.'
                 : isSingle
                     ? 'Todas as logos vão para a BASE primeiro. Se não couberem (respeitando margens e espaçamento), o excesso vai para o TOPO automaticamente.'
-                    : 'Logos são distribuídas igualmente entre Set A e Set B. Preenche BASE de ambos primeiro, depois TOP de ambos. Ajuste o tamanho para caber mais.',
+                    : isThreeSets
+                        ? 'Logos são distribuídas igualmente entre Set A, B e C. Preenche BASE de todos primeiro, depois TOP de todos. Ajuste o tamanho para caber mais.'
+                        : 'Logos são distribuídas igualmente entre Set A e Set B. Preenche BASE de ambos primeiro, depois TOP de ambos. Ajuste o tamanho para caber mais.',
             style: small,
           ),
 
@@ -3967,7 +4206,7 @@ class _HomePageState extends State<HomePage> {
               ),
             ],
           ] else ...[
-            // Alternating mode: show Set A and Set B separately
+            // Alternating modes: show Set A, Set B, and optionally Set C
             // Set A
             const SizedBox(height: 8),
             Text('CONJUNTO A', style: small?.copyWith(fontWeight: FontWeight.w600, color: scheme.primary)),
@@ -4134,6 +4373,92 @@ class _HomePageState extends State<HomePage> {
                 ),
                 child: Text('TOPO B vazio', style: small?.copyWith(color: scheme.outline)),
               ),
+            ],
+
+            // Set C - only in alternating3 mode
+            if (isThreeSets) ...[
+              const SizedBox(height: 12),
+              Text('CONJUNTO C', style: small?.copyWith(fontWeight: FontWeight.w600, color: scheme.tertiary)),
+              const SizedBox(height: 4),
+              if (setCBottom.isNotEmpty) ...[
+                Text('BASE C', style: small?.copyWith(fontWeight: FontWeight.w500)),
+                _DraggableLogoList(
+                  items: setCBottom,
+                  placement: Placement.bottom,
+                  controlsEnabled: _controlsEnabled,
+                  processing: _processing,
+                  onReorder: (oldIndex, newIndex) {
+                    setState(() {
+                      if (newIndex > oldIndex) newIndex -= 1;
+                      final item = setCBottom.removeAt(oldIndex);
+                      setCBottom.insert(newIndex, item);
+                    });
+                    Future.microtask(() => _autoDistributeLogos(allLogos));
+                  },
+                  onRemove: (index) {
+                    final removed = setCBottom[index];
+                    setState(() {
+                      setCBottom.removeAt(index);
+                      _p.masterLogos.remove(removed);
+                    });
+                    Future.microtask(() => _autoDistributeLogos(allLogos));
+                  },
+                  onMoveToOther: (item, fromPlacement) {},
+                  onAcceptFromOther: (item) {},
+                  onOpenFullscreen: (index) => _openImagesFullscreen(
+                    setCBottom.map((e) => e.bytes).toList(), index),
+                ),
+              ] else ...[
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: scheme.surfaceContainerHighest.withOpacity( 0.3),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: scheme.outlineVariant),
+                  ),
+                  child: Text('BASE C vazia', style: small?.copyWith(color: scheme.outline)),
+                ),
+              ],
+              if (setCTop.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text('TOPO C', style: small?.copyWith(fontWeight: FontWeight.w500)),
+                _DraggableLogoList(
+                  items: setCTop,
+                  placement: Placement.topLeft,
+                  controlsEnabled: _controlsEnabled,
+                  processing: _processing,
+                  onReorder: (oldIndex, newIndex) {
+                    setState(() {
+                      if (newIndex > oldIndex) newIndex -= 1;
+                      final item = setCTop.removeAt(oldIndex);
+                      setCTop.insert(newIndex, item);
+                    });
+                    Future.microtask(() => _autoDistributeLogos(allLogos));
+                  },
+                  onRemove: (index) {
+                    final removed = setCTop[index];
+                    setState(() {
+                      setCTop.removeAt(index);
+                      _p.masterLogos.remove(removed);
+                    });
+                    Future.microtask(() => _autoDistributeLogos(allLogos));
+                  },
+                  onMoveToOther: (item, fromPlacement) {},
+                  onAcceptFromOther: (item) {},
+                  onOpenFullscreen: (index) => _openImagesFullscreen(
+                    setCTop.map((e) => e.bytes).toList(), index),
+                ),
+              ] else ...[
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: scheme.surfaceContainerHighest.withOpacity( 0.3),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: scheme.outlineVariant),
+                  ),
+                  child: Text('TOPO C vazio', style: small?.copyWith(color: scheme.outline)),
+                ),
+              ],
             ],
           ],
 
@@ -5853,13 +6178,15 @@ class _HomePageState extends State<HomePage> {
       );
 
   /// Returns the set index (0-based) for the given photo index.
-  /// Returns null for single mode, 0/1 for alternating mode (A/B).
+  /// Returns null for single mode, 0/1 for alternating mode (A/B), 0/1/2 for alternating3 mode.
   int? _logoSetIndexForIndex(int index) {
     switch (_logoSetMode) {
       case LogoSetMode.single:
         return null;
       case LogoSetMode.alternating:
         return index % 2; // 0 for Set A (even), 1 for Set B (odd)
+      case LogoSetMode.alternating3:
+        return index % 3; // 0 for Set A, 1 for Set B, 2 for Set C
     }
   }
 

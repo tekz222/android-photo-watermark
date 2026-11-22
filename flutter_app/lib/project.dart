@@ -64,6 +64,7 @@ class Project {
     this.logoSetMode = LogoSetMode.alternating,
     this.logoSetA,
     this.logoSetB,
+    this.logoSetC,
     // Legacy: multiple logo sets (kept for migration)
     this.logoSets = const [],
     // Master list of ALL logos uploaded by user (single source of truth)
@@ -119,6 +120,7 @@ class Project {
   LogoSetMode logoSetMode;
   LogoSet? logoSetA;
   LogoSet? logoSetB;
+  LogoSet? logoSetC;
   // Legacy: multiple logo sets (kept for migration)
   List<LogoSet> logoSets;
   // Master list of ALL logos uploaded by user (single source of truth)
@@ -208,6 +210,7 @@ class Project {
       logoSetMode: logoSetMode,
       logoSetA: logoSetA,
       logoSetB: logoSetB,
+      logoSetC: logoSetC,
       // Legacy: multiple logo sets (kept for migration)
       logoSets: logoSets.map((s) => LogoSet(
         bottomLogos: s.bottomLogos.map((l) => LogoItem(
@@ -299,6 +302,7 @@ class Project {
       'logoSetMode': logoSetMode.index,
       'logoSetA': logoSetA?.toJson(),
       'logoSetB': logoSetB?.toJson(),
+      'logoSetC': logoSetC?.toJson(),
       // Legacy: multiple logo sets (kept for migration)
       'logoSets': logoSets.map((s) => s.toJson()).toList(),
       // Master list of ALL logos uploaded by user (single source of truth)
@@ -392,6 +396,9 @@ class Project {
           : null,
       logoSetB: json['logoSetB'] != null
           ? LogoSet.fromJson(json['logoSetB'] as Map<String, dynamic>)
+          : null,
+      logoSetC: json['logoSetC'] != null
+          ? LogoSet.fromJson(json['logoSetC'] as Map<String, dynamic>)
           : null,
       // Legacy: multiple logo sets (kept for migration)
       logoSets: (json['logoSets'] as List? ?? [])
@@ -648,6 +655,7 @@ class ProjectManager {
           // Dual-set mode: load logo sets from saved settings
           logoSetA: project.logoSetA,
           logoSetB: project.logoSetB,
+          logoSetC: project.logoSetC,
           // Legacy: multiple logo sets (kept for migration)
           logoSets: project.logoSets,
           // Master list of ALL logos
