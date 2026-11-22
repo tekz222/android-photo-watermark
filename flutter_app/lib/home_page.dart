@@ -1958,7 +1958,7 @@ class _HomePageState extends State<HomePage> {
         if (_cornerLogo != null) _cornerLogo!,
       ];
       for (final e in allLogos) {
-        _previewLogo[e.id] ??= await compute(downscaleImage, (e.bytes, 512, true))
+        _previewLogo[e.id] ??= await compute(downscaleImage, (e.bytes, 128, true))
             .timeout(const Duration(seconds: 10), onTimeout: () => throw TimeoutException('Logo downscale timeout'));
       }
       await _ensureTextPngs();
@@ -2113,7 +2113,7 @@ class _HomePageState extends State<HomePage> {
       ];
       for (final e in allLogos) {
         try {
-          _previewLogo[e.id] ??= await compute(downscaleImage, (e.bytes, 512, true))
+          _previewLogo[e.id] ??= await compute(downscaleImage, (e.bytes, 128, true))
               .timeout(const Duration(seconds: 20), onTimeout: () {
             throw TimeoutException('Logo downscale timeout');
           });
