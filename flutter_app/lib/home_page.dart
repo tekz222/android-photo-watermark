@@ -1924,6 +1924,8 @@ class _HomePageState extends State<HomePage> {
     if (_photoPaths.isEmpty || !_photoPaths.contains(path)) return;
     // Cancel any pending debounced render
     _debounce?.cancel();
+    // Clear worker queue so this render jumps to front
+    _worker.cancelPending();
     // Invalidate any in-flight renders
     _previewToken++;
     // If already have this preview at current version, skip
@@ -1932,17 +1934,14 @@ class _HomePageState extends State<HomePage> {
       return;
     }
 
-    // Ensure worker is ready before starting
+    // Ensure worker is ready before starting (shorter timeout since we just cleared queue)
     try {
-      await _worker.ready().timeout(const Duration(seconds: 30));
-      // Small warm-up delay for first render
-      await Future.delayed(const Duration(milliseconds: 100));
+      await _worker.ready().timeout(const Duration(seconds: 5));
     } catch (_) {
       // Worker failed or timed out, try to restart once
       try {
         await _worker.restart();
-        await _worker.ready().timeout(const Duration(seconds: 15));
-        await Future.delayed(const Duration(milliseconds: 100));
+        await _worker.ready().timeout(const Duration(seconds: 5));
       } catch (_) {
         if (mounted) setState(() => _renderingPreview = false);
         return;
