@@ -1974,28 +1974,39 @@ class _HomePageState extends State<HomePage> {
       ..._topLeftLogos,
       if (_cornerLogo != null) _cornerLogo!,
     ];
+    // Downscale the photo (cached) - start in parallel with logos
+    Future<Uint8List> photoFuture;
+    final cached = _previewPhoto[path];
+    if (cached != null) {
+      photoFuture = Future.value(cached);
+    } else {
+      final full = await File(path).readAsBytes();
+      photoFuture = compute(downscaleImage, (full, 1280, false))
+          .timeout(const Duration(seconds: 3), onTimeout: () => throw TimeoutException('Photo downscale timeout'));
+    }
+
     // Downscale all logos in PARALLEL - shorter timeout, skip on failure
+    Future<List<LogoItem>> logosFuture;
     if (allLogos.isNotEmpty) {
-      await Future.wait(allLogos.map((e) => compute(downscaleImage, (e.bytes, 128, true))
+      logosFuture = Future.wait(allLogos.map((e) => compute(downscaleImage, (e.bytes, 128, true))
           .timeout(const Duration(seconds: 3), onTimeout: () => throw TimeoutException('Logo downscale timeout'))
           .then((small) => _previewLogo[e.id] ??= small)
-          .catchError((_) {})));
+          .catchError((_) => null)))
+          .then((results) => results.whereType<Uint8List>().toList());
+    } else {
+      logosFuture = Future.value(<LogoItem>[]);
     }
+
+    // Wait for both in parallel
+    await Future.wait([photoFuture, logosFuture]);
     if (token != _previewToken) return;
     await _ensureTextPngs();
     if (token != _previewToken) return;
-    // Downscale the photo (cached)
-    Uint8List small;
-    final cached = _previewPhoto[path];
-    if (cached != null) {
-      small = cached;
-    } else {
-      final full = await File(path).readAsBytes();
-      small = await compute(downscaleImage, (full, 1280, false))
-          .timeout(const Duration(seconds: 3), onTimeout: () => throw TimeoutException('Photo downscale timeout'));
-      if (!_photoPaths.contains(path)) return;
-      _previewPhoto[path] = small;
-    }
+
+    // Get photo result
+    final small = await photoFuture;
+    if (!_photoPaths.contains(path)) return;
+    _previewPhoto[path] = small;
     // Render with worker (shorter timeout, no retry - fail fast)
     Uint8List? out;
     try {
