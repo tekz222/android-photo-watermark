@@ -2903,8 +2903,7 @@ class _HomePageState extends State<HomePage> {
         final out =
             await compute(renderWatermark, _request(bytes, quality: 92, path: next, index: nextIndex));
         final originalName = p.basenameWithoutExtension(next);
-        final ts = DateTime.now().millisecondsSinceEpoch;
-        final outputName = 'jcv_${ts}_$originalName.jpg';
+        final outputName = 'jcv_$originalName.jpg';
         final dir = await _albumDir(album);
         await File('${dir.path}${Platform.pathSeparator}$outputName')
             .writeAsBytes(out);
