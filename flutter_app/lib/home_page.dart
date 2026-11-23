@@ -2086,10 +2086,11 @@ class _HomePageState extends State<HomePage> {
     }
 
     // Safety timeout for the entire render pass (prevents stuck "Gerando pré-visualização…")
+    // Increased to 120s to allow rendering many photos in background.
     try {
-      await _doRecomputePreviews().timeout(const Duration(seconds: 30));
+      await _doRecomputePreviews().timeout(const Duration(seconds: 120));
     } on TimeoutException {
-      debugPrint('_recomputePreviews timed out after 30s');
+      debugPrint('_recomputePreviews timed out after 120s');
     }
   }
 
