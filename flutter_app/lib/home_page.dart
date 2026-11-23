@@ -5874,9 +5874,10 @@ class _HomePageState extends State<HomePage> {
     // Clamp preview index to filtered list
     final idx = _previewIndex.clamp(0, n - 1);
     final path = paths[idx];
-    final render = _hasAnyContent ? _previews[path] : null;
+    final render = _previews[path];
     final stale = render != null && _renderedVersion[path] != _previewVersion;
-    final rendering = _hasAnyContent && (render == null || stale);
+    final hasWatermarkedRender = render != null && !stale;
+    final rendering = _hasAnyContent && !hasWatermarkedRender;
 
     // Get actual aspect ratio for the current image (from preview or by decoding)
     Future<double> getAspect(String p) async {
@@ -5897,9 +5898,9 @@ class _HomePageState extends State<HomePage> {
     }
 
     Widget picture;
-    if (render != null) {
+    if (hasWatermarkedRender) {
       picture = AspectRatio(
-        aspectRatio: render.aspect,
+        aspectRatio: render!.aspect,
         child: Container(
           decoration:
               BoxDecoration(border: Border.all(color: scheme.outlineVariant)),
@@ -5908,7 +5909,7 @@ class _HomePageState extends State<HomePage> {
         ),
       );
     } else {
-      // Show raw image as fallback while rendering (or if no content)
+      // Show raw image immediately while watermarked version renders (or if no content)
       picture = Image.file(File(path),
           fit: BoxFit.contain, cacheWidth: 1600, gaplessPlayback: true);
     }
@@ -5999,9 +6000,9 @@ class _HomePageState extends State<HomePage> {
                     Positioned(
                         top: 8,
                         left: 8,
-                        child: _badge(render == null
-                            ? 'Gerando pré-visualização…'
-                            : 'Atualizando…')),
+                        child: _badge(_hasAnyContent
+                            ? 'Carregando logos…'
+                            : 'Gerando pré-visualização…')),
                   if (!_hasAnyContent)
                     Positioned(
                         top: 8,
