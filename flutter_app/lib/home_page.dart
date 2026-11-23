@@ -5145,6 +5145,7 @@ class _HomePageState extends State<HomePage> {
     final enabled = settings.enabled;
 
     // Initialize with global values when first enabling per-image settings.
+    // All values stored as percentages (like global UI) - engine converts to fractions.
     ImageSettings effectiveSettings = settings;
     if (enabled && !settings.enabled) {
       effectiveSettings = settings.copyWith(

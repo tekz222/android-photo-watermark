@@ -207,34 +207,50 @@ class WatermarkRequest {
   final ImageSettings? imageSettings;
 
   /// Returns the effective bottom logo size for this image (custom or global).
-  double effectiveBottomHeight() => imageSettings?.enabled == true && imageSettings?.bottomLogoSize != null
-      ? imageSettings!.bottomLogoSize!
-      : bottomHeight;
+  /// Per-image settings are stored as percentages (like global UI), convert to fraction.
+  double effectiveBottomHeight() {
+    final s = imageSettings;
+    if (s?.enabled == true) {
+      if (s!.useGlobalLogoSize && s.bottomLogoSize != null) return s.bottomLogoSize! / 100;
+      if (s.useBottomLogoSize && s.bottomLogoSize != null) return s.bottomLogoSize! / 100;
+    }
+    return bottomHeight;
+  }
 
   /// Returns the effective bottom logo margin for this image (custom or global).
   double effectiveBottomMargin() => imageSettings?.enabled == true && imageSettings?.bottomLogoMargin != null
-      ? imageSettings!.bottomLogoMargin!
+      ? imageSettings!.bottomLogoMargin! / 100
       : bottomMargin;
 
   /// Returns the effective top-left logo size for this image (custom or global).
-  double effectiveTopLeftHeight() => imageSettings?.enabled == true && imageSettings?.topLeftLogoSize != null
-      ? imageSettings!.topLeftLogoSize!
-      : topLeftHeight;
+  double effectiveTopLeftHeight() {
+    final s = imageSettings;
+    if (s?.enabled == true) {
+      if (s!.useGlobalLogoSize && s.topLeftLogoSize != null) return s.topLeftLogoSize! / 100;
+      if (s.useTopLeftLogoSize && s.topLeftLogoSize != null) return s.topLeftLogoSize! / 100;
+    }
+    return topLeftHeight;
+  }
 
   /// Returns the effective top-left logo top margin for this image (custom or global).
   double effectiveTopLeftTop() => imageSettings?.enabled == true && imageSettings?.topLeftLogoMarginTop != null
-      ? imageSettings!.topLeftLogoMarginTop!
+      ? imageSettings!.topLeftLogoMarginTop! / 100
       : topLeftTop;
 
   /// Returns the effective top-left logo left margin for this image (custom or global).
   double effectiveTopLeftLeft() => imageSettings?.enabled == true && imageSettings?.topLeftLogoMarginLeft != null
-      ? imageSettings!.topLeftLogoMarginLeft!
+      ? imageSettings!.topLeftLogoMarginLeft! / 100
       : topLeftLeft;
 
   /// Returns the effective corner logo size for this image (custom or global).
-  double effectiveCornerHeight() => imageSettings?.enabled == true && imageSettings?.cornerLogoSize != null
-      ? imageSettings!.cornerLogoSize!
-      : cornerHeight;
+  double effectiveCornerHeight() {
+    final s = imageSettings;
+    if (s?.enabled == true) {
+      if (s!.useGlobalLogoSize && s.cornerLogoSize != null) return s.cornerLogoSize! / 100;
+      if (s.useCornerLogoSize && s.cornerLogoSize != null) return s.cornerLogoSize! / 100;
+    }
+    return cornerHeight;
+  }
 
   /// Returns the effective corner logo top margin for this image (custom or global).
   /// Uses the same top margin as top-left logos (topLeftTop).
@@ -242,20 +258,21 @@ class WatermarkRequest {
 
   /// Returns the effective corner logo right margin for this image (custom or global).
   double effectiveCornerMarginRight() => imageSettings?.enabled == true && imageSettings?.cornerLogoMarginRight != null
-      ? imageSettings!.cornerLogoMarginRight!
+      ? imageSettings!.cornerLogoMarginRight! / 100
       : cornerMarginRight;
 
   /// Returns the effective spacing for this image (custom or global).
+  /// Per-image settings are stored as percentages, convert to fraction.
   double effectiveSpacing() => imageSettings?.enabled == true && imageSettings?.logoSpacing != null
-      ? imageSettings!.logoSpacing!
+      ? imageSettings!.logoSpacing! / 100
       : spacing;
 
   /// Returns the effective bottom row spacing for this image (custom or global).
   double effectiveBottomSpacing() {
     final s = imageSettings;
     if (s?.enabled == true) {
-      if (s!.useGlobalSpacing && s.logoSpacing != null) return s.logoSpacing!;
-      if (s.useBottomSpacing && s.logoSpacing != null) return s.logoSpacing!;
+      if (s!.useGlobalSpacing && s.logoSpacing != null) return s.logoSpacing! / 100;
+      if (s.useBottomSpacing && s.logoSpacing != null) return s.logoSpacing! / 100;
     }
     return spacing;
   }
@@ -264,8 +281,8 @@ class WatermarkRequest {
   double effectiveTopLeftSpacing() {
     final s = imageSettings;
     if (s?.enabled == true) {
-      if (s!.useGlobalSpacing && s.logoSpacing != null) return s.logoSpacing!;
-      if (s.useTopLeftSpacing && s.logoSpacing != null) return s.logoSpacing!;
+      if (s!.useGlobalSpacing && s.logoSpacing != null) return s.logoSpacing! / 100;
+      if (s.useTopLeftSpacing && s.logoSpacing != null) return s.logoSpacing! / 100;
     }
     return spacing;
   }
@@ -274,8 +291,8 @@ class WatermarkRequest {
   double effectiveTopGradientHeight() {
     final s = imageSettings;
     if (s?.enabled == true) {
-      if (s!.useGlobalGradientHeight && s.topGradientHeight != null) return s.topGradientHeight!;
-      if (s.useTopGradientHeight && s.topGradientHeight != null) return s.topGradientHeight!;
+      if (s!.useGlobalGradientHeight && s.topGradientHeight != null) return s.topGradientHeight! / 100;
+      if (s.useTopGradientHeight && s.topGradientHeight != null) return s.topGradientHeight! / 100;
     }
     return topGradientHeight ?? topLeftHeight;
   }
@@ -284,8 +301,8 @@ class WatermarkRequest {
   double effectiveBottomGradientHeight() {
     final s = imageSettings;
     if (s?.enabled == true) {
-      if (s!.useGlobalGradientHeight && s.bottomGradientHeight != null) return s.bottomGradientHeight!;
-      if (s.useBottomGradientHeight && s.bottomGradientHeight != null) return s.bottomGradientHeight!;
+      if (s!.useGlobalGradientHeight && s.bottomGradientHeight != null) return s.bottomGradientHeight! / 100;
+      if (s.useBottomGradientHeight && s.bottomGradientHeight != null) return s.bottomGradientHeight! / 100;
     }
     return bottomGradientHeight ?? bottomHeight;
   }
