@@ -5807,8 +5807,8 @@ class _HomePageState extends State<HomePage> {
     if (filteredIndex >= 0 && filteredIndex < filteredPaths.length) {
       final originalIndex = _photoPaths.indexOf(filteredPaths[filteredIndex]);
       if (originalIndex >= 0) {
-        // Update index WITHOUT setState - _renderPhotoImmediately will rebuild on completion
-        _previewIndex = originalIndex;
+        // Update index with setState so UI rebuilds immediately (shows raw image fallback)
+        setState(() => _previewIndex = originalIndex);
         // Render the newly selected photo IMMEDIATELY for instant switch
         final selectedPath = _photoPaths[originalIndex];
         _renderPhotoImmediately(selectedPath);
@@ -5924,6 +5924,7 @@ class _HomePageState extends State<HomePage> {
         ),
       );
     } else {
+      // Show raw image as fallback while rendering (or if no content)
       picture = Image.file(File(path),
           fit: BoxFit.contain, cacheWidth: 1600, gaplessPlayback: true);
     }
