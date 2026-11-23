@@ -1986,15 +1986,14 @@ class _HomePageState extends State<HomePage> {
     }
 
     // Downscale all logos in PARALLEL - shorter timeout, skip on failure
-    Future<List<LogoItem>> logosFuture;
+    Future<void> logosFuture;
     if (allLogos.isNotEmpty) {
       logosFuture = Future.wait(allLogos.map((e) => compute(downscaleImage, (e.bytes, 128, true))
           .timeout(const Duration(seconds: 3), onTimeout: () => throw TimeoutException('Logo downscale timeout'))
           .then((small) => _previewLogo[e.id] ??= small)
-          .catchError((_) => null)))
-          .then((results) => results.whereType<Uint8List>().toList());
+          .catchError((_) {})));
     } else {
-      logosFuture = Future.value(<LogoItem>[]);
+      logosFuture = Future.value();
     }
 
     // Wait for both in parallel
