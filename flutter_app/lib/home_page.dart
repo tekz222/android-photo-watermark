@@ -825,7 +825,7 @@ class _HomePageState extends State<HomePage> {
   Future<void> _initializeProjects() async {
     // Start worker and wait for it to be ready before proceeding.
     await _worker.start();
-    await _worker.ready().timeout(const Duration(seconds: 10), onTimeout: () {
+    await _worker.ready().timeout(const Duration(seconds: 5), onTimeout: () {
       throw Exception('Worker failed to start in time');
     });
 
@@ -1908,7 +1908,7 @@ class _HomePageState extends State<HomePage> {
         spacing: 0,
         textOverlays: const [],
         quality: 50,
-      )).timeout(const Duration(seconds: 10)); // Reduced from 30s - dummy render should be fast
+      )).timeout(const Duration(seconds: 5)); // Reduced from 30s - dummy render should be fast
     } catch (_) {
       // Warm-up failed, but that's OK - the real render will handle it
       debugPrint('Worker warm-up failed (non-fatal)');
@@ -1934,12 +1934,12 @@ class _HomePageState extends State<HomePage> {
 
     // Ensure worker is ready before starting (short timeout - queue is clear)
     try {
-      await _worker.ready().timeout(const Duration(seconds: 3));
+      await _worker.ready().timeout(const Duration(seconds: 2));
     } catch (_) {
       // Worker failed or timed out, try to restart once
       try {
         await _worker.restart();
-        await _worker.ready().timeout(const Duration(seconds: 3));
+        await _worker.ready().timeout(const Duration(seconds: 2));
       } catch (_) {
         return;
       }
@@ -1951,12 +1951,12 @@ class _HomePageState extends State<HomePage> {
       ..._topLeftLogos,
       if (_cornerLogo != null) _cornerLogo!,
     ];
-    // Downscale all logos in PARALLEL
+    // Downscale all logos in PARALLEL - shorter timeout, skip on failure
     if (allLogos.isNotEmpty) {
       await Future.wait(allLogos.map((e) => compute(downscaleImage, (e.bytes, 128, true))
-          .timeout(const Duration(seconds: 10), onTimeout: () => throw TimeoutException('Logo downscale timeout'))
+          .timeout(const Duration(seconds: 3), onTimeout: () => throw TimeoutException('Logo downscale timeout'))
           .then((small) => _previewLogo[e.id] ??= small)
-          .catchError((_) => Future<Uint8List>.value(Uint8List(0)))));
+          .catchError((_) {})));
     }
     if (token != _previewToken) return;
     await _ensureTextPngs();
@@ -1969,24 +1969,18 @@ class _HomePageState extends State<HomePage> {
     } else {
       final full = await File(path).readAsBytes();
       small = await compute(downscaleImage, (full, 1280, false))
-          .timeout(const Duration(seconds: 10), onTimeout: () => throw TimeoutException('Photo downscale timeout'));
+          .timeout(const Duration(seconds: 3), onTimeout: () => throw TimeoutException('Photo downscale timeout'));
       if (!_photoPaths.contains(path)) return;
       _previewPhoto[path] = small;
     }
-    // Render with worker (with timeout + restart fallback)
+    // Render with worker (shorter timeout, no retry - fail fast)
     Uint8List? out;
     try {
       out = await _worker.render(_previewRequest(path, small))
-          .timeout(const Duration(seconds: 15));
+          .timeout(const Duration(seconds: 8));
     } on TimeoutException {
-      try {
-        await _worker.restart();
-        await _worker.ready().timeout(const Duration(seconds: 5));
-        out = await _worker.render(_previewRequest(path, small))
-            .timeout(const Duration(seconds: 15));
-      } catch (_) {
-        out = null;
-      }
+      // Don't restart - just fail this render, background will retry
+      out = null;
     }
     if (token != _previewToken) return;
     if (out == null || !mounted) return;
@@ -2047,9 +2041,9 @@ class _HomePageState extends State<HomePage> {
     // Wait for initialization to complete before rendering
     // On first launch, worker isolate needs time to JIT compile
     if (!_initialized) {
-      // Wait up to 10 seconds for initialization to complete
+      // Wait up to 5 seconds for initialization to complete
       int waitTime = 0;
-      while (!_initialized && waitTime < 10000) {
+      while (!_initialized && waitTime < 5000) {
         await Future.delayed(const Duration(milliseconds: 100));
         waitTime += 100;
       }
@@ -2060,9 +2054,9 @@ class _HomePageState extends State<HomePage> {
 
     // Safety timeout for the entire render pass (prevents stuck "Gerando pré-visualização…")
     try {
-      await _doRecomputePreviews().timeout(const Duration(seconds: 120));
+      await _doRecomputePreviews().timeout(const Duration(seconds: 30));
     } on TimeoutException {
-      debugPrint('_recomputePreviews timed out after 120s');
+      debugPrint('_recomputePreviews timed out after 30s');
     }
   }
 
@@ -2078,12 +2072,12 @@ class _HomePageState extends State<HomePage> {
     }
     // Ensure worker is ready before starting renders (short timeout)
     try {
-      await _worker.ready().timeout(const Duration(seconds: 3));
+      await _worker.ready().timeout(const Duration(seconds: 2));
     } catch (_) {
       // Worker failed or timed out, try to restart once
       try {
         await _worker.restart();
-        await _worker.ready().timeout(const Duration(seconds: 3));
+        await _worker.ready().timeout(const Duration(seconds: 2));
       } catch (_) {
         return;
       }
@@ -2091,88 +2085,78 @@ class _HomePageState extends State<HomePage> {
 
     // Small copies of the logos, once (cached), so renders are cheap.
     // Downscale all logos in PARALLEL (not sequential)
-      final allLogos = [
-        ..._bottomLogos,
-        ..._topLeftLogos,
-        if (_cornerLogo != null) _cornerLogo!,
-      ];
-      if (allLogos.isNotEmpty) {
-        await Future.wait(allLogos.map((e) async {
-          try {
-            _previewLogo[e.id] ??= await compute(downscaleImage, (e.bytes, 128, true))
-                .timeout(const Duration(seconds: 10), onTimeout: () {
-              throw TimeoutException('Logo downscale timeout');
-            });
-          } catch (_) {
-            // Skip logo if downscale fails (corrupt image, etc.) - don't crash preview
-          }
-        }));
-      }
-      if (token != _previewToken) return;
-      await _ensureTextPngs();
-      if (token != _previewToken) return;
-
-      final version = _previewVersion;
-      for (final path in _previewOrder()) {
-        if (_renderedVersion[path] == version) continue;
-        if (_previewFailed.contains(path)) continue;
-        if (!_photoPaths.contains(path)) continue; // removed meanwhile
+    final allLogos = [
+      ..._bottomLogos,
+      ..._topLeftLogos,
+      if (_cornerLogo != null) _cornerLogo!,
+    ];
+    if (allLogos.isNotEmpty) {
+      await Future.wait(allLogos.map((e) async {
         try {
-          final Uint8List small;
-          final cached = _previewPhoto[path];
-          if (cached != null) {
-            small = cached;
-          } else {
-            final full = await File(path).readAsBytes();
-            if (token != _previewToken) return;
-            small = await compute<(Uint8List, int, bool), Uint8List>(
-                downscaleImage, (full, 1280, false))
-                .timeout(const Duration(seconds: 20), onTimeout: () {
-              throw TimeoutException('Photo downscale timeout');
-            });
-            if (token != _previewToken) return;
-            if (!_photoPaths.contains(path)) continue;
-            _previewPhoto[path] = small;
-          }
-          // Render with timeout + retry (worker isolate can hang/crash)
-          Uint8List? out;
-          bool renderFailed = false;
-          try {
-            out = await _worker.render(_previewRequest(path, small))
-                .timeout(const Duration(seconds: 10));
-          } on TimeoutException {
-            // Worker hung, try to restart once
-            try {
-              await _worker.restart();
-              await _worker.ready().timeout(const Duration(seconds: 5));
-              out = await _worker.render(_previewRequest(path, small))
-                  .timeout(const Duration(seconds: 10));
-            } catch (_) {
-              renderFailed = true;
-            }
-          }
-          if (renderFailed || out == null) {
-            // This photo failed, but continue with others
-            _previewFailed.add(path);
-            if (token != _previewToken) return;
-            continue;
-          }
-          if (token != _previewToken) return;
-          if (out == null) continue;
-          final Uint8List outBytes = out;
-          final aspect = await _aspectOf(outBytes);
-          if (token != _previewToken || !mounted) return;
-          if (!_photoPaths.contains(path)) continue;
-          setState(() {
-            _previews[path] = Preview(outBytes, aspect);
-            _renderedVersion[path] = version;
+          _previewLogo[e.id] ??= await compute(downscaleImage, (e.bytes, 128, true))
+              .timeout(const Duration(seconds: 3), onTimeout: () {
+            throw TimeoutException('Logo downscale timeout');
           });
         } catch (_) {
-          // A photo that can't be read/decoded must not block the others.
-          _previewFailed.add(path);
-          if (token != _previewToken) return;
+          // Skip logo if downscale fails (corrupt image, etc.) - don't crash preview
         }
+      }));
+    }
+    if (token != _previewToken) return;
+    await _ensureTextPngs();
+    if (token != _previewToken) return;
+
+    final version = _previewVersion;
+    for (final path in _previewOrder()) {
+      if (_renderedVersion[path] == version) continue;
+      if (_previewFailed.contains(path)) continue;
+      if (!_photoPaths.contains(path)) continue; // removed meanwhile
+      try {
+        final Uint8List small;
+        final cached = _previewPhoto[path];
+        if (cached != null) {
+          small = cached;
+        } else {
+          final full = await File(path).readAsBytes();
+          if (token != _previewToken) return;
+          small = await compute<(Uint8List, int, bool), Uint8List>(
+              downscaleImage, (full, 1280, false))
+              .timeout(const Duration(seconds: 3), onTimeout: () {
+            throw TimeoutException('Photo downscale timeout');
+          });
+          if (token != _previewToken) return;
+          if (!_photoPaths.contains(path)) continue;
+          _previewPhoto[path] = small;
+        }
+        // Render with timeout (no restart - fail fast, background will retry)
+        Uint8List? out;
+        try {
+          out = await _worker.render(_previewRequest(path, small))
+              .timeout(const Duration(seconds: 8));
+        } on TimeoutException {
+          out = null;
+        }
+        if (token != _previewToken) return;
+        if (out == null) {
+          _previewFailed.add(path);
+          continue;
+        }
+        if (token != _previewToken) return;
+        if (out == null) continue;
+        final Uint8List outBytes = out;
+        final aspect = await _aspectOf(outBytes);
+        if (token != _previewToken || !mounted) return;
+        if (!_photoPaths.contains(path)) continue;
+        setState(() {
+          _previews[path] = Preview(outBytes, aspect);
+          _renderedVersion[path] = version;
+        });
+      } catch (_) {
+        // A photo that can't be read/decoded must not block the others.
+        _previewFailed.add(path);
+        if (token != _previewToken) return;
       }
+    }
   }
 
   /// Width/height of an encoded image; throws if it can't be decoded (the
