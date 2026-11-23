@@ -793,14 +793,18 @@ class _HomePageState extends State<HomePage> {
   List<LogoItem> _bottomLogosFor(int index) {
     final set = _logoSetForIndex(index);
     if (set != null) return set.bottomLogos;
-    return _bottomLogos;
+    // In alternating modes, an uninitialized set means no logos for that position.
+    // Only fall back to legacy logos in single mode.
+    if (_logoSetMode == LogoSetMode.single) return _bottomLogos;
+    return const [];
   }
 
   /// Returns the top-left logos for the given photo index.
   List<LogoItem> _topLeftLogosFor(int index) {
     final set = _logoSetForIndex(index);
     if (set != null) return set.topLeftLogos;
-    return _topLeftLogos;
+    if (_logoSetMode == LogoSetMode.single) return _topLeftLogos;
+    return const [];
   }
 
   /// Returns the corner logo for the given photo index.
