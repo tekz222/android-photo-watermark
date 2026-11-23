@@ -76,7 +76,6 @@ class _HomePageState extends State<HomePage> {
   bool _importing = false;
   int _importDone = 0;
   int _importTotal = 0;
-  bool _renderingPreview = false;
   bool _checkingLogos = false;
   int _checkDone = 0;
   int _checkTotal = 0;
@@ -1926,6 +1925,7 @@ class _HomePageState extends State<HomePage> {
     _worker.cancelPending();
     // Invalidate any in-flight renders
     _previewToken++;
+    final token = _previewToken;
     // If already have this preview at current version, skip
     if (_renderedVersion[path] == _previewVersion && _previews.containsKey(path)) {
       _kickPreview(); // still kick background for others
@@ -1941,72 +1941,67 @@ class _HomePageState extends State<HomePage> {
         await _worker.restart();
         await _worker.ready().timeout(const Duration(seconds: 3));
       } catch (_) {
-        if (mounted) setState(() => _renderingPreview = false);
         return;
       }
     }
 
+    // Downscale logos if needed (fast path - small count, cached)
+    final allLogos = [
+      ..._bottomLogos,
+      ..._topLeftLogos,
+      if (_cornerLogo != null) _cornerLogo!,
+    ];
+    // Downscale all logos in PARALLEL
+    if (allLogos.isNotEmpty) {
+      await Future.wait(allLogos.map((e) => compute(downscaleImage, (e.bytes, 128, true))
+          .timeout(const Duration(seconds: 10), onTimeout: () => throw TimeoutException('Logo downscale timeout'))
+          .then((small) => _previewLogo[e.id] ??= small)
+          .catchError((_) => Future<Uint8List>.value(Uint8List(0)))));
+    }
+    if (token != _previewToken) return;
+    await _ensureTextPngs();
+    if (token != _previewToken) return;
+    // Downscale the photo (cached)
+    Uint8List small;
+    final cached = _previewPhoto[path];
+    if (cached != null) {
+      small = cached;
+    } else {
+      final full = await File(path).readAsBytes();
+      small = await compute(downscaleImage, (full, 1280, false))
+          .timeout(const Duration(seconds: 10), onTimeout: () => throw TimeoutException('Photo downscale timeout'));
+      if (!_photoPaths.contains(path)) return;
+      _previewPhoto[path] = small;
+    }
+    // Render with worker (with timeout + restart fallback)
+    Uint8List? out;
     try {
-      setState(() => _renderingPreview = true);
-      // Downscale logos if needed (fast path - small count, cached)
-      final allLogos = [
-        ..._bottomLogos,
-        ..._topLeftLogos,
-        if (_cornerLogo != null) _cornerLogo!,
-      ];
-      // Downscale all logos in PARALLEL
-      if (allLogos.isNotEmpty) {
-        await Future.wait(allLogos.map((e) => compute(downscaleImage, (e.bytes, 128, true))
-            .timeout(const Duration(seconds: 10), onTimeout: () => throw TimeoutException('Logo downscale timeout'))
-            .then((small) => _previewLogo[e.id] ??= small)
-            .catchError((_) => null)));
-      }
-      await _ensureTextPngs();
-      // Downscale the photo (cached)
-      Uint8List small;
-      final cached = _previewPhoto[path];
-      if (cached != null) {
-        small = cached;
-      } else {
-        final full = await File(path).readAsBytes();
-        small = await compute(downscaleImage, (full, 1280, false))
-            .timeout(const Duration(seconds: 10), onTimeout: () => throw TimeoutException('Photo downscale timeout'));
-        if (!_photoPaths.contains(path)) return;
-        _previewPhoto[path] = small;
-      }
-      // Render with worker (with timeout + restart fallback)
-      Uint8List? out;
+      out = await _worker.render(_previewRequest(path, small))
+          .timeout(const Duration(seconds: 15));
+    } on TimeoutException {
       try {
+        await _worker.restart();
+        await _worker.ready().timeout(const Duration(seconds: 5));
         out = await _worker.render(_previewRequest(path, small))
             .timeout(const Duration(seconds: 15));
-      } on TimeoutException {
-        try {
-          await _worker.restart();
-          await _worker.ready().timeout(const Duration(seconds: 5));
-          out = await _worker.render(_previewRequest(path, small))
-              .timeout(const Duration(seconds: 15));
-        } catch (_) {
-          if (mounted) setState(() => _renderingPreview = false);
-          return;
-        }
+      } catch (_) {
+        out = null;
       }
-      if (out == null || !mounted) {
-        if (mounted) setState(() => _renderingPreview = false);
-        return;
-      }
-      final aspect = await _aspectOf(out);
-      if (!mounted) return;
-      final outBytes = out!;
+    }
+    if (token != _previewToken) return;
+    if (out == null || !mounted) return;
+    final aspect = await _aspectOf(out);
+    if (!mounted) return;
+    final outBytes = out!;
+    // Single setState at the end
+    if (mounted) {
       setState(() {
         _previews[path] = Preview(outBytes, aspect);
         _renderedVersion[path] = _previewVersion;
-        _renderingPreview = false;
       });
-      // Now kick the full background render for the rest
-      _kickPreview();
-    } catch (_) {
-      if (mounted) setState(() => _renderingPreview = false);
     }
+    // Now kick the full background render for the rest
+    _kickPreview();
   }
 
   /// Renders the very first photo IMMEDIATELY (no debounce) so user sees
@@ -2059,7 +2054,6 @@ class _HomePageState extends State<HomePage> {
         waitTime += 100;
       }
       if (!_initialized) {
-        if (mounted) setState(() => _renderingPreview = false);
         return;
       }
     }
@@ -2069,7 +2063,6 @@ class _HomePageState extends State<HomePage> {
       await _doRecomputePreviews().timeout(const Duration(seconds: 120));
     } on TimeoutException {
       debugPrint('_recomputePreviews timed out after 120s');
-      if (mounted) setState(() => _renderingPreview = false);
     }
   }
 
@@ -2080,7 +2073,6 @@ class _HomePageState extends State<HomePage> {
       setState(() {
         _previews.clear();
         _renderedVersion.clear();
-        _renderingPreview = false;
       });
       return;
     }
@@ -2093,16 +2085,12 @@ class _HomePageState extends State<HomePage> {
         await _worker.restart();
         await _worker.ready().timeout(const Duration(seconds: 3));
       } catch (_) {
-        if (mounted) setState(() => _renderingPreview = false);
         return;
       }
     }
 
-    // Use try-finally to ensure _renderingPreview is always reset
-    try {
-      setState(() => _renderingPreview = true);
-      // Small copies of the logos, once (cached), so renders are cheap.
-      // Downscale all logos in PARALLEL (not sequential)
+    // Small copies of the logos, once (cached), so renders are cheap.
+    // Downscale all logos in PARALLEL (not sequential)
       final allLogos = [
         ..._bottomLogos,
         ..._topLeftLogos,
@@ -2185,13 +2173,6 @@ class _HomePageState extends State<HomePage> {
           if (token != _previewToken) return;
         }
       }
-    } finally {
-      // Always reset rendering flag when this render pass ends, regardless of token.
-      // A new render pass will set it to true again if needed.
-      if (mounted) {
-        setState(() => _renderingPreview = false);
-      }
-    }
   }
 
   /// Width/height of an encoded image; throws if it can't be decoded (the
@@ -5826,7 +5807,8 @@ class _HomePageState extends State<HomePage> {
     if (filteredIndex >= 0 && filteredIndex < filteredPaths.length) {
       final originalIndex = _photoPaths.indexOf(filteredPaths[filteredIndex]);
       if (originalIndex >= 0) {
-        setState(() => _previewIndex = originalIndex);
+        // Update index WITHOUT setState - _renderPhotoImmediately will rebuild on completion
+        _previewIndex = originalIndex;
         // Render the newly selected photo IMMEDIATELY for instant switch
         final selectedPath = _photoPaths[originalIndex];
         _renderPhotoImmediately(selectedPath);
