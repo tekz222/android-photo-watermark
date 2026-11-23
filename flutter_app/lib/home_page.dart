@@ -2141,55 +2141,63 @@ class _HomePageState extends State<HomePage> {
     if (token != _previewToken) return;
 
     final version = _previewVersion;
-    for (final path in _previewOrder()) {
-      if (_renderedVersion[path] == version) continue;
-      if (_previewFailed.contains(path)) continue;
-      if (!_photoPaths.contains(path)) continue; // removed meanwhile
-      try {
-        final Uint8List small;
-        final cached = _previewPhoto[path];
-        if (cached != null) {
-          small = cached;
-        } else {
-          final full = await File(path).readAsBytes();
-          if (token != _previewToken) return;
-          small = await compute<(Uint8List, int, bool), Uint8List>(
-              downscaleImage, (full, 1280, false))
-              .timeout(const Duration(seconds: 3), onTimeout: () {
-            throw TimeoutException('Photo downscale timeout');
-          });
-          if (token != _previewToken) return;
-          if (!_photoPaths.contains(path)) continue;
-          _previewPhoto[path] = small;
-        }
-        // Render with timeout (no restart - fail fast, background will retry)
-        Uint8List? out;
+    final paths = _previewOrder();
+    // Process in batches of up to 4 (matching worker's _maxConcurrent)
+    const int batchSize = 4;
+    for (var batchStart = 0; batchStart < paths.length; batchStart += batchSize) {
+      if (token != _previewToken) return;
+      final batchEnd = math.min(batchStart + batchSize, paths.length);
+      final batch = paths.sublist(batchStart, batchEnd);
+
+      // Process this batch in parallel
+      await Future.wait(batch.map((path) async {
+        if (_renderedVersion[path] == version) return;
+        if (_previewFailed.contains(path)) return;
+        if (!_photoPaths.contains(path)) return;
         try {
-          out = await _worker.render(_previewRequest(path, small))
-              .timeout(const Duration(seconds: 8));
-        } on TimeoutException {
-          out = null;
-        }
-        if (token != _previewToken) return;
-        if (out == null) {
+          final Uint8List small;
+          final cached = _previewPhoto[path];
+          if (cached != null) {
+            small = cached;
+          } else {
+            final full = await File(path).readAsBytes();
+            if (token != _previewToken) return;
+            small = await compute<(Uint8List, int, bool), Uint8List>(
+                downscaleImage, (full, 1280, false))
+                .timeout(const Duration(seconds: 3), onTimeout: () {
+              throw TimeoutException('Photo downscale timeout');
+            });
+            if (token != _previewToken) return;
+            if (!_photoPaths.contains(path)) return;
+            _previewPhoto[path] = small;
+          }
+          // Render with timeout (no restart - fail fast, background will retry)
+          Uint8List? out;
+          try {
+            out = await _worker.render(_previewRequest(path, small))
+                .timeout(const Duration(seconds: 8));
+          } on TimeoutException {
+            out = null;
+          }
+          if (token != _previewToken) return;
+          if (out == null) {
+            _previewFailed.add(path);
+            return;
+          }
+          if (token != _previewToken) return;
+          final Uint8List outBytes = out;
+          final aspect = await _aspectOf(outBytes);
+          if (token != _previewToken || !mounted) return;
+          if (!_photoPaths.contains(path)) return;
+          setState(() {
+            _previews[path] = Preview(outBytes, aspect);
+            _renderedVersion[path] = version;
+          });
+        } catch (_) {
+          // A photo that can't be read/decoded must not block the others.
           _previewFailed.add(path);
-          continue;
         }
-        if (token != _previewToken) return;
-        if (out == null) continue;
-        final Uint8List outBytes = out;
-        final aspect = await _aspectOf(outBytes);
-        if (token != _previewToken || !mounted) return;
-        if (!_photoPaths.contains(path)) continue;
-        setState(() {
-          _previews[path] = Preview(outBytes, aspect);
-          _renderedVersion[path] = version;
-        });
-      } catch (_) {
-        // A photo that can't be read/decoded must not block the others.
-        _previewFailed.add(path);
-        if (token != _previewToken) return;
-      }
+      }));
     }
   }
 
