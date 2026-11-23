@@ -888,11 +888,28 @@ class _HomePageState extends State<HomePage> {
 
   // ---- Persistence (survives the app being closed/killed) ----
 
-  Future<String> _copyBytesToApp(Uint8List bytes, String sub) async {
+  Future<String> _copyBytesToApp(Uint8List bytes, String sub, {String? originalName}) async {
     final dir = await getApplicationDocumentsDirectory();
     final folder = Directory('${dir.path}/$sub');
     if (!folder.existsSync()) folder.createSync(recursive: true);
-    final file = File('${folder.path}/${DateTime.now().microsecondsSinceEpoch}_${_fileSeq++}');
+    String filename;
+    if (originalName != null && originalName.isNotEmpty) {
+      // Preserve original filename, sanitize invalid chars
+      filename = originalName.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+      // Avoid collisions
+      var base = p.basenameWithoutExtension(filename);
+      var ext = p.extension(filename);
+      var candidate = filename;
+      var counter = 0;
+      while (File('${folder.path}/$candidate').existsSync()) {
+        counter++;
+        candidate = '${base}_$counter$ext';
+      }
+      filename = candidate;
+    } else {
+      filename = '${DateTime.now().microsecondsSinceEpoch}_${_fileSeq++}';
+    }
+    final file = File('${folder.path}/$filename');
     await file.writeAsBytes(bytes);
     return file.path;
   }
@@ -1243,7 +1260,8 @@ class _HomePageState extends State<HomePage> {
         // Sort by filename to preserve original order (archive order)
         photoFiles.sort((a, b) => a.name.compareTo(b.name));
         for (final file in photoFiles) {
-          final path = await _copyBytesToApp(Uint8List.fromList(file.content as List<int>), 'photos');
+          final originalName = p.basename(file.name);
+          final path = await _copyBytesToApp(Uint8List.fromList(file.content as List<int>), 'photos', originalName: originalName);
           _photoPaths.add(path);
         }
       }
@@ -1424,7 +1442,7 @@ class _HomePageState extends State<HomePage> {
       await Future.wait(sortedPicked.map((x) async {
         try {
           final bytes = await x.readAsBytes();
-          final path = await _copyBytesToApp(bytes, 'photos');
+          final path = await _copyBytesToApp(bytes, 'photos', originalName: x.name);
           paths.add(path);
         } catch (e) {
           // One bad image shouldn't block the rest
@@ -1501,7 +1519,8 @@ class _HomePageState extends State<HomePage> {
       await Future.wait(validPaths.map((path) async {
         try {
           final bytes = await File(path).readAsBytes();
-          final newPath = await _copyBytesToApp(bytes, 'photos');
+          final originalName = p.basename(path);
+          final newPath = await _copyBytesToApp(bytes, 'photos', originalName: originalName);
           newPaths.add(newPath);
         } catch (e) {
           debugPrint('Failed to import dropped image: $e');
