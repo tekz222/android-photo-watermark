@@ -85,6 +85,7 @@ class _HomePageState extends State<HomePage> {
   // Message log for all notifications with timestamps
   List<Map<String, dynamic>> _messageLog = [];
   String _previewSearch = ''; // Search query for filtering photos
+  String? _selectedPhotoPath; // Currently selected photo path (source of truth for selection)
   // Multi-select for applying per-image settings to multiple images
   bool _isSelectingImagesForSettings = false;
   final Set<String> _selectedImagePathsForSettings = <String>{};
@@ -124,6 +125,24 @@ class _HomePageState extends State<HomePage> {
     return _sortPathsByDate(filtered);
   }
 
+  /// Current preview index in the FILTERED list (for UI: thumbnails, preview pane).
+  /// Derives from [_selectedPhotoPath] so it stays correct when search filter changes.
+  int get _filteredPreviewIndex {
+    if (_selectedPhotoPath == null) return 0;
+    final paths = _filteredPhotoPaths;
+    final idx = paths.indexOf(_selectedPhotoPath!);
+    return idx >= 0 ? idx : 0;
+  }
+
+  /// Current preview index in the ORIGINAL list (for persistence, logo set assignment).
+  int get _originalPreviewIndex {
+    if (_selectedPhotoPath == null) {
+      return _previewIndex.clamp(0, _photoPaths.length - 1);
+    }
+    final idx = _photoPaths.indexOf(_selectedPhotoPath!);
+    return idx >= 0 ? idx : _previewIndex.clamp(0, _photoPaths.length - 1);
+  }
+
   // Returns the bottom logos for the CURRENT mode.
   // In single mode: prefers Set A if it exists (user edited via section 2), else project's bottomLogos.
   // In dual-set mode: uses Set A's bottomLogos.
@@ -157,7 +176,7 @@ class _HomePageState extends State<HomePage> {
     // Use the CURRENT PREVIEW PHOTO's width for auto-distribute.
     // This makes the preview photo perfect (bottom row full).
     // Other photos get same logo heights; narrower ones get symmetric clipping (handled by rendering).
-    final previewIdx = _previewIndex.clamp(0, _photoPaths.length - 1);
+    final previewIdx = _originalPreviewIndex;
     final previewDims = await _getPhotoDimensions(_photoPaths[previewIdx]);
     if (previewDims == null) return true;
 
@@ -792,7 +811,7 @@ class _HomePageState extends State<HomePage> {
   bool get _currentImageHasCustomSettings {
     final paths = _filteredPhotoPaths;
     if (paths.isEmpty) return false;
-    final idx = _previewIndex.clamp(0, paths.length - 1);
+    final idx = _filteredPreviewIndex;
     final path = paths[idx];
     return _p.imageSettings[path]?.enabled ?? false;
   }
@@ -1857,7 +1876,7 @@ class _HomePageState extends State<HomePage> {
     }
     // Render the currently selected photo immediately for instant feedback
     if (_photoPaths.isNotEmpty) {
-      final selectedPath = _photoPaths[_previewIndex.clamp(0, _photoPaths.length - 1)];
+      final selectedPath = _photoPaths[_originalPreviewIndex];
       _renderPhotoImmediately(selectedPath);
     } else {
       _kickPreview();
@@ -2010,7 +2029,7 @@ class _HomePageState extends State<HomePage> {
   /// Photos in render priority: the selected one first, then its neighbours.
   List<String> _previewOrder() {
     if (_photoPaths.isEmpty) return const [];
-    final sel = _previewIndex.clamp(0, _photoPaths.length - 1);
+    final sel = _originalPreviewIndex;
     final order = <String>[_photoPaths[sel]];
     for (var d = 1; d < _photoPaths.length; d++) {
       if (sel + d < _photoPaths.length) order.add(_photoPaths[sel + d]);
@@ -5105,7 +5124,7 @@ class _HomePageState extends State<HomePage> {
     final paths = _filteredPhotoPaths;
     if (paths.isEmpty) return const SizedBox.shrink();
 
-    final idx = _previewIndex.clamp(0, paths.length - 1);
+    final idx = _filteredPreviewIndex;
     final path = paths[idx];
     final settings = _imageSettingsFor(path);
     final enabled = settings.enabled;
@@ -5282,7 +5301,7 @@ class _HomePageState extends State<HomePage> {
     final scheme = Theme.of(context).colorScheme;
     final paths = _filteredPhotoPaths;
     if (paths.isEmpty) return;
-    final idx = _previewIndex.clamp(0, paths.length - 1);
+    final idx = _filteredPreviewIndex;
     final currentPath = paths[idx];
     final currentSettings = _imageSettingsFor(currentPath);
 
@@ -5786,17 +5805,17 @@ class _HomePageState extends State<HomePage> {
   // ---- Right pane (preview) ----
 
   void _selectPreview(int filteredIndex) {
-    // Map filtered index to original photoPaths index
     final filteredPaths = _filteredPhotoPaths;
     if (filteredIndex >= 0 && filteredIndex < filteredPaths.length) {
-      final originalIndex = _photoPaths.indexOf(filteredPaths[filteredIndex]);
-      if (originalIndex >= 0) {
-        // Update index with setState so UI rebuilds immediately (shows raw image fallback)
-        setState(() => _previewIndex = originalIndex);
-        // Render the newly selected photo IMMEDIATELY for instant switch
-        final selectedPath = _photoPaths[originalIndex];
-        _renderPhotoImmediately(selectedPath);
-      }
+      final selectedPath = filteredPaths[filteredIndex];
+      // Update selected path and original index (for persistence) with setState
+      // so UI rebuilds immediately (shows raw image fallback)
+      setState(() {
+        _selectedPhotoPath = selectedPath;
+        _previewIndex = _photoPaths.indexOf(selectedPath);
+      });
+      // Render the newly selected photo IMMEDIATELY for instant switch
+      _renderPhotoImmediately(selectedPath);
     }
     // Also kick background for neighbours (no debounce needed since we just rendered the selected)
     _kickPreview();
@@ -5872,7 +5891,7 @@ class _HomePageState extends State<HomePage> {
     }
 
     // Clamp preview index to filtered list
-    final idx = _previewIndex.clamp(0, n - 1);
+    final idx = _filteredPreviewIndex;
     final path = paths[idx];
     final render = _previews[path];
     final stale = render != null && _renderedVersion[path] != _previewVersion;
