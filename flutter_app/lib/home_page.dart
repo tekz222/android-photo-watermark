@@ -5170,37 +5170,9 @@ class _HomePageState extends State<HomePage> {
     final settings = _imageSettingsFor(path);
     final enabled = settings.enabled;
 
-    // Initialize with global values when first enabling per-image settings.
-    // All values stored as percentages (like global UI) - engine converts to fractions.
-    ImageSettings effectiveSettings = settings;
-    if (enabled && !settings.enabled) {
-      effectiveSettings = settings.copyWith(
-        enabled: true,
-        useGlobalLogoSize: true,
-        useBottomLogoSize: false,
-        useTopLeftLogoSize: false,
-        useCornerLogoSize: false,
-        useGlobalSpacing: true,
-        useBottomSpacing: false,
-        useTopLeftSpacing: false,
-        useGlobalGradientHeight: true,
-        useTopGradientHeight: false,
-        useBottomGradientHeight: false,
-        // Start with global values so user only changes what they need.
-        bottomLogoSize: _logoSize,
-        topLeftLogoSize: _logoSize,
-        cornerLogoSize: _logoSize,
-        logoSpacing: _logoSpacing,
-        topGradientHeight: _topGradientHeight,
-        bottomGradientHeight: _bottomGradientHeight,
-        bottomLogoMargin: _bottomMargin,
-        topLeftLogoMarginTop: _topMargin,
-        topLeftLogoMarginLeft: _leftMargin,
-
-        cornerLogoMarginRight: _cornerMarginRight,
-      );
-      _setImageSettings(path, effectiveSettings);
-    }
+    // effectiveSettings is the current stored settings for this image.
+    // It's read fresh from the project on each build, so it's always up to date.
+    final ImageSettings effectiveSettings = settings;
 
     return _Section(
       number: 6,
@@ -5218,7 +5190,34 @@ class _HomePageState extends State<HomePage> {
                 ? null
                 : (s) {
                     setState(() {
-                      _setImageSettings(path, effectiveSettings.copyWith(enabled: s));
+                      if (s) {
+                        // Initialize with global values when enabling per-image settings.
+                        _setImageSettings(path, ImageSettings(
+                          enabled: true,
+                          useGlobalLogoSize: true,
+                          useBottomLogoSize: false,
+                          useTopLeftLogoSize: false,
+                          useCornerLogoSize: false,
+                          useGlobalSpacing: true,
+                          useBottomSpacing: false,
+                          useTopLeftSpacing: false,
+                          useGlobalGradientHeight: true,
+                          useTopGradientHeight: false,
+                          useBottomGradientHeight: false,
+                          bottomLogoSize: _logoSize,
+                          topLeftLogoSize: _logoSize,
+                          cornerLogoSize: _logoSize,
+                          logoSpacing: _logoSpacing,
+                          topGradientHeight: _topGradientHeight,
+                          bottomGradientHeight: _bottomGradientHeight,
+                          bottomLogoMargin: _bottomMargin,
+                          topLeftLogoMarginTop: _topMargin,
+                          topLeftLogoMarginLeft: _leftMargin,
+                          cornerLogoMarginRight: _cornerMarginRight,
+                        ));
+                      } else {
+                        _setImageSettings(path, effectiveSettings.copyWith(enabled: false));
+                      }
                     });
                   },
             tooltip: 'Quando ativado, você pode alterar tamanho, espaçamento e gradientes apenas para esta imagem. As configurações globais ficam desativadas para esta imagem.',
@@ -5263,11 +5262,20 @@ class _HomePageState extends State<HomePage> {
                   ))),
             ] else ...[
               _slider('Tamanho (base)', effectiveSettings.bottomLogoSize ?? _logoSize, 5, 30,
-                  (v) => _setImageSettings(path, effectiveSettings.copyWith(bottomLogoSize: v))),
+                  (v) => _setImageSettings(path, effectiveSettings.copyWith(
+                    bottomLogoSize: v,
+                    useBottomLogoSize: true,
+                  ))),
               _slider('Tamanho (topo)', effectiveSettings.topLeftLogoSize ?? _logoSize, 5, 30,
-                  (v) => _setImageSettings(path, effectiveSettings.copyWith(topLeftLogoSize: v))),
+                  (v) => _setImageSettings(path, effectiveSettings.copyWith(
+                    topLeftLogoSize: v,
+                    useTopLeftLogoSize: true,
+                  ))),
               _slider('Tamanho (canto)', effectiveSettings.cornerLogoSize ?? _logoSize, 5, 30,
-                  (v) => _setImageSettings(path, effectiveSettings.copyWith(cornerLogoSize: v))),
+                  (v) => _setImageSettings(path, effectiveSettings.copyWith(
+                    cornerLogoSize: v,
+                    useCornerLogoSize: true,
+                  ))),
             ],
             const SizedBox(height: 12),
 
@@ -5279,9 +5287,15 @@ class _HomePageState extends State<HomePage> {
                   (v) => _setImageSettings(path, effectiveSettings.copyWith(logoSpacing: v))),
             ] else ...[
               _slider('Espaço (base)', effectiveSettings.logoSpacing ?? _logoSpacing, 0, 20,
-                  (v) => _setImageSettings(path, effectiveSettings.copyWith(logoSpacing: v))),
+                  (v) => _setImageSettings(path, effectiveSettings.copyWith(
+                    logoSpacing: v,
+                    useBottomSpacing: true,
+                  ))),
               _slider('Espaço (topo)', effectiveSettings.logoSpacing ?? _logoSpacing, 0, 20,
-                  (v) => _setImageSettings(path, effectiveSettings.copyWith(logoSpacing: v))),
+                  (v) => _setImageSettings(path, effectiveSettings.copyWith(
+                    logoSpacing: v,
+                    useTopLeftSpacing: true,
+                  ))),
             ],
             const SizedBox(height: 12),
 
@@ -5318,10 +5332,16 @@ class _HomePageState extends State<HomePage> {
               ] else ...[
                 if (_topGradient)
                   _slider('Altura (topo)', effectiveSettings.topGradientHeight ?? _topGradientHeight, 1, 50,
-                      (v) => _setImageSettings(path, effectiveSettings.copyWith(topGradientHeight: v))),
+                      (v) => _setImageSettings(path, effectiveSettings.copyWith(
+                        topGradientHeight: v,
+                        useTopGradientHeight: true,
+                      ))),
                 if (_bottomGradient)
                   _slider('Altura (base)', effectiveSettings.bottomGradientHeight ?? _bottomGradientHeight, 1, 50,
-                      (v) => _setImageSettings(path, effectiveSettings.copyWith(bottomGradientHeight: v))),
+                      (v) => _setImageSettings(path, effectiveSettings.copyWith(
+                        bottomGradientHeight: v,
+                        useBottomGradientHeight: true,
+                      ))),
               ],
             ],
           ],
